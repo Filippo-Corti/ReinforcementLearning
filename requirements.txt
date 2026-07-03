@@ -1,7 +1,0 @@
-gymnasium[classic-control]
-gymnasium[box2d]
-numpy 
-matplotlib 
-torch 
-jupyter
-swig

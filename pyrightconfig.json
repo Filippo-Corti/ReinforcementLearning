@@ -1,8 +1,0 @@
-{
-  "include": ["*.py", "**/*.py"],
-  "pythonVersion": "3.10",
-  "pythonPlatform": "Windows",
-  "typeCheckingMode": "basic",
-  "venvPath": ".",
-  "venv": ".venv"
-}
