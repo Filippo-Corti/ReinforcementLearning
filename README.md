@@ -41,12 +41,13 @@ This represents fully the environment but it is not what the agent observes.
 
 ### Observed State (1) - Frenet Coordinates
 
-$$ o_t = (d_t, \phi_{e,t}, v_t) $$
+$$ o_t = (d_t, \phi_{e,t}, v_t, \kappa_t) $$
 
 Where:
 * $d_t$ is the lateral distance from the centerline of the track.
 * $\phi_{e,t}$ is the heading error. That is, the discrepancy between car heading and track heading.
 * $v_t$ is the current velocity.
+* $\kappa_t$ is the change of the curvature of the road straight ahead.
 
 This is a more rich observation of the environment, which assumes that the robot has a way to localize themselves on the track and has a full knowledge of the circuit.
 It is more similar to a **Fully Observable MDP**, as although being a function of the real MDP state it is designed to be a Markov State representation.
@@ -107,3 +108,8 @@ $$ s_{t+1} = f(s_t, a_t) + \epsilon_t, \quad \epsilon_t \sim \mathcal{N}(0, \Sig
 $$
 r_t = 
 $$
+
+
+# TODO:
+
+- Add a lateral acceleration representing centripetal force. It is quadratically proportional to velocity, meaning that at high speed it is stronger. Maybe it should also influence steering effect? Or just move the car. Not sure yet.
