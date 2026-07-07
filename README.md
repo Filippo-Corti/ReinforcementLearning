@@ -145,10 +145,128 @@ A reasonable choice can be $\gamma = 0.99$ and $T_{max} = 500$.
 
 ## Frenet Coordinates and Track Progress
 
-TODOs:
-- How do we define the track?
-- How do we determine the Frenet state given the current state?
-- How do we compute progress reward?
+#### Track Representation
+
+The circuit is represented internally as an **arc-length-parametrized centerline $\gamma$**, with a uniform width profile. Given a certain point $s$ along the circuit, the function $\gamma(s)$ returns the $x$ and $y$ coordinates of that point on a 2D plane:
+
+$$ \gamma(s) = (x(s), y(s)), \quad s \in [0, S_{\text{track}}] $$
+
+At each point $s$ along the circuit, we also care about:
+* The associated heading $\psi(s)$ (tangent angle), curvature $\kappa(s)$, and constant
+track half-width $w/2$. The left/right boundaries are offset curves along the unit
+normal $\hat{n}(s)$:
+
+$$ \text{boundary}_{\pm}(s) = \gamma(s) \pm \frac{w}{2}\hat{n}(s) $$
+
+This single parametrization is the ground-truth object the environment holds; both
+observation types (Frenet, LiDAR) and both derived quantities (collision, progress) are
+computed from it, rather than being independently implemented.
+
+#### Track Generation
+
+Track geometry is generated using the **checkpoint-and-smoothing algorithm** adapted
+from OpenAI Gym / Gymnasium's `CarRacing-v2` (`car_racing.py`, MIT licensed): random
+checkpoints are scattered around a circle with angular and radial jitter, then a heading
+$\beta$ is walked around the loop under a bounded turn rate, advancing by a fixed
+arc-length step $\Delta s_{\text{gen}}$ at each iteration. This produces a closed,
+self-intersection-checked sequence $(x_i, y_i, \beta_i)$ that is *already* uniformly
+sampled in arc length, since each step advances by a constant Euclidean distance along a
+unit heading vector.
+
+Only this geometric generation routine is reused. The physics engine (Box2D rigid-body
+dynamics with tire friction), observation space (rasterized RGB frames), collision model
+(sensor-based tiles with soft off-track recovery), and reward (tile-visitation count) are
+**not** reused — they correspond to a different transition kernel and a different
+scientific objective (visual generalization) than this project's (see design discussion
+above). Our dynamics remain the bicycle model defined earlier in this document.
+
+An additional validity check, absent from the original algorithm, is applied at
+generation time: every sampled curvature must respect the vehicle's minimum turning
+radius,
+
+$$ \frac{1}{|\kappa(s)|} \ge R_{\min} = \frac{L}{\tan(\delta_{max})} \quad \forall s $$
+
+Tracks violating this are rejected or locally smoothed before use, to guarantee the
+generated circuit is kinematically drivable by the bicycle model.
+
+#### Runtime Table
+
+The generated (or hand-drawn, see below) geometry is resampled at fixed arc-length
+spacing into a dense lookup table:
+
+$$ \texttt{table}[i] = (s_i,\; x_i,\; y_i,\; \psi_i,\; \kappa_i) $$
+
+with $\kappa_i$ obtained via finite differences of $\psi_i$ over the fixed step. All
+runtime operations below are implemented as table lookups with local interpolation —
+never live spline evaluation — for performance under repeated per-step calls.
+
+Hand-drawn tracks (via canvas control points) are fit with a centripetal Catmull-Rom
+spline and resampled into the same table format, so both authoring paths converge on an
+identical runtime representation. The same curvature-feasibility check above is applied
+to hand-drawn tracks as well, since manual authoring can just as easily produce corners
+tighter than $R_{\min}$.
+
+#### Frenet Projection
+
+At each step, the car's Cartesian pose $(x_t, y_t)$ is projected onto the centerline to
+obtain:
+
+$$ (x_t, y_t) \;\longrightarrow\; (s_t, d_t) $$
+
+where $s_t$ is the arc-length coordinate of the closest centerline point and $d_t$ is the
+signed lateral offset from it. This projection is the single computation from which the
+Frenet observation, collision check, and progress term are all derived.
+
+To keep this cheap, the search exploits temporal coherence: since the car cannot
+teleport, the projection searches only a small window of the table around the previous
+step's index, rather than the full table. A global search (KD-tree over table
+$(x_i,y_i)$ points) is used only on episode reset, or as a fallback if the car's position
+falls outside the expected window.
+
+#### Frenet Observation
+
+$$ o_t^{\text{Frenet}} = (d_t,\; \phi_{e,t},\; v_t,\; \kappa_t) $$
+
+computed as:
+
+$$ \phi_{e,t} = \theta_t - \psi(s_t), \qquad \kappa_t = \kappa(s_t + \ell_{\text{lookahead}}) $$
+
+where $\theta_t$ is the car's heading (from the true environment state), $\psi(s_t)$ is
+the interpolated track tangent heading at the projected point, and
+$\ell_{\text{lookahead}}$ is a fixed lookahead distance for the curvature-ahead term.
+
+#### LiDAR Observation
+
+$$ o_t^{\text{LiDAR}} = (v_t,\; R_t), \qquad R_t = (r_t^{(1)}, \dots, r_t^{(n)}) $$
+
+Each ray $r_t^{(k)}$ is cast from the car's pose at a fixed angular offset and intersected
+against the nearby boundary segments (again restricted to the local window around the
+car's current table index, for the same performance reason as the projection search),
+returning the distance to first contact with $\text{boundary}_{\pm}(s)$. LiDAR reflects
+only solid track boundaries — there is no separate off-road buffer layer, consistent with
+the hard-wall track model adopted for this project.
+
+#### Collision Detection
+
+Given the projection $(s_t, d_t)$, the car is off-track if:
+
+$$ |d_t| > \frac{w}{2} $$
+
+No separate geometric collision routine is required; this is a direct threshold on the
+lateral offset already computed for the Frenet observation.
+
+#### Progress Term
+
+Progress is the (signed) delta in arc-length position between consecutive steps,
+normalized by total track length:
+
+$$ \Delta\tilde{s}_t = \frac{s_t - s_{t-1}}{S_{\text{track}}} $$
+
+$s_t$ is tracked as a monotonically increasing, unwrapped quantity within an episode
+(reset to $\Delta\tilde{s}_0 = 0$ at episode start) to avoid a spurious large negative
+delta from wrap-around at the finish line; lap completion is instead handled as the
+separate terminal condition defined above. This term feeds directly into the reward
+function's progress component $c_{\text{prog}} \cdot \Delta\tilde{s}_t$.
 
 # Future TODOs:
 
