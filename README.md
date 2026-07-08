@@ -143,108 +143,88 @@ Under these conditions, a reasonable choice for the maximum length of an episode
 A reasonable choice can be $\gamma = 0.99$ and $T_{max} = 500$.
 
 
-## Frenet Coordinates and Track Progress
+## Environment
 
-#### Track Representation
+### Track Representation
 
-The circuit is represented internally as an **arc-length-parametrized centerline $\gamma$**, with a uniform width profile. Given a certain point $s$ along the circuit, the function $\gamma(s)$ returns the $x$ and $y$ coordinates of that point on a 2D plane:
+The circuit is represented internally as an **arc-length-parametrized centerline $\gamma$**. Given a certain distance $s$ traveled along the circuit's centerline, the function $\gamma(s)$ returns the $x$ and $y$ coordinates of that point on a 2D plane:
 
 $$ \gamma(s) = (x(s), y(s)), \quad s \in [0, S_{\text{track}}] $$
 
-At each point $s$ along the circuit, we also care about:
-* The associated heading $\psi(s)$ (tangent angle), curvature $\kappa(s)$, and constant
-track half-width $w/2$. The left/right boundaries are offset curves along the unit
-normal $\hat{n}(s)$:
+At each distance $s$ along the circuit, we also care about:
+
+* The associated heading $\psi(s)$, which is the direction the track is pointing at the location given by $s$. It can be measured as the tangent vector to $\gamma(s)$ in $(x(s), y(s))$:
+
+    $$ \phi(s) = \text{atan2}\left(\frac{dy}{ds}, \frac{dx}{ds}\right) $$
+
+* The curvature $\kappa(s)$, which represents the way the heading $\psi(s)$ of the track changes as we move forward from $s$. We can compute it as the difference in heading $\psi$ between $s$ and a point ahead of it:
+
+    $$ \kappa_(s) \approx \frac{\phi(s + \ell_{\text{lookahead}}) - \phi(s)}{\ell_{\text{lookahead}}} $$
+
+We assume the track to have equal width $w$ everywhere. This means that the left and right boundaries of the track, in a given location $s$ can be computed as:
 
 $$ \text{boundary}_{\pm}(s) = \gamma(s) \pm \frac{w}{2}\hat{n}(s) $$
 
+Where $\hat{n}(s)$ is the unit vector perpendicular to the tangent $\phi(s)$:
+$$ \hat{n}(s) = \left(-\sin\psi(s), +\cos\psi(s)\right) $$
+
 This single parametrization is the ground-truth object the environment holds; both
-observation types (Frenet, LiDAR) and both derived quantities (collision, progress) are
+observation types (Frenet, LiDAR) and all derived quantities (*e.g.*, collision, progress) are
 computed from it, rather than being independently implemented.
 
-#### Track Generation
+#### Track Generation and Table Representation
 
-Track geometry is generated using the **checkpoint-and-smoothing algorithm** adapted
-from OpenAI Gym / Gymnasium's `CarRacing-v2` (`car_racing.py`, MIT licensed): random
-checkpoints are scattered around a circle with angular and radial jitter, then a heading
-$\beta$ is walked around the loop under a bounded turn rate, advancing by a fixed
-arc-length step $\Delta s_{\text{gen}}$ at each iteration. This produces a closed,
-self-intersection-checked sequence $(x_i, y_i, \beta_i)$ that is *already* uniformly
-sampled in arc length, since each step advances by a constant Euclidean distance along a
-unit heading vector.
-
-Only this geometric generation routine is reused. The physics engine (Box2D rigid-body
-dynamics with tire friction), observation space (rasterized RGB frames), collision model
-(sensor-based tiles with soft off-track recovery), and reward (tile-visitation count) are
-**not** reused — they correspond to a different transition kernel and a different
-scientific objective (visual generalization) than this project's (see design discussion
-above). Our dynamics remain the bicycle model defined earlier in this document.
-
-An additional validity check, absent from the original algorithm, is applied at
-generation time: every sampled curvature must respect the vehicle's minimum turning
-radius,
+Track geometry is generated using the **checkpoint-and-smoothing algorithm** adapted from OpenAI Gym / Gymnasium's `CarRacing-v2`: 
+random checkpoints are scattered around a circle with angular and radial jitter, then a heading $\beta$ is walked around the loop under a bounded turn rate, advancing by a fixed arc-length step $\Delta s_{\text{gen}}$ at each iteration. 
+An additional validity check, absent from the original algorithm, is applied at generation time: every sampled curvature must respect the vehicle's minimum turning radius
 
 $$ \frac{1}{|\kappa(s)|} \ge R_{\min} = \frac{L}{\tan(\delta_{max})} \quad \forall s $$
 
-Tracks violating this are rejected or locally smoothed before use, to guarantee the
-generated circuit is kinematically drivable by the bicycle model.
+This constraint is imposed during the generation, to ensure that only completable circuits are generated.
 
-#### Runtime Table
+This procedure allows for a dense lookup table to be used as a practical representation of the circuit shape $\gamma(s)$.
+In fact, as the generation builds the track step-by-step, with a step size $\Delta s_{\text{gen}}$, we can easily store:
 
-The generated (or hand-drawn, see below) geometry is resampled at fixed arc-length
-spacing into a dense lookup table:
+$$ \texttt{table}[i] = (s_i, x_i, y_i, \psi_i, \kappa_i) $$
 
-$$ \texttt{table}[i] = (s_i,\; x_i,\; y_i,\; \psi_i,\; \kappa_i) $$
+In particular:
+* $s_i$ is simply $s_i = i \cdot \Delta s_{\text{gen}}$.
+* $(x_i, y_i)$ are recorded directly during the walk.
+* $\psi_i$ is also recorded during the walk, as it is just $\psi = \beta$.
+* $\kappa_i$ can be computed given three consecutive entries in the table:
+    $$ \kappa_i = \frac{\text{wrap}(\psi_{i+1} - \psi_{i-1})}{2 \Delta s_{\text{gen}}} $$
+  with $\text{wrap}$ making sure that the angles wrap around nicely (*e.g.*, from $179°$ to $-179°$ the difference is $2°$ and not $358°$).
 
-with $\kappa_i$ obtained via finite differences of $\psi_i$ over the fixed step. All
-runtime operations below are implemented as table lookups with local interpolation —
-never live spline evaluation — for performance under repeated per-step calls.
+### Track Usage
 
-Hand-drawn tracks (via canvas control points) are fit with a centripetal Catmull-Rom
-spline and resampled into the same table format, so both authoring paths converge on an
-identical runtime representation. The same curvature-feasibility check above is applied
-to hand-drawn tracks as well, since manual authoring can just as easily produce corners
-tighter than $R_{\min}$.
+At each step, the car's Cartesian pose $(x_t, y_t)$ must be translated into the Frenet pose $(s_t, d_t)$, with:
+* $s_t$ being the arc-length distance along the centerline between the start of the circuit and the closest centerline point to $(x_t, y_t)$.
+* $d_t$ being the lateral offset from $s_t$ (positive or negative).
 
-#### Frenet Projection
+We therefore need a way to compute the mapping:
+$$ (x_t, y_t) \longrightarrow (s_t, d_t) $$
 
-At each step, the car's Cartesian pose $(x_t, y_t)$ is projected onto the centerline to
-obtain:
+To keep this cheap, we use a **temporally coherent** search on the lookup table: since the car cannot teleport, the projection searches only a small window of the table around the previous step's index, rather than the full table.
+The search stops when the closest $\texttt{table}[i]$ - with its $(x_i, y_i)$ location - is found. 
 
-$$ (x_t, y_t) \;\longrightarrow\; (s_t, d_t) $$
-
-where $s_t$ is the arc-length coordinate of the closest centerline point and $d_t$ is the
-signed lateral offset from it. This projection is the single computation from which the
-Frenet observation, collision check, and progress term are all derived.
-
-To keep this cheap, the search exploits temporal coherence: since the car cannot
-teleport, the projection searches only a small window of the table around the previous
-step's index, rather than the full table. A global search (KD-tree over table
-$(x_i,y_i)$ points) is used only on episode reset, or as a fallback if the car's position
-falls outside the expected window.
+The only case where a global search is needed is if we choose to have episodes start at random locations.
 
 #### Frenet Observation
 
-$$ o_t^{\text{Frenet}} = (d_t,\; \phi_{e,t},\; v_t,\; \kappa_t) $$
+$$ o_t^{\text{Frenet}} = (d_t, \phi_{e,t}, v_t, \kappa_t) $$
 
 computed as:
 
-$$ \phi_{e,t} = \theta_t - \psi(s_t), \qquad \kappa_t = \kappa(s_t + \ell_{\text{lookahead}}) $$
+$$ \phi_{e,t} = \theta_t - \psi(s_t), \qquad \kappa_t = \kappa(s_t) $$
 
-where $\theta_t$ is the car's heading (from the true environment state), $\psi(s_t)$ is
-the interpolated track tangent heading at the projected point, and
-$\ell_{\text{lookahead}}$ is a fixed lookahead distance for the curvature-ahead term.
+where $\theta_t$ is the car's heading (from the true environment state).
 
 #### LiDAR Observation
 
-$$ o_t^{\text{LiDAR}} = (v_t,\; R_t), \qquad R_t = (r_t^{(1)}, \dots, r_t^{(n)}) $$
+$$ o_t^{\text{LiDAR}} = (v_t, R_t), \qquad R_t = (r_t^{(1)}, \dots, r_t^{(n)}) $$
 
-Each ray $r_t^{(k)}$ is cast from the car's pose at a fixed angular offset and intersected
-against the nearby boundary segments (again restricted to the local window around the
-car's current table index, for the same performance reason as the projection search),
-returning the distance to first contact with $\text{boundary}_{\pm}(s)$. LiDAR reflects
-only solid track boundaries — there is no separate off-road buffer layer, consistent with
-the hard-wall track model adopted for this project.
+Each ray $r_t^{(k)}$ is cast from the car's pose at a fixed angular offset and intersected against the nearby boundary segments (again restricted to the local window around the car's current table index, for the same performance reason as the projection search), returning the distance to first contact with $\text{boundary}_{\pm}(s)$. 
+LiDAR reflects only solid track boundaries: there is no separate off-road buffer layer.
 
 #### Collision Detection
 
@@ -252,21 +232,14 @@ Given the projection $(s_t, d_t)$, the car is off-track if:
 
 $$ |d_t| > \frac{w}{2} $$
 
-No separate geometric collision routine is required; this is a direct threshold on the
-lateral offset already computed for the Frenet observation.
 
-#### Progress Term
+#### Progress Term of the Reward
 
-Progress is the (signed) delta in arc-length position between consecutive steps,
-normalized by total track length:
+Progress is the (signed) delta in arc-length position between consecutive steps, normalized by total track length:
 
 $$ \Delta\tilde{s}_t = \frac{s_t - s_{t-1}}{S_{\text{track}}} $$
 
-$s_t$ is tracked as a monotonically increasing, unwrapped quantity within an episode
-(reset to $\Delta\tilde{s}_0 = 0$ at episode start) to avoid a spurious large negative
-delta from wrap-around at the finish line; lap completion is instead handled as the
-separate terminal condition defined above. This term feeds directly into the reward
-function's progress component $c_{\text{prog}} \cdot \Delta\tilde{s}_t$.
+$s_t$ is tracked as a monotonically increasing, unwrapped quantity within an episode (reset to $\Delta\tilde{s}_0 = 0$ at episode start) to avoid a spurious large negative delta from wrap-around at the finish line; lap completion is instead handled as the separate terminal condition defined above. 
 
 # Future TODOs:
 
