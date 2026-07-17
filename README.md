@@ -26,6 +26,14 @@ It controls the acceleration and the steering wheel. It should be heavily penali
 Try to learn a policy that can solve multiple circuits, in particular circuits not seen during training. You may want to train it on multiple, diverse circuits.
 
 
+## Simulation
+
+The decision rate of the agent is set to $\Delta_t_{{agent}} = 0.04s$, meaning that the agent effectively interacts with the environment $25$ times per second. Note that the value of this variable conditions the minimum number of steps needed to finish a lab of a circuit, and therefore the value for the effective horizon $T_max$.
+
+Importantly, if were to choose a large $\Delta_{t_{agent}}$, we would increase the chance of the car moving out of bounds between one agent-timestep and the next one. 
+For this reason, we define a simulation timestep of $\Delta_{t_{phys}} = 0.01s$. The simulation runs at this frequency, checking at each physical timestep if the car is colliding with an obstacle.
+In other words, the agent only reacts every $4$ simulation steps, choosing the action to perform for the next $4$. 
+
 ## MDP Formalization
 
 ### Environment State
@@ -63,6 +71,8 @@ Where:
 This is a lower-level observation, harder to interpret directly and which assumes that the robot does not know the full circuit.
 This is a real **Partially Observable MDP**, as it is designed willingly to consider partial observability via local sensing and nothing more.
 
+More precisely, we choose to model a LiDAR sensor with $16$ rays, across a field of view (FOV) of $200$ degrees. This corresponds to one raycast every $12.5°$.
+
 ### Action Space
 
 $$ a_t = (a_t^{throttle}, a_t^{steer}) \in [-1,1]^2 $$
@@ -97,7 +107,7 @@ $$
 \end{aligned}
 $$
 
-Where $L$ is the wheelbase (the distance between fron and rear axles) and $\Delta_t$ is the discrete time step between one action and the next one. Notably:
+Where $L = 3.6m$ is the wheelbase (the distance between fron and rear axles) and $\Delta_t$ is the discrete time step between one action and the next one. Notably:
 * Since reversing is not allowed, enforce $v_{t+1} \ge 0$.
 * Also enforce $v_{t+1} \le v_{max}$, with $v_{max} \approx 70 m/s$ (around $250km/h$).
 
@@ -132,11 +142,14 @@ R_{\text{finish}} & \text{if } s_{t+1} \in \mathcal{F} \\
 $$
 
 Where:
-* $R_{\text{finish}} = R_{\text{crash}} = 10$
-* $c_{\text{step}}=0.01$
+* $R_{\text{finish}} = 10$
+* $R_{\text{crash}} = 20$
+* $c_{\text{step}}= \rho \cdot \Delta_{t_{agent}} = 0.002$, with $rho = 0.05s^{-1}$ simply representing the cost over a simulation step.
 * $c_{\text{prog}}=1$
 
-Under these conditions, a reasonable choice for the maximum length of an episode is $T_{max} = 500$ steps. This was, in fact we guarantee that $0.01 \times 500 = 5$ is significantly worse than a slow, complete lap (which would be something like $0.01 \times 350 + 10 = 13.5$). 
+Under these conditions, a reasonable choice for the maximum length of an episode is $T_{max} = 5000$ steps. This way we can model a circuit that can be completed in around $90s$ with a fast but realistic lap (to verify this: $90/0.04 * 2.5$, with $2.5$ used to give a margin of learning to the agent during training). Moreover:
+* A full, fast lap is finished with a reward of $c_{\text{step}} \times 90/\Delta_{t_{agent}} = 4.5$, which should make for a clear reward compared to an unfinished run.
+* Avoiding crashes for the full horizon results in a reward of $c_{\text{step}} \times T_{max} = 10$, which should make for a clear reward compared to an instant crash.
 
 ### Discounted Horizon Parameters
 
@@ -157,9 +170,11 @@ At each distance $s$ along the circuit, we also care about:
 
     $$ \phi(s) = \text{atan2}\left(\frac{dy}{ds}, \frac{dx}{ds}\right) $$
 
-* The curvature $\kappa(s)$, which represents the way the heading $\psi(s)$ of the track changes as we move forward from $s$. We can compute it as the difference in heading $\psi$ between $s$ and a point ahead of it:
+* The curvature $\kappa(s)$, which represents the way the heading $\psi(s)$ of the track changes as we move forward from $s$. We can compute it as the difference in heading $\psi$ between $s$ and a point ahead of it. To choose how far ahead the point should be, we consider the current velocity of the car:
 
     $$ \kappa_(s) \approx \frac{\phi(s + \ell_{\text{lookahead}}) - \phi(s)}{\ell_{\text{lookahead}}} $$
+
+    $$ \ell_{\text{lookahead}} = 5 + 0.7 v_t $$
 
 We assume the track to have equal width $w$ everywhere. This means that the left and right boundaries of the track, in a given location $s$ can be computed as:
 
@@ -240,6 +255,7 @@ Progress is the (signed) delta in arc-length position between consecutive steps,
 $$ \Delta\tilde{s}_t = \frac{s_t - s_{t-1}}{S_{\text{track}}} $$
 
 $s_t$ is tracked as a monotonically increasing, unwrapped quantity within an episode (reset to $\Delta\tilde{s}_0 = 0$ at episode start) to avoid a spurious large negative delta from wrap-around at the finish line; lap completion is instead handled as the separate terminal condition defined above. 
+
 
 # Future TODOs:
 
