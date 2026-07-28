@@ -1,4 +1,48 @@
+# Virtual environments
 .venv/
 
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.hypothesis/
 
-**/__pycache__/
+# Coverage, builds and package metadata
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Training artefacts (keep configurations and summarized results tracked)
+checkpoints/
+logs/
+outputs/
+runs/
+videos/
+wandb/
+tensorboard/
+*.ckpt
+*.pt
+*.pth

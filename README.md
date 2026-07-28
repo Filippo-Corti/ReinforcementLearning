@@ -33,7 +33,7 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 ## Full Plan
 
 0. **Task and MDP Formalization.**
-1. **Frenet + kinematic env, single circuit.** Fully-observed, smooth, cheap.
+1. **Frenet + kinematic env, single circuit.** Markov-like, smooth, cheap.
    Get REINFORCE to *move forward at all* before touching anything fancy.
 2. **Add the grip limit and tune reward scales** until the learned policy
    visibly brakes for corners. This is your "the environment is actually
@@ -44,6 +44,11 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
    best-performing algorithm.
 5. **Only then** tackle the LiDAR POMDP and the multi-circuit generalization
    variant.
+
+The version 0 kinematic model intentionally has no lateral grip limit, drag,
+finite vehicle footprint, tire slip, or steering-rate limit. Full throttle may
+therefore remain optimal in corners. This is a known model limitation to address
+in step 2, not something to compensate for through reward shaping.
 
 ## Policy parameterization
 
@@ -60,10 +65,10 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 
 ## Algorithms
 
-* **REINFORCE (baseline, already implemented in lab 05).** Reuse your batched
-  `collect_batch` / `reinforce` machinery. Add a **baseline** (a value network or
-  even a batch-mean return) to cut variance — this is the natural bridge to
-  Actor–Critic and costs almost nothing.
+* **REINFORCE (baseline).** Implement a project-owned continuous-action version;
+  course-lab code is not reused unless explicitly requested. Add a **baseline**
+  (a value network or even a batch-mean return) to cut variance — this is the
+  natural bridge to Actor–Critic.
 
 * **Actor–Critic / A2C (next).** Add a critic $V_\phi(o)$ and switch the policy
   gradient to use an **advantage** estimate. Use **GAE($\lambda$)** for the
@@ -141,7 +146,8 @@ looking for; make the plots say it.
   $(x,y)$ cannot generalize. Worth stating explicitly as a hypothesis and testing
   it — it's a clean, gradeable scientific result.
 
-* **Curriculum helps.** Randomizing the start position along the track (§1.5) and
+* **Curriculum helps.** Randomizing the start position along the track (as
+  described in [`docs/MDP.md`](docs/MDP.md)) and
   optionally starting near hard corners dramatically speeds early learning versus
   always starting from a standstill at $s_0=0$.
 
@@ -152,15 +158,16 @@ looking for; make the plots say it.
   objective. Note it as future work.
 
 * **Metrics/tracking.** Even without `wandb`/`tensorboard` installed, a small CSV
-  logger per run + your existing `plotting.py` is enough. What matters for the
-  grade is *comparable* curves across net sizes on one machine — decide the
-  metric, the x-axis (env steps), and the seed count **before** you start the
-  sweep, so you don't re-run everything.
+  logger per run + the planned project plotting utilities is enough. What
+  matters for the grade is *comparable* curves across net sizes on one machine —
+  decide the metric, the x-axis (env steps), and the seed count **before** you
+  start the sweep, so you don't re-run everything.
 
 
 ## Variants and possible solutions
 
-- If car goes always full throttle -> Add a lateral acceleration representing centripetal force. It is quadratically proportional to velocity, meaning that at high speed it is stronger. Maybe it should also influence steering effect? Or just move the car. Not sure yet.
+- If the car always uses full throttle -> implement the planned grip-limited
+  dynamics before retuning the reward.
 
 - If training is unstable -> Add the previous action to the state observation
 

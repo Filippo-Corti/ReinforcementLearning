@@ -32,12 +32,13 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 
 ## Workflow rules
 1. **Plan before code.** For anything nontrivial, outline the approach, build a plan, and list files to be touched. Wait for confirmation before writing any code.
-2. **One concern per task/commit.** Don't mix algorithm changes with logging/refactor changes in the same diff.
-3. **Tests accompany code.** Any new function gets at least one test. Any change to a locked file gets a test that would have caught the previous behavior.
+2. **One concern per task/commit.** Don't mix algorithm changes with logging/refactor changes in the same diff. Once you have finished your task, always commit to branch main.
+3. **Tests accompany code.** Any new function gets at least one test. Any behavior change gets a regression test that would have caught the previous behavior.
 4. **No silent hyperparameter choices.** If a value isn't specified anywhere, ask or flag it as a placeholder — don't pick a "reasonable default" silently in core files.
 5. **Determinism.** All training runs must accept a `--seed` and be reproducible given the same seed + config.
 6. **Cite, don't recall.** For anything algorithm-specific, work from the equations/spec provided in this repo or pasted into the prompt rather than from memory of "how PPO usually works" — implementations vary across papers/codebases.
-7. **Document your changes.** Every functionality that is added/modified/removed to the project should be properly documented not only inside the code and with the git commits, but also in the `docs/DIARY.md` diary file. You can find examples of how to document changes there.
+7. **Document your changes.** Every functionality that is added/modified/removed to the project should be properly documented not only inside the code and with the git commits, but also in the `docs/DIARY.md` diary file. You can find examples of how to document changes there. Report the commit from point 2 in the diary.
+8. **Do not reuse course-lab code by default.** Code on the `lectures` branch, in lab notebooks, or in earlier exercises is reference material only. Implement project-owned agents and utilities from scratch unless the user explicitly asks to migrate or reuse a specific piece.
 
 ## Suggested code structure:
 This is the suggested layout. Feel free to adapt it as you wish, but make sure to update this if you ever choose to:
@@ -55,19 +56,19 @@ src/
 │   ├── policies.py        # GaussianPolicy (mean MLP + log-std), deterministic policy
 │   └── value.py           # ValueNetwork critic
 ├── agents/
-│   ├── reinforce.py       # (from lab 05) + optional baseline
+│   ├── reinforce.py       # project-owned REINFORCE + optional baseline
 │   ├── actor_critic.py    # A2C with GAE
 │   └── ppo.py             # clipped PPO
 ├── utils/
 │   ├── buffers.py         # RolloutBuffer, GAE computation
 │   ├── normalizers.py     # RunningMeanStd for obs / returns
-│   ├── training.py        # (extend existing) generic train/eval loops
-│   ├── seeding.py         # SeedSequence spawning (mirror lab 05's discipline)
-│   └── plotting.py        # (extend existing) learning-curve + track-trajectory plots
-├── configs/               # dataclass or YAML experiment configs (net size sweep, etc.)
-└── tracks/                # circuit definitions (e.g. monaco.json / oval.json)
+│   ├── training.py        # project-owned generic train/eval loops
+│   ├── seeding.py         # deterministic SeedSequence spawning
+│   └── plotting.py        # learning-curve + track-trajectory plots
+└── configs/               # dataclass or YAML experiment configs (net size sweep, etc.)
 experiments/               # thin runner scripts / notebooks that call into rlc/
 tests/                     # env + geometry unit tests
+tracks/                    # circuit definitions (e.g. generated_000.json / oval.json)
 ```
 
 Design principles to keep it clean and reproducible:
@@ -78,9 +79,10 @@ Design principles to keep it clean and reproducible:
   constructor flag, so both share one dynamics core.
 * **One shared MLP builder** parameterized by `hidden_sizes` is what makes the
   network-size sweep a one-line config change instead of copy-paste.
-* **Preserve the lab's agent contract** (`select_action` / `update` /
-  `end_episode`, or the batched `collect_batch` pattern) so your existing
-  training utilities and plotting keep working across all three algorithms.
+* **Use a project-owned agent contract.** Define the rollout and update
+  interfaces for continuous, vector-valued actions before implementing the first
+  agent, and reuse that contract across the project algorithms. Do not inherit a
+  lab interface implicitly.
 * **Track as data, not code.** Represent circuits as arc-length-sampled
   centerlines + widths in `tracks/*.json`; build a KD-tree (or nearest-segment
   search) once for the point→Frenet projection. This makes the multi-circuit
@@ -95,6 +97,8 @@ Design principles to keep it clean and reproducible:
 
 ## Environment / dependencies
 - Use the `.venv` env in this repository.
+- You may install packages into `.venv` as they become necessary for an approved task; no separate permission is needed for ordinary project dependencies.
+- Build the dependency manifest incrementally. Create `requirements.txt` when the first project code is added, and update it in the same task whenever an imported third-party package becomes a project dependency. Use explicit version constraints; create an exact environment freeze before running final experiments.
 - Use `gymnasium` to handle the custom environment.
 - Use `pygame` for rendering the environment.
 - Use `pytorch` to handle the machine learning stuff.
