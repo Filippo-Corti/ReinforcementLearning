@@ -11,34 +11,48 @@ from numpy.typing import NDArray
 from scipy.interpolate import CubicSpline
 from scipy.spatial import cKDTree
 
-from configs import TrackGenerationConfig, VehicleConfig
+from configs import TrackGenerationConfig, CarConfig
 
 from .track import Track, TrackValidationError
 
 FloatArray = NDArray[np.float64]
 
+# TODO: understand this full file
 
 @dataclass(frozen=True, slots=True)
 class SegmentProjection:
-    """Closest-point result for one segment in a closed polyline."""
+    """
+    Closest-point result for one segment in a closed polyline.
+    TODO: complete description
+    
+    Fields:
+        * segment_index: The index of the segment in the closed polyline.
+        * fraction: The fraction along the segment where the projection occurs, in [0, 1].
+        * point: The projected point in Cartesian coordinates, as a 2D array.
+        * distance: The Euclidean distance from the original point to the projected point,
+    """
 
     segment_index: int
     fraction: float
-    point_m: FloatArray = field(repr=False, compare=False)
-    distance_m: float
+    point: FloatArray = field(repr=False, compare=False)
+    distance: float
 
 
 class SegmentIndex:
-    """Global exact nearest-segment search backed by a midpoint KD-tree."""
+    """
+    Global exact nearest-segment search backed by a midpoint KD-tree.
+    TODO: what is a KD-tree?
+    
+    Fields:
+        * _starts: The start points of the segments in the closed polyline, as a 2D array.
+        * _ends: The end points of the segments in the closed polyline, as a
+        ...
+    """
 
-    def __init__(self, points_m: FloatArray) -> None:
-        points = np.array(points_m, dtype=np.float64, copy=True)
-        if points.ndim != 2 or points.shape[1] != 2:
-            raise ValueError("points_m must have shape (n, 2).")
+    def __init__(self, points: FloatArray) -> None:
+        points = np.array(points, dtype=np.float64, copy=True)
         if points.shape[0] < 3:
-            raise ValueError("points_m must contain at least 3 points.")
-        if not np.all(np.isfinite(points)):
-            raise ValueError("points_m must contain only finite values.")
+            raise ValueError("points must contain at least 3 points.")
 
         ends = np.roll(points, shift=-1, axis=0)
         lengths = np.linalg.norm(ends - points, axis=1)
@@ -51,32 +65,32 @@ class SegmentIndex:
         midpoints = (points + ends) / 2.0
         midpoints.setflags(write=False)
 
-        self._starts_m = points
-        self._ends_m = ends
-        self._lengths_m = lengths
-        self._midpoints_m = midpoints
-        self._max_half_length_m = float(np.max(lengths) / 2.0)
+        self._starts = points
+        self._ends = ends
+        self._lengths = lengths
+        self._midpoints = midpoints
+        self._max_half_length = float(np.max(lengths) / 2.0)
         self._tree = cKDTree(midpoints)
 
     @property
-    def starts_m(self) -> FloatArray:
+    def starts(self) -> FloatArray:
         """Read-only segment start points."""
-        return self._starts_m
+        return self._starts
 
     @property
-    def ends_m(self) -> FloatArray:
+    def ends(self) -> FloatArray:
         """Read-only segment end points."""
-        return self._ends_m
+        return self._ends
 
     @property
-    def lengths_m(self) -> FloatArray:
+    def lengths(self) -> FloatArray:
         """Read-only Euclidean segment lengths."""
-        return self._lengths_m
+        return self._lengths
 
     @property
     def segment_count(self) -> int:
         """Number of segments in the closed polyline."""
-        return self._starts_m.shape[0]
+        return self._starts.shape[0]
 
     def project(self, point_m: FloatArray) -> SegmentProjection:
         """Return the exact closest projection over all indexed segments."""
@@ -85,11 +99,11 @@ class SegmentIndex:
         initial_index = int(nearest_midpoint)
         _, _, initial_distance = _project_to_segment(
             point,
-            self._starts_m[initial_index],
-            self._ends_m[initial_index],
+            self._starts[initial_index],
+            self._ends[initial_index],
         )
 
-        search_radius = initial_distance + self._max_half_length_m
+        search_radius = initial_distance + self._max_half_length
         candidates = sorted(self._tree.query_ball_point(point, search_radius))
         return self._project_candidates(point, candidates)
 
@@ -118,17 +132,17 @@ class SegmentIndex:
         for index in candidates:
             projection, fraction, distance = _project_to_segment(
                 point,
-                self._starts_m[index],
-                self._ends_m[index],
+                self._starts[index],
+                self._ends[index],
             )
             candidate = SegmentProjection(
                 segment_index=index,
                 fraction=fraction,
-                point_m=projection,
-                distance_m=distance,
+                point=projection,
+                distance=distance,
             )
             if best is None or (distance, index) < (
-                best.distance_m,
+                best.distance,
                 best.segment_index,
             ):
                 best = candidate
@@ -137,11 +151,9 @@ class SegmentIndex:
             raise RuntimeError("segment index did not return any candidates.")
         return best
 
-    def candidate_pairs(self, maximum_distance_m: float) -> NDArray[np.int64]:
+    def candidate_pairs(self, maximum_distance: float) -> NDArray[np.int64]:
         """Return segment-index pairs that may be within a target distance."""
-        if not isfinite(maximum_distance_m) or maximum_distance_m < 0:
-            raise ValueError("maximum_distance_m must be finite and non-negative.")
-        search_radius = maximum_distance_m + 2.0 * self._max_half_length_m
+        search_radius = maximum_distance + 2.0 * self._max_half_length
         pairs = self._tree.query_pairs(search_radius, output_type="ndarray")
         if pairs.size == 0:
             return np.empty((0, 2), dtype=np.int64)
@@ -149,16 +161,18 @@ class SegmentIndex:
 
 
 class TrackGeometry:
-    """Periodic interpolators and derived geometry for sampled track data."""
+    """
+    Periodic interpolators and derived geometry for sampled track data.
+    """
 
     def __init__(self, track: Track) -> None:
         self.track = track
-        extended_s = np.append(track.s_m, track.track_length_m)
-        extended_x = np.append(track.x_m, track.x_m[0])
-        extended_y = np.append(track.y_m, track.y_m[0])
+        extended_s = np.append(track.s, track.track_length)
+        extended_x = np.append(track.x, track.x[0])
+        extended_y = np.append(track.y, track.y[0])
         extended_curvature = np.append(
-            track.curvature_per_m,
-            track.curvature_per_m[0],
+            track.curvature,
+            track.curvature[0],
         )
 
         self._x_spline = CubicSpline(
@@ -178,8 +192,8 @@ class TrackGeometry:
         )
         self._curvature_integral = self._curvature_spline.antiderivative()
 
-        unwrapped_heading = np.unwrap(track.heading_rad)
-        closing_turn = wrap_angle(float(track.heading_rad[0] - track.heading_rad[-1]))
+        unwrapped_heading = np.unwrap(track.heading)
+        closing_turn = wrap_angle(float(track.heading[0] - track.heading[-1]))
         self._heading_s = extended_s
         self._heading_unwrapped = np.append(
             unwrapped_heading,
@@ -188,44 +202,44 @@ class TrackGeometry:
 
         normals = np.column_stack(
             (
-                -np.sin(track.heading_rad),
-                np.cos(track.heading_rad),
+                -np.sin(track.heading),
+                np.cos(track.heading),
             )
         )
-        centerline = np.column_stack((track.x_m, track.y_m))
-        self._left_boundary_m = centerline + (track.width_m / 2.0) * normals
-        self._right_boundary_m = centerline - (track.width_m / 2.0) * normals
-        self._left_boundary_m.setflags(write=False)
-        self._right_boundary_m.setflags(write=False)
+        centerline = np.column_stack((track.x, track.y))
+        self._left_boundary = centerline + (track.width / 2.0) * normals
+        self._right_boundary = centerline - (track.width / 2.0) * normals
+        self._left_boundary.setflags(write=False)
+        self._right_boundary.setflags(write=False)
 
         self.centerline_index = SegmentIndex(centerline)
-        self.left_boundary_index = SegmentIndex(self._left_boundary_m)
-        self.right_boundary_index = SegmentIndex(self._right_boundary_m)
+        self.left_boundary_index = SegmentIndex(self._left_boundary)
+        self.right_boundary_index = SegmentIndex(self._right_boundary)
 
     @property
-    def left_boundary_m(self) -> FloatArray:
+    def left_boundary(self) -> FloatArray:
         """Read-only sampled left boundary array."""
-        return self._left_boundary_m
+        return self._left_boundary
 
     @property
-    def right_boundary_m(self) -> FloatArray:
+    def right_boundary(self) -> FloatArray:
         """Read-only sampled right boundary array."""
-        return self._right_boundary_m
+        return self._right_boundary
 
     def position(self, s_m: float) -> FloatArray:
-        """Interpolate centerline position periodically at arc length ``s_m``."""
-        wrapped_s = self._wrapped_s(s_m)
+        """Interpolate centerline position periodically at arc length ``s``."""
+        wrapped = self._wrapped(s_m)
         return np.array(
-            [self._x_spline(wrapped_s), self._y_spline(wrapped_s)],
+            [self._x_spline(wrapped), self._y_spline(wrapped)],
             dtype=np.float64,
         )
 
     def heading(self, s_m: float) -> float:
-        """Interpolate wrapped centerline heading at arc length ``s_m``."""
-        wrapped_s = self._wrapped_s(s_m)
+        """Interpolate wrapped centerline heading at arc length ``s``."""
+        wrapped = self._wrapped(s_m)
         unwrapped = float(
             np.interp(
-                wrapped_s,
+                wrapped,
                 self._heading_s,
                 self._heading_unwrapped,
             )
@@ -241,17 +255,17 @@ class TrackGeometry:
         )
 
     def curvature(self, s_m: float) -> float:
-        """Interpolate local curvature periodically at arc length ``s_m``."""
-        wrapped_s = self._wrapped_s(s_m)
-        return float(self._curvature_spline(wrapped_s))
+        """Interpolate local curvature periodically at arc length ``s``."""
+        wrapped = self._wrapped(s_m)
+        return float(self._curvature_spline(wrapped))
 
-    def integrated_curvature(self, start_s_m: float, distance_m: float) -> float:
+    def integrated_curvature(self, start_s: float, distance: float) -> float:
         """Integrate periodic curvature forward over a non-negative distance."""
-        start = self._wrapped_s(start_s_m)
-        if not isfinite(distance_m) or distance_m < 0:
-            raise ValueError("distance_m must be finite and non-negative.")
-        length = self.track.track_length_m
-        complete_laps, remainder = divmod(distance_m, length)
+        start = self._wrapped(start_s)
+        if not isfinite(distance) or distance < 0:
+            raise ValueError("distance must be finite and non-negative.")
+        length = self.track.track_length
+        complete_laps, remainder = divmod(distance, length)
         lap_integral = float(
             self._curvature_integral(length) - self._curvature_integral(0.0)
         )
@@ -271,16 +285,14 @@ class TrackGeometry:
 
     def left_boundary_position(self, s_m: float) -> FloatArray:
         """Interpolate the left boundary at arc length ``s_m``."""
-        return self.position(s_m) + (self.track.width_m / 2.0) * self.normal(s_m)
+        return self.position(s_m) + (self.track.width / 2.0) * self.normal(s_m)
 
     def right_boundary_position(self, s_m: float) -> FloatArray:
         """Interpolate the right boundary at arc length ``s_m``."""
-        return self.position(s_m) - (self.track.width_m / 2.0) * self.normal(s_m)
+        return self.position(s_m) - (self.track.width / 2.0) * self.normal(s_m)
 
-    def _wrapped_s(self, s_m: float) -> float:
-        if not isfinite(s_m):
-            raise ValueError("s_m must be finite.")
-        return float(s_m % self.track.track_length_m)
+    def _wrapped(self, s: float) -> float:
+        return float(s % self.track.track_length)
 
 
 def wrap_angle(angle_rad: float) -> float:
@@ -293,22 +305,22 @@ def wrap_angle(angle_rad: float) -> float:
 def validate_track_geometry(
     track: Track,
     *,
-    vehicle_config: VehicleConfig | None = None,
+    vehicle_config: CarConfig | None = None,
     track_config: TrackGenerationConfig | None = None,
 ) -> TrackGeometry:
     """Validate geometric constraints and return prepared track geometry."""
-    vehicle = vehicle_config or VehicleConfig()
+    vehicle = vehicle_config or CarConfig()
     generation = track_config or TrackGenerationConfig()
 
-    if not generation.min_length_m <= track.track_length_m <= generation.max_length_m:
+    if not generation.min_length <= track.track_length <= generation.max_length:
         raise TrackValidationError(
             "track length must be within the configured generation range."
         )
 
-    maximum_curvature = tan(radians(vehicle.max_steering_angle_deg)) / (
+    maximum_curvature = tan(radians(vehicle.max_steering_angle)) / (
         vehicle.wheelbase_m
     )
-    if np.any(np.abs(track.curvature_per_m) > maximum_curvature + 1e-12):
+    if np.any(np.abs(track.curvature) > maximum_curvature + 1e-12):
         raise TrackValidationError(
             "track curvature exceeds the vehicle kinematic steering limit."
         )
@@ -323,11 +335,11 @@ def validate_track_geometry(
         "centerline",
     )
 
-    required_separation = track.width_m + generation.nonlocal_centerline_margin_m
+    required_separation = track.width + generation.nonlocal_centerline_margin
     _validate_nonlocal_centerline_separation(
         geometry.centerline_index,
-        sample_spacing_m=track.sample_spacing_m,
-        required_separation_m=required_separation,
+        sample_spacing=track.sample_spacing,
+        required_separation=required_separation,
     )
 
     _validate_simple_closed_polyline(
@@ -346,7 +358,7 @@ def validate_track_geometry(
 
 
 def _validate_periodic_seam(geometry: TrackGeometry) -> None:
-    length = geometry.track.track_length_m
+    length = geometry.track.track_length
     if not np.allclose(
         geometry.position(0.0),
         geometry.position(length),
@@ -380,10 +392,10 @@ def _validate_simple_closed_polyline(
         ):
             continue
         if _segments_intersect(
-            index.starts_m[first],
-            index.ends_m[first],
-            index.starts_m[second],
-            index.ends_m[second],
+            index.starts[first],
+            index.ends[first],
+            index.starts[second],
+            index.ends[second],
         ):
             raise TrackValidationError(
                 f"{name} segments {first} and {second} intersect."
@@ -393,10 +405,10 @@ def _validate_simple_closed_polyline(
 def _validate_nonlocal_centerline_separation(
     index: SegmentIndex,
     *,
-    sample_spacing_m: float,
-    required_separation_m: float,
+    sample_spacing: float,
+    required_separation: float,
 ) -> None:
-    pairs = index.candidate_pairs(required_separation_m)
+    pairs = index.candidate_pairs(required_separation)
     for first, second in pairs:
         first_index = int(first)
         second_index = int(second)
@@ -408,20 +420,20 @@ def _validate_nonlocal_centerline_separation(
             continue
         index_delta = abs(first_index - second_index)
         cyclic_delta = min(index_delta, index.segment_count - index_delta)
-        arc_separation = max(0.0, (cyclic_delta - 1) * sample_spacing_m)
-        if arc_separation <= required_separation_m:
+        arc_separation = max(0.0, (cyclic_delta - 1) * sample_spacing)
+        if arc_separation <= required_separation:
             continue
         distance = _segment_distance(
-            index.starts_m[first],
-            index.ends_m[first],
-            index.starts_m[second],
-            index.ends_m[second],
+            index.starts[first],
+            index.ends[first],
+            index.starts[second],
+            index.ends[second],
         )
-        if distance <= required_separation_m:
+        if distance <= required_separation:
             raise TrackValidationError(
                 "nonlocal centerline segments "
                 f"{first} and {second} are only {distance:.6g} m apart; "
-                f"required separation is greater than {required_separation_m:.6g} m."
+                f"required separation is greater than {required_separation:.6g} m."
             )
 
 
@@ -429,15 +441,15 @@ def _validate_boundaries_do_not_intersect(
     left: SegmentIndex,
     right: SegmentIndex,
 ) -> None:
-    search_radius = float(np.max(left.lengths_m) / 2.0 + np.max(right.lengths_m) / 2.0)
+    search_radius = float(np.max(left.lengths) / 2.0 + np.max(right.lengths) / 2.0)
     candidate_lists = left._tree.query_ball_tree(right._tree, search_radius)
     for left_index, right_indices in enumerate(candidate_lists):
         for right_index in right_indices:
             if _segments_intersect(
-                left.starts_m[left_index],
-                left.ends_m[left_index],
-                right.starts_m[right_index],
-                right.ends_m[right_index],
+                left.starts[left_index],
+                left.ends[left_index],
+                right.starts[right_index],
+                right.ends[right_index],
             ):
                 raise TrackValidationError(
                     "left and right boundary segments "

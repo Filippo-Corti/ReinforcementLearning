@@ -1,4 +1,4 @@
-"""Typed project configuration objects."""
+"""Configuration objects."""
 
 from .environment import (
     EnvironmentConfig,
@@ -6,7 +6,7 @@ from .environment import (
     RewardConfig,
     SimulationConfig,
     TrackGenerationConfig,
-    VehicleConfig,
+    CarConfig,
 )
 
 __all__ = [
@@ -15,5 +15,5 @@ __all__ = [
     "RewardConfig",
     "SimulationConfig",
     "TrackGenerationConfig",
-    "VehicleConfig",
+    "CarConfig",
 ]

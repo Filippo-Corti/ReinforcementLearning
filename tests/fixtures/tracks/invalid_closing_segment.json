@@ -1,10 +1,5 @@
 {
   "format_version": 1,
-  "units": {
-    "length": "m",
-    "angle": "rad",
-    "curvature": "1/m"
-  },
   "generation": {
     "seed": 0,
     "n_checkpoints": 3,

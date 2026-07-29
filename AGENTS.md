@@ -34,7 +34,7 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 ## Workflow rules
 1. **Plan before code.** For anything nontrivial, outline the approach, build a plan, and list files to be touched. Wait for confirmation before writing any code.
 2. **One concern per task/commit.** Don't mix algorithm changes with logging/refactor changes in the same diff. Once you have finished your task, always commit to branch main.
-3. **Tests accompany code.** Any new function gets at least one test. Any behavior change gets a regression test that would have caught the previous behavior.
+3. **Write agile code.** Don't over-engineer code validations and assertions. Keep the code elegant at the cost of allowing a slight misuse. Take into account that it's a university project, not a production-ready package. Test only what is necessary.
 4. **No silent hyperparameter choices.** If a value isn't specified anywhere, ask or flag it as a placeholder — don't pick a "reasonable default" silently in core files.
 5. **Determinism.** All training runs must accept a `--seed` and be reproducible given the same seed + config.
 6. **Cite, don't recall.** For anything algorithm-specific, work from the equations/spec provided in this repo or pasted into the prompt rather than from memory of "how PPO usually works" — implementations vary across papers/codebases.

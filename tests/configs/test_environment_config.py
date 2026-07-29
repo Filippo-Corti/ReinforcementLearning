@@ -14,7 +14,7 @@ from configs import (
     RewardConfig,
     SimulationConfig,
     TrackGenerationConfig,
-    VehicleConfig,
+    CarConfig,
 )
 
 
@@ -22,12 +22,12 @@ def test_defaults_match_the_environment_specification() -> None:
     config = EnvironmentConfig()
 
     assert config.simulation == SimulationConfig(
-        agent_timestep_s=0.04,
+        agent_timestep=0.04,
         physics_timestep_s=0.01,
         physics_substeps=4,
         max_episode_steps=5_000,
     )
-    assert config.vehicle == VehicleConfig(
+    assert config.vehicle == CarConfig(
         wheelbase_m=3.6,
         max_acceleration_m_per_s2=9.26,
         max_steering_angle_deg=30.0,
@@ -63,7 +63,7 @@ def test_timestep_relationship_is_enforced() -> None:
         match=r"agent_timestep_s must equal physics_timestep_s \* physics_substeps",
     ):
         SimulationConfig(
-            agent_timestep_s=0.04,
+            agent_timestep=0.04,
             physics_timestep_s=0.02,
             physics_substeps=4,
         )
@@ -72,23 +72,23 @@ def test_timestep_relationship_is_enforced() -> None:
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
-        (lambda: SimulationConfig(agent_timestep_s=0.0), "agent_timestep_s"),
+        (lambda: SimulationConfig(agent_timestep=0.0), "agent_timestep_s"),
         (
             lambda: SimulationConfig(physics_timestep_s=float("nan")),
             "physics_timestep_s",
         ),
         (lambda: SimulationConfig(physics_substeps=0), "physics_substeps"),
         (lambda: SimulationConfig(max_episode_steps=True), "max_episode_steps"),
-        (lambda: VehicleConfig(wheelbase_m=0.0), "wheelbase_m"),
+        (lambda: CarConfig(wheelbase_m=0.0), "wheelbase_m"),
         (
-            lambda: VehicleConfig(max_acceleration_m_per_s2=float("inf")),
+            lambda: CarConfig(max_acceleration_m_per_s2=float("inf")),
             "max_acceleration_m_per_s2",
         ),
         (
-            lambda: VehicleConfig(max_steering_angle_deg=90.0),
+            lambda: CarConfig(max_steering_angle_deg=90.0),
             "max_steering_angle_deg",
         ),
-        (lambda: VehicleConfig(max_speed_m_per_s=-1.0), "max_speed_m_per_s"),
+        (lambda: CarConfig(max_speed_m_per_s=-1.0), "max_speed_m_per_s"),
         (lambda: TrackGenerationConfig(n_checkpoints=2), "n_checkpoints"),
         (lambda: TrackGenerationConfig(base_radius_m=0.0), "base_radius_m"),
         (
@@ -147,7 +147,7 @@ def test_configuration_is_immutable() -> None:
     config = EnvironmentConfig()
 
     with pytest.raises(FrozenInstanceError):
-        config.simulation.agent_timestep_s = 0.08  # type: ignore[misc]
+        config.simulation.agent_timestep = 0.08  # type: ignore[misc]
 
 
 def test_serialization_is_plain_deterministic_and_json_compatible() -> None:

@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 from configs import (
     FrenetObservationConfig,
     SimulationConfig,
-    VehicleConfig,
+    CarConfig,
 )
 
 from .geometry import SegmentProjection, TrackGeometry, wrap_angle
@@ -21,13 +21,23 @@ FloatArray = NDArray[np.float64]
 
 @dataclass(frozen=True, slots=True)
 class FrenetProjection:
-    """Projection of one Cartesian point onto the sampled centerline."""
+    """
+    Projection of one Cartesian point onto the sampled centerline.
+    
+    Fields:
+        * s: The distance along the centerline to the projected point, in meters.
+        * lateral_distance: The signed distance from the projected point to the original point, in meters
+        * segment_index: The index of the centerline segment containing the projected point.
+        * segment_fraction: The fraction along the segment to the projected point.
+        * projected_point: The Cartesian coordinates of the projected point, in meters.
+        * used_global_search: Whether the projection was found using a global search (True) or a local search (False).
+    """
 
-    s_m: float
-    lateral_distance_m: float
+    s: float
+    lateral_distance: float
     segment_index: int
     segment_fraction: float
-    projected_point_m: FloatArray = field(repr=False, compare=False)
+    projected_point: FloatArray = field(repr=False, compare=False)
     used_global_search: bool
 
 
@@ -39,29 +49,29 @@ class FrenetProjector:
         geometry: TrackGeometry,
         *,
         simulation_config: SimulationConfig | None = None,
-        vehicle_config: VehicleConfig | None = None,
+        vehicle_config: CarConfig | None = None,
     ) -> None:
         simulation = simulation_config or SimulationConfig()
-        vehicle = vehicle_config or VehicleConfig()
+        vehicle = vehicle_config or CarConfig()
         self.geometry = geometry
-        self.maximum_speed_m_per_s = vehicle.max_speed_m_per_s
+        self.maximum_speed_m_per_s = vehicle.max_speed
         maximum_physics_travel = (
-            vehicle.max_speed_m_per_s * simulation.physics_timestep_s
+            vehicle.max_speed * simulation.physics_timestep
         )
-        spacing = geometry.track.sample_spacing_m
+        spacing = geometry.track.sample_spacing
         self.local_window_segments = ceil(maximum_physics_travel / spacing) + 4
-        self.maximum_local_distance_m = (
-            geometry.track.width_m / 2.0 + maximum_physics_travel + 4.0 * spacing
+        self.maximum_local_distance = (
+            geometry.track.width / 2.0 + maximum_physics_travel + 4.0 * spacing
         )
 
     def project(
         self,
-        point_m: FloatArray,
+        point: FloatArray,
         *,
         previous_segment_index: int | None = None,
     ) -> FrenetProjection:
         """Project a point locally when safe, otherwise search globally."""
-        point = _point_array(point_m, "point_m")
+        point = _point_array(point, "point")
         if previous_segment_index is None:
             projection = self.geometry.centerline_index.project(point)
             return self._frenet_projection(
@@ -91,7 +101,7 @@ class FrenetProjector:
             point,
             sorted(candidates),
         )
-        if local.distance_m <= self.maximum_local_distance_m:
+        if local.distance <= self.maximum_local_distance:
             return self._frenet_projection(
                 point,
                 local,
@@ -120,42 +130,42 @@ class FrenetProjector:
     def curvature_preview(
         self,
         s_m: float,
-        speed_m_per_s: float,
+        speed: float,
         *,
         config: FrenetObservationConfig | None = None,
     ) -> float:
         """Return average curvature over the velocity-dependent lookahead."""
-        self._validate_speed(speed_m_per_s)
+        self._validate_speed(speed)
         observation = config or FrenetObservationConfig()
         lookahead = (
-            observation.lookahead_base_m
-            + observation.lookahead_speed_factor_s * speed_m_per_s
+            observation.lookahead_base
+            + observation.lookahead_speed_factor * speed
         )
         return self.geometry.integrated_curvature(s_m, lookahead) / lookahead
 
     def observation(
         self,
-        point_m: FloatArray,
+        point: FloatArray,
         *,
         vehicle_heading_rad: float,
-        speed_m_per_s: float,
+        speed: float,
         previous_segment_index: int | None = None,
         config: FrenetObservationConfig | None = None,
     ) -> tuple[FloatArray, FrenetProjection]:
         """Build ``(d, heading error, speed, curvature preview)``."""
-        self._validate_speed(speed_m_per_s)
+        self._validate_speed(speed)
         projection = self.project(
-            point_m,
+            point,
             previous_segment_index=previous_segment_index,
         )
         values = np.asarray(
             [
-                projection.lateral_distance_m,
-                self.heading_error(vehicle_heading_rad, projection.s_m),
-                speed_m_per_s,
+                projection.lateral_distance,
+                self.heading_error(vehicle_heading_rad, projection.s),
+                speed,
                 self.curvature_preview(
-                    projection.s_m,
-                    speed_m_per_s,
+                    projection.s,
+                    speed,
                     config=config,
                 ),
             ],
@@ -165,61 +175,61 @@ class FrenetProjector:
 
     def _frenet_projection(
         self,
-        point_m: FloatArray,
+        point: FloatArray,
         projection: SegmentProjection,
         *,
         used_global_search: bool,
     ) -> FrenetProjection:
         track = self.geometry.track
-        s_m = (
+        s = (
             (projection.segment_index + projection.fraction)
-            * track.sample_spacing_m
-            % track.track_length_m
+            * track.sample_spacing
+            % track.track_length
         )
-        displacement = projection.point_m
+        displacement = projection.point
         lateral_distance = float(
             np.dot(
-                point_m - displacement,
-                self.geometry.normal(s_m),
+                point - displacement,
+                self.geometry.normal(s),
             )
         )
         return FrenetProjection(
-            s_m=s_m,
-            lateral_distance_m=lateral_distance,
+            s=s,
+            lateral_distance=lateral_distance,
             segment_index=projection.segment_index,
             segment_fraction=projection.fraction,
-            projected_point_m=projection.point_m,
+            projected_point=projection.point,
             used_global_search=used_global_search,
         )
 
-    def _validate_speed(self, speed_m_per_s: float) -> None:
+    def _validate_speed(self, speed: float) -> None:
         if (
-            not isfinite(speed_m_per_s)
-            or not 0 <= speed_m_per_s <= self.maximum_speed_m_per_s
+            not isfinite(speed)
+            or not 0 <= speed <= self.maximum_speed_m_per_s
         ):
             raise ValueError(
-                "speed_m_per_s must be finite and within the vehicle speed range."
+                "speed must be finite and within the vehicle speed range."
             )
 
 
 def signed_progress(
-    previous_s_m: float,
-    current_s_m: float,
-    track_length_m: float,
+    previous_s: float,
+    current_s: float,
+    track_length: float,
 ) -> float:
     """Return signed periodic progress in the half-open principal interval."""
     if (
-        not isfinite(previous_s_m)
-        or not isfinite(current_s_m)
-        or not isfinite(track_length_m)
-        or track_length_m <= 0
+        not isfinite(previous_s)
+        or not isfinite(current_s)
+        or not isfinite(track_length)
+        or track_length <= 0
     ):
         raise ValueError(
-            "progress positions must be finite and track_length_m positive."
+            "progress positions must be finite and track_length positive."
         )
-    difference = current_s_m - previous_s_m
+    difference = current_s - previous_s
     return float(
-        (difference + track_length_m / 2.0) % track_length_m - track_length_m / 2.0
+        (difference + track_length / 2.0) % track_length - track_length / 2.0
     )
 
 
