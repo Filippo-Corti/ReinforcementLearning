@@ -28,5 +28,15 @@
 
 **Commit**: 909a83c
 
+## 2026-07-29 — Flat source layout correction
+
+**Task**: Remove the unwanted intermediate package directory from the proposed source structure.
+
+**Result**: Restored `src/envs`, `src/models`, `src/agents`, `src/utils` and `src/configs` as the direct source directories, and updated every roadmap path and descriptive reference accordingly.
+
+**Files**: `PLAN.md`, `AGENTS.md`, `docs/DIARY.md`.
+
+**Commit**: bedfa4b
+
 *New diary notes go here...*
 
