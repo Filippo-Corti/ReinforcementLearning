@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "curvature": "1/m"
+  },
+  "generation": {
+    "seed": 0,
+    "n_checkpoints": 3,
+    "base_radius": 1.0,
+    "radial_jitter": 0.0,
+    "angular_jitter_sectors": 0.0,
+    "max_attempts": 1
+  },
+  "width": 1.0,
+  "sample_spacing": 1.0,
+  "track_length": 3.0,
+  "start_index": 0
+}
