@@ -95,6 +95,8 @@ Do not start a later step while an earlier validation gate is failing.
 
 ### 0. Create the Python Project Scaffold
 
+**Status:** Completed on 2026-07-29.
+
 **Objective:** Establish importable project structure and a reproducible test
 command before adding behaviour.
 
