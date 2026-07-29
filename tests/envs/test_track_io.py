@@ -18,7 +18,6 @@ from envs import (
     UnsupportedTrackFormatError,
 )
 
-
 FIXTURE_DIRECTORY = Path(__file__).parents[1] / "fixtures" / "tracks"
 VALID_TRACK_PATH = FIXTURE_DIRECTORY / "valid_circle.json"
 

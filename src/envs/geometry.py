@@ -11,8 +11,8 @@ from scipy.interpolate import CubicSpline
 from scipy.spatial import cKDTree
 
 from configs import TrackGenerationConfig, VehicleConfig
-from .track import Track, TrackValidationError
 
+from .track import Track, TrackValidationError
 
 FloatArray = NDArray[np.float64]
 
@@ -116,9 +116,7 @@ class SegmentIndex:
     def candidate_pairs(self, maximum_distance_m: float) -> NDArray[np.int64]:
         """Return segment-index pairs that may be within a target distance."""
         if not isfinite(maximum_distance_m) or maximum_distance_m < 0:
-            raise ValueError(
-                "maximum_distance_m must be finite and non-negative."
-            )
+            raise ValueError("maximum_distance_m must be finite and non-negative.")
         search_radius = maximum_distance_m + 2.0 * self._max_half_length_m
         pairs = self._tree.query_pairs(search_radius, output_type="ndarray")
         if pairs.size == 0:
@@ -156,9 +154,7 @@ class TrackGeometry:
         )
 
         unwrapped_heading = np.unwrap(track.heading_rad)
-        closing_turn = wrap_angle(
-            float(track.heading_rad[0] - track.heading_rad[-1])
-        )
+        closing_turn = wrap_angle(float(track.heading_rad[0] - track.heading_rad[-1]))
         self._heading_s = extended_s
         self._heading_unwrapped = np.append(
             unwrapped_heading,
@@ -183,12 +179,12 @@ class TrackGeometry:
 
     @property
     def left_boundary_m(self) -> FloatArray:
-        """Read-only sampled left boundary."""
+        """Read-only sampled left boundary array."""
         return self._left_boundary_m
 
     @property
     def right_boundary_m(self) -> FloatArray:
-        """Read-only sampled right boundary."""
+        """Read-only sampled right boundary array."""
         return self._right_boundary_m
 
     def position(self, s_m: float) -> FloatArray:
@@ -271,18 +267,14 @@ def validate_track_geometry(
     try:
         geometry = TrackGeometry(track)
     except ValueError as error:
-        raise TrackValidationError(
-            f"invalid track geometry: {error}"
-        ) from error
+        raise TrackValidationError(f"invalid track geometry: {error}") from error
     _validate_periodic_seam(geometry)
     _validate_simple_closed_polyline(
         geometry.centerline_index,
         "centerline",
     )
 
-    required_separation = (
-        track.width_m + generation.nonlocal_centerline_margin_m
-    )
+    required_separation = track.width_m + generation.nonlocal_centerline_margin_m
     _validate_nonlocal_centerline_separation(
         geometry.centerline_index,
         sample_spacing_m=track.sample_spacing_m,
@@ -313,13 +305,9 @@ def _validate_periodic_seam(geometry: TrackGeometry) -> None:
         rtol=0.0,
         atol=1e-10,
     ):
-        raise TrackValidationError(
-            "centerline position is not continuous at the seam."
-        )
+        raise TrackValidationError("centerline position is not continuous at the seam.")
     if abs(wrap_angle(geometry.heading(length) - geometry.heading(0.0))) > 1e-10:
-        raise TrackValidationError(
-            "centerline heading is not continuous at the seam."
-        )
+        raise TrackValidationError("centerline heading is not continuous at the seam.")
     if not np.isclose(
         geometry.curvature(0.0),
         geometry.curvature(length),
@@ -397,9 +385,7 @@ def _validate_boundaries_do_not_intersect(
     left: SegmentIndex,
     right: SegmentIndex,
 ) -> None:
-    search_radius = float(
-        np.max(left.lengths_m) / 2.0 + np.max(right.lengths_m) / 2.0
-    )
+    search_radius = float(np.max(left.lengths_m) / 2.0 + np.max(right.lengths_m) / 2.0)
     candidate_lists = left._tree.query_ball_tree(right._tree, search_radius)
     for left_index, right_indices in enumerate(candidate_lists):
         for right_index in right_indices:
@@ -440,24 +426,26 @@ def _segments_intersect(
     second_a = _cross(second_end - second_start, first_start - second_start)
     second_b = _cross(second_end - second_start, first_end - second_start)
 
-    if (
-        first_a * first_b < -(tolerance**2)
-        and second_a * second_b < -(tolerance**2)
-    ):
+    if first_a * first_b < -(tolerance**2) and second_a * second_b < -(tolerance**2):
         return True
 
     return (
-        abs(first_a) <= tolerance
-        and _point_on_segment(second_start, first_start, first_end, tolerance)
-    ) or (
-        abs(first_b) <= tolerance
-        and _point_on_segment(second_end, first_start, first_end, tolerance)
-    ) or (
-        abs(second_a) <= tolerance
-        and _point_on_segment(first_start, second_start, second_end, tolerance)
-    ) or (
-        abs(second_b) <= tolerance
-        and _point_on_segment(first_end, second_start, second_end, tolerance)
+        (
+            abs(first_a) <= tolerance
+            and _point_on_segment(second_start, first_start, first_end, tolerance)
+        )
+        or (
+            abs(first_b) <= tolerance
+            and _point_on_segment(second_end, first_start, first_end, tolerance)
+        )
+        or (
+            abs(second_a) <= tolerance
+            and _point_on_segment(first_start, second_start, second_end, tolerance)
+        )
+        or (
+            abs(second_b) <= tolerance
+            and _point_on_segment(first_end, second_start, second_end, tolerance)
+        )
     )
 
 

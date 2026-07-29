@@ -20,10 +20,7 @@ from envs import (
     wrap_angle,
 )
 
-
-FIXTURE_PATH = (
-    Path(__file__).parents[1] / "fixtures" / "tracks" / "valid_circle.json"
-)
+FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "tracks" / "valid_circle.json"
 
 
 def _circle() -> Track:
@@ -171,9 +168,7 @@ def test_segment_index_rejects_invalid_polylines(
 
 
 def test_segment_index_rejects_invalid_queries() -> None:
-    index = SegmentIndex(
-        np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
-    )
+    index = SegmentIndex(np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]))
 
     with pytest.raises(ValueError, match="shape"):
         index.project(np.asarray([0.0]))
@@ -235,9 +230,7 @@ def test_insufficient_nonlocal_separation_is_rejected() -> None:
 
 
 def test_intersecting_boundaries_are_rejected() -> None:
-    track = _polyline_track(
-        [(0.0, 0.0), (200.0, 0.0), (1.0, 20.0)]
-    )
+    track = _polyline_track([(0.0, 0.0), (200.0, 0.0), (1.0, 20.0)])
 
     with pytest.raises(
         TrackValidationError,

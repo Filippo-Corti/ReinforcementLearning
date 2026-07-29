@@ -26,3 +26,11 @@ testpaths = ["tests"]
 filterwarnings = [
     "ignore:pkg_resources is deprecated as an API.*:UserWarning:pygame.pkgdata",
 ]
+
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"

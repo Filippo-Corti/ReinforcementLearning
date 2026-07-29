@@ -73,7 +73,10 @@ def test_timestep_relationship_is_enforced() -> None:
     ("factory", "message"),
     [
         (lambda: SimulationConfig(agent_timestep_s=0.0), "agent_timestep_s"),
-        (lambda: SimulationConfig(physics_timestep_s=float("nan")), "physics_timestep_s"),
+        (
+            lambda: SimulationConfig(physics_timestep_s=float("nan")),
+            "physics_timestep_s",
+        ),
         (lambda: SimulationConfig(physics_substeps=0), "physics_substeps"),
         (lambda: SimulationConfig(max_episode_steps=True), "max_episode_steps"),
         (lambda: VehicleConfig(wheelbase_m=0.0), "wheelbase_m"),

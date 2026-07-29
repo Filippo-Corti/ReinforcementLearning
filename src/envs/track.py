@@ -81,7 +81,9 @@ class TrackGenerationMetadata:
 
     def __post_init__(self) -> None:
         if type(self.seed) is not int or self.seed < 0:
-            raise TrackValidationError("generation.seed must be a non-negative integer.")
+            raise TrackValidationError(
+                "generation.seed must be a non-negative integer."
+            )
         if type(self.n_checkpoints) is not int or self.n_checkpoints < 3:
             raise TrackValidationError(
                 "generation.n_checkpoints must be an integer of at least 3."
@@ -183,13 +185,9 @@ class Track:
         if not isfinite(self.width_m) or self.width_m <= 0:
             raise TrackValidationError("width must be finite and positive.")
         if not isfinite(self.sample_spacing_m) or self.sample_spacing_m <= 0:
-            raise TrackValidationError(
-                "sample_spacing must be finite and positive."
-            )
+            raise TrackValidationError("sample_spacing must be finite and positive.")
         if not isfinite(self.track_length_m) or self.track_length_m <= 0:
-            raise TrackValidationError(
-                "track_length must be finite and positive."
-            )
+            raise TrackValidationError("track_length must be finite and positive.")
         if type(self.start_index) is not int:
             raise TrackValidationError("start_index must be an integer.")
 
@@ -226,13 +224,13 @@ class Track:
         if any(array.size != sample_count for array in arrays.values()):
             raise TrackValidationError("all sample arrays must have the same length.")
         if not 0 <= self.start_index < sample_count:
-            raise TrackValidationError(
-                "start_index must reference an existing sample."
-            )
+            raise TrackValidationError("start_index must reference an existing sample.")
 
         s_m = arrays["s_m"]
         if np.any(np.diff(s_m) <= 0):
-            raise TrackValidationError("sample arc lengths must be strictly increasing.")
+            raise TrackValidationError(
+                "sample arc lengths must be strictly increasing."
+            )
 
         tolerance = 1e-9 * max(1.0, abs(self.track_length_m))
         expected_s = np.arange(sample_count, dtype=np.float64) * self.sample_spacing_m
@@ -315,8 +313,8 @@ class Track:
                 set(columns),
                 f"samples[{index}]",
             )
-            for name in columns:
-                columns[name].append(
+            for name, values in columns.items():
+                values.append(
                     _require_float(
                         sample[name],
                         f"samples[{index}].{name}",
@@ -431,6 +429,7 @@ class Track:
 
 
 """ Helper functions for validating JSON track data. """
+
 
 def _require_mapping(value: object, name: str) -> Mapping[str, Any]:
     """Require that a value is a mapping with string keys."""
