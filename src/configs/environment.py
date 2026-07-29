@@ -10,10 +10,10 @@ from math import isclose, isfinite
 class SimulationConfig:
     """Timing and episode-length settings."""
 
-    agent_timestep_s: float = 0.04
-    physics_timestep_s: float = 0.01
-    physics_substeps: int = 4
-    max_episode_steps: int = 5_000
+    agent_timestep_s: float = 0.04      # The time step at which the agent operates, in seconds.
+    physics_timestep_s: float = 0.01    # The time step at which the physics simulation operates, in seconds.
+    physics_substeps: int = 4           # agent_timestep_s / physics_timestep_s.
+    max_episode_steps: int = 5_000      # The maximum number of steps per episode, after which the episode will terminate.
 
     def __post_init__(self) -> None:
         if not isfinite(self.agent_timestep_s) or self.agent_timestep_s <= 0:
@@ -42,10 +42,10 @@ class SimulationConfig:
 class VehicleConfig:
     """Physical limits of the kinematic vehicle."""
 
-    wheelbase_m: float = 3.6
-    max_acceleration_m_per_s2: float = 9.26
-    max_steering_angle_deg: float = 30.0
-    max_speed_m_per_s: float = 70.0
+    wheelbase_m: float = 3.6                    # The distance between the front and rear axles of the vehicle, in meters.
+    max_acceleration_m_per_s2: float = 9.26     # The maximum acceleration of the vehicle, in m/s^2.
+    max_steering_angle_deg: float = 30.0        # The maximum steering angle of the vehicle, in degrees.
+    max_speed_m_per_s: float = 70.0             # The maximum speed of the vehicle, in m/s.  
 
     def __post_init__(self) -> None:
         if not isfinite(self.wheelbase_m) or self.wheelbase_m <= 0:
@@ -72,16 +72,16 @@ class VehicleConfig:
 class TrackGenerationConfig:
     """Procedural track-generation and geometry-validation settings."""
 
-    n_checkpoints: int = 12
-    base_radius_m: float = 250.0
-    radial_jitter_fraction: float = 0.25
-    angular_jitter_sectors: float = 0.25
-    sample_spacing_m: float = 0.5
-    width_m: float = 12.0
-    max_attempts: int = 100
-    min_length_m: float = 1_000.0
-    max_length_m: float = 3_000.0
-    nonlocal_centerline_margin_m: float = 2.0
+    n_checkpoints: int = 12                     # The number of checkpoints used to define the track's shape. Must be at least 3.
+    base_radius_m: float = 250.0                # The base radius of the track, in meters.
+    radial_jitter_fraction: float = 0.25        # The fraction of the base radius by which checkpoints can vary radially.
+    angular_jitter_sectors: float = 0.25        # The fraction of the angular range by which checkpoints can vary.
+    sample_spacing_m: float = 0.5               # The spacing between samples along the track, in meters.
+    width_m: float = 12.0                       # The width of the track, in meters.
+    max_attempts: int = 100                     # The maximum number of attempts to generate a valid track.
+    min_length_m: float = 1_000.0               # The minimum length of the track, in meters.
+    max_length_m: float = 3_000.0               # The maximum length of the track, in meters.
+    nonlocal_centerline_margin_m: float = 2.0   # The margin around the centerline that must be free of obstacles, in meters.
 
     def __post_init__(self) -> None:
         if type(self.n_checkpoints) is not int or self.n_checkpoints < 3:
@@ -127,10 +127,10 @@ class TrackGenerationConfig:
 class RewardConfig:
     """Coefficients used by the environment reward."""
 
-    finish_reward: float = 10.0
-    crash_penalty: float = 20.0
-    time_penalty_rate_per_s: float = 0.05
-    progress_coefficient: float = 1.0
+    finish_reward: float = 10.0                     # The reward given to the agent for successfully completing the track.
+    crash_penalty: float = 20.0                     # The penalty given to the agent for crashing into an obstacle or going off-track.
+    time_penalty_rate_per_s: float = 0.05           # The penalty rate applied to the agent's reward for each second of simulation time.
+    progress_coefficient: float = 1.0               # The coefficient applied to the agent's reward based on its progress along the track.
 
     def __post_init__(self) -> None:
         if not isfinite(self.finish_reward) or self.finish_reward <= 0:
@@ -157,8 +157,8 @@ class RewardConfig:
 class FrenetObservationConfig:
     """Parameters of the velocity-dependent curvature preview."""
 
-    lookahead_base_m: float = 5.0
-    lookahead_speed_factor_s: float = 0.7
+    lookahead_base_m: float = 5.0                   # The base lookahead distance for the Frenet observation, in meters.
+    lookahead_speed_factor_s: float = 0.7           # The speed factor used to adjust the lookahead distance based on the speed, in seconds.
 
     def __post_init__(self) -> None:
         if not isfinite(self.lookahead_base_m) or self.lookahead_base_m <= 0:

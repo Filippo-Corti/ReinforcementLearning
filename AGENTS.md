@@ -40,6 +40,7 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 6. **Cite, don't recall.** For anything algorithm-specific, work from the equations/spec provided in this repo or pasted into the prompt rather than from memory of "how PPO usually works" — implementations vary across papers/codebases.
 7. **Document your changes.** Every functionality that is added/modified/removed to the project should be properly documented not only inside the code and with the git commits, but also in the `docs/DIARY.md` diary file. You can find examples of how to document changes there. Report the commit from point 2 in the diary.
 8. **Do not reuse course-lab code by default.** Code on the `lectures` branch, in lab notebooks, or in earlier exercises is reference material only. Implement project-owned agents and utilities from scratch unless the user explicitly asks to migrate or reuse a specific piece.
+9. **Do not refer to plan or steps in code.** Avoid referring to 'plan-0', 'version-0', 'step-0' or anything of this kind in the code. The code must be understandable without knowing the order with which it was implemented.
 
 ## Suggested code structure:
 This is the suggested layout. Feel free to adapt it as you wish, but make sure to update this if you ever choose to:
