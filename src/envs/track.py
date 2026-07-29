@@ -19,11 +19,9 @@ if TYPE_CHECKING:
 
 class TrackValidationError(ValueError):
     """Raised when track data does not satisfy the persistent schema."""
-    pass
 
 class UnsupportedTrackFormatError(TrackValidationError):
     """Raised when a track file uses an unsupported schema version."""
-    pass
 
 @dataclass(frozen=True, slots=True)
 class TrackUnits:
