@@ -16,11 +16,11 @@ from numpy.typing import NDArray
 
 class TrackValidationError(ValueError):
     """Raised when track data does not satisfy the persistent schema."""
-
+    pass
 
 class UnsupportedTrackFormatError(TrackValidationError):
     """Raised when a track file uses an unsupported schema version."""
-
+    pass
 
 @dataclass(frozen=True, slots=True)
 class TrackUnits:
@@ -177,12 +177,6 @@ class Track:
     units: TrackUnits = field(default_factory=TrackUnits)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.generation, TrackGenerationMetadata):
-            raise TrackValidationError(
-                "generation must be TrackGenerationMetadata."
-            )
-        if not isinstance(self.units, TrackUnits):
-            raise TrackValidationError("units must be TrackUnits.")
         if not isfinite(self.width_m) or self.width_m <= 0:
             raise TrackValidationError("width must be finite and positive.")
         if not isfinite(self.sample_spacing_m) or self.sample_spacing_m <= 0:
@@ -402,18 +396,22 @@ class Track:
         destination.write_text(f"{serialized}\n", encoding="utf-8", newline="\n")
 
 
+""" Helper functions for validating JSON track data. """
+
 def _require_mapping(value: object, name: str) -> Mapping[str, Any]:
+    """Require that a value is a mapping with string keys."""
     if not isinstance(value, Mapping):
         raise TrackValidationError(f"{name} must be an object.")
-    if not all(isinstance(key, str) for key in value):
+    if not all(isinstance(key, str) for key in value):  # type: ignore
         raise TrackValidationError(f"{name} keys must be strings.")
-    return value
+    return value  # type: ignore
 
 
 def _require_sequence(value: object, name: str) -> Sequence[object]:
+    """Require that a value is a sequence (list or tuple)."""
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         raise TrackValidationError(f"{name} must be an array.")
-    return value
+    return value  # type: ignore
 
 
 def _require_exact_keys(
