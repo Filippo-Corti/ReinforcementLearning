@@ -132,6 +132,8 @@ PyTorch is not required until policy implementation.
 
 ### 1. Centralize the Environment Configuration
 
+**Status:** Completed on 2026-07-29.
+
 **Objective:** Give every documented physical and track constant one typed,
 validated source of truth.
 
