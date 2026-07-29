@@ -1,0 +1,245 @@
+"""Deterministic generation of smooth, uniformly sampled racing tracks."""
+
+from __future__ import annotations
+
+from collections import Counter
+from itertools import pairwise
+from math import pi
+from os import PathLike
+
+import numpy as np
+from numpy.typing import NDArray
+from scipy.integrate import quad, solve_ivp
+from scipy.interpolate import CubicSpline
+
+from configs import TrackGenerationConfig, VehicleConfig
+
+from .geometry import validate_track_geometry, wrap_angle
+from .track import Track, TrackGenerationMetadata, TrackValidationError
+
+FloatArray = NDArray[np.float64]
+
+
+class TrackGenerationError(RuntimeError):
+    """Raised when all deterministic generation attempts are rejected."""
+
+
+def generate_track(
+    seed: int,
+    *,
+    track_config: TrackGenerationConfig | None = None,
+    vehicle_config: VehicleConfig | None = None,
+) -> Track:
+    """Generate a valid track deterministically from ``seed`` and configuration."""
+    if type(seed) is not int or seed < 0:
+        raise ValueError("seed must be a non-negative integer.")
+
+    generation = track_config or TrackGenerationConfig()
+    vehicle = vehicle_config or VehicleConfig()
+    attempt_sequences = np.random.SeedSequence(seed).spawn(generation.max_attempts)
+    failures: Counter[str] = Counter()
+
+    for attempt_sequence in attempt_sequences:
+        random = np.random.default_rng(attempt_sequence)
+        try:
+            candidate = _generate_candidate(seed, random, generation)
+            validate_track_geometry(
+                candidate,
+                vehicle_config=vehicle,
+                track_config=generation,
+            )
+        except TrackValidationError as error:
+            failures[str(error)] += 1
+            continue
+        return candidate
+
+    details = "; ".join(
+        f"{count}x {message}" for message, count in sorted(failures.items())
+    )
+    raise TrackGenerationError(
+        f"failed to generate a valid track for seed {seed} after "
+        f"{generation.max_attempts} attempts: {details}"
+    )
+
+
+def generate_track_file(
+    path: str | PathLike[str],
+    *,
+    seed: int,
+    track_config: TrackGenerationConfig | None = None,
+    vehicle_config: VehicleConfig | None = None,
+) -> Track:
+    """Generate, validate, and save a deterministic track file."""
+    generation = track_config or TrackGenerationConfig()
+    vehicle = vehicle_config or VehicleConfig()
+    track = generate_track(
+        seed,
+        track_config=generation,
+        vehicle_config=vehicle,
+    )
+    track.save(
+        path,
+        vehicle_config=vehicle,
+        track_config=generation,
+    )
+    return track
+
+
+def _generate_candidate(
+    seed: int,
+    random: np.random.Generator,
+    config: TrackGenerationConfig,
+) -> Track:
+    checkpoint_angles, checkpoint_positions = _sample_checkpoints(random, config)
+    parameter, x_spline, y_spline = _checkpoint_splines(
+        checkpoint_angles,
+        checkpoint_positions,
+    )
+    segment_lengths = _spline_segment_lengths(parameter, x_spline, y_spline)
+    curve_length = float(np.sum(segment_lengths))
+    sample_count = max(3, round(curve_length / config.sample_spacing_m))
+    track_length = sample_count * config.sample_spacing_m
+    coordinate_scale = track_length / curve_length
+
+    target_curve_s = (
+        np.arange(sample_count, dtype=np.float64)
+        * config.sample_spacing_m
+        / coordinate_scale
+    )
+    sample_parameter = _invert_arc_length(
+        target_curve_s,
+        parameter,
+        segment_lengths,
+        x_spline,
+        y_spline,
+    )
+    x_m = coordinate_scale * np.asarray(x_spline(sample_parameter), dtype=np.float64)
+    y_m = coordinate_scale * np.asarray(y_spline(sample_parameter), dtype=np.float64)
+    dx = np.asarray(x_spline(sample_parameter, 1), dtype=np.float64)
+    dy = np.asarray(y_spline(sample_parameter, 1), dtype=np.float64)
+    heading = np.asarray(np.arctan2(dy, dx), dtype=np.float64)
+    curvature = _periodic_curvature(heading, config.sample_spacing_m)
+
+    return Track(
+        generation=TrackGenerationMetadata(
+            seed=seed,
+            n_checkpoints=config.n_checkpoints,
+            base_radius_m=config.base_radius_m,
+            radial_jitter_fraction=config.radial_jitter_fraction,
+            angular_jitter_sectors=config.angular_jitter_sectors,
+            max_attempts=config.max_attempts,
+        ),
+        width_m=config.width_m,
+        sample_spacing_m=config.sample_spacing_m,
+        track_length_m=track_length,
+        start_index=0,
+        s_m=np.arange(sample_count, dtype=np.float64) * config.sample_spacing_m,
+        x_m=x_m,
+        y_m=y_m,
+        heading_rad=heading,
+        curvature_per_m=curvature,
+    )
+
+
+def _sample_checkpoints(
+    random: np.random.Generator,
+    config: TrackGenerationConfig,
+) -> tuple[FloatArray, FloatArray]:
+    sector = 2.0 * pi / config.n_checkpoints
+    base_angles = np.arange(config.n_checkpoints, dtype=np.float64) * sector
+    angle_jitter = random.uniform(
+        -config.angular_jitter_sectors * sector,
+        config.angular_jitter_sectors * sector,
+        size=config.n_checkpoints,
+    )
+    radial_jitter = random.uniform(
+        -config.radial_jitter_fraction,
+        config.radial_jitter_fraction,
+        size=config.n_checkpoints,
+    )
+    angles = base_angles + angle_jitter
+    radii = config.base_radius_m * (1.0 + radial_jitter)
+    positions = np.column_stack((radii * np.cos(angles), radii * np.sin(angles)))
+    return angles, np.asarray(positions, dtype=np.float64)
+
+
+def _checkpoint_splines(
+    checkpoint_angles: FloatArray,
+    checkpoint_positions: FloatArray,
+) -> tuple[FloatArray, CubicSpline, CubicSpline]:
+    parameter = np.append(checkpoint_angles, checkpoint_angles[0] + 2.0 * pi)
+    x = np.append(checkpoint_positions[:, 0], checkpoint_positions[0, 0])
+    y = np.append(checkpoint_positions[:, 1], checkpoint_positions[0, 1])
+    return (
+        parameter,
+        CubicSpline(parameter, x, bc_type="periodic"),
+        CubicSpline(parameter, y, bc_type="periodic"),
+    )
+
+
+def _spline_segment_lengths(
+    parameter: FloatArray,
+    x_spline: CubicSpline,
+    y_spline: CubicSpline,
+) -> FloatArray:
+    lengths = [
+        quad(
+            lambda value: _spline_speed(value, x_spline, y_spline),
+            float(start),
+            float(end),
+            epsabs=np.finfo(np.float64).eps,
+            epsrel=1e-12,
+        )[0]
+        for start, end in pairwise(parameter)
+    ]
+    return np.asarray(lengths, dtype=np.float64)
+
+
+def _invert_arc_length(
+    target_s: FloatArray,
+    parameter: FloatArray,
+    segment_lengths: FloatArray,
+    x_spline: CubicSpline,
+    y_spline: CubicSpline,
+) -> FloatArray:
+    curve_length = float(np.sum(segment_lengths))
+    solution = solve_ivp(
+        lambda _distance, state: np.asarray(
+            [1.0 / _spline_speed(float(state[0]), x_spline, y_spline)],
+            dtype=np.float64,
+        ),
+        (0.0, curve_length),
+        np.asarray([parameter[0]], dtype=np.float64),
+        method="DOP853",
+        t_eval=target_s,
+        rtol=1e-11,
+        atol=np.finfo(np.float64).eps,
+    )
+    if not solution.success or solution.y.shape != (1, target_s.size):
+        raise TrackValidationError(f"arc-length resampling failed: {solution.message}")
+    return np.asarray(solution.y[0], dtype=np.float64)
+
+
+def _spline_speed(
+    parameter: float,
+    x_spline: CubicSpline,
+    y_spline: CubicSpline,
+) -> float:
+    dx = float(x_spline(parameter, 1))
+    dy = float(y_spline(parameter, 1))
+    return float(np.hypot(dx, dy))
+
+
+def _periodic_curvature(heading_rad: FloatArray, spacing_m: float) -> FloatArray:
+    heading_change = np.asarray(
+        [
+            wrap_angle(float(forward - backward))
+            for forward, backward in zip(
+                np.roll(heading_rad, -1),
+                np.roll(heading_rad, 1),
+                strict=True,
+            )
+        ],
+        dtype=np.float64,
+    )
+    return heading_change / (2.0 * spacing_m)

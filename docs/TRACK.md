@@ -59,10 +59,12 @@ computed from it, rather than being independently implemented.
 ### Track Generation and Table Representation
 
 Track geometry is generated using a seeded **checkpoint-and-smoothing
-algorithm** adapted from Gymnasium's `CarRacing`: random checkpoints are
-scattered around a circle with angular and radial jitter, then a heading
-$\beta$ is walked around the loop under a bounded turn rate. The resulting
-closed curve is smoothed and resampled at constant arc-length intervals.
+algorithm: random checkpoints are scattered around a circle with angular and
+radial jitter. A periodic cubic spline passes through those checkpoints, and
+the resulting closed curve is rescaled by less than half a requested sample
+interval before being resampled at the configured constant arc-length spacing.
+This construction requires no smoothing hyperparameters beyond the checkpoint
+configuration below.
 
 The proposed version 0 generation defaults are explicit configuration values:
 

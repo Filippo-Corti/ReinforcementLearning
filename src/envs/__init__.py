@@ -14,16 +14,24 @@ from .track import (
     TrackValidationError,
     UnsupportedTrackFormatError,
 )
+from .track_generation import (
+    TrackGenerationError,
+    generate_track,
+    generate_track_file,
+)
 
 __all__ = [
     "SegmentIndex",
     "SegmentProjection",
     "Track",
+    "TrackGenerationError",
     "TrackGenerationMetadata",
     "TrackGeometry",
     "TrackUnits",
     "TrackValidationError",
     "UnsupportedTrackFormatError",
+    "generate_track",
+    "generate_track_file",
     "validate_track_geometry",
     "wrap_angle",
 ]

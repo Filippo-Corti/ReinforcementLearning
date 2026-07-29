@@ -278,7 +278,6 @@ def validate_track_geometry(
     _validate_nonlocal_centerline_separation(
         geometry.centerline_index,
         sample_spacing_m=track.sample_spacing_m,
-        track_length_m=track.track_length_m,
         required_separation_m=required_separation,
     )
 
@@ -346,7 +345,6 @@ def _validate_nonlocal_centerline_separation(
     index: SegmentIndex,
     *,
     sample_spacing_m: float,
-    track_length_m: float,
     required_separation_m: float,
 ) -> None:
     pairs = index.candidate_pairs(required_separation_m)
@@ -361,10 +359,7 @@ def _validate_nonlocal_centerline_separation(
             continue
         index_delta = abs(first_index - second_index)
         cyclic_delta = min(index_delta, index.segment_count - index_delta)
-        arc_separation = min(
-            cyclic_delta * sample_spacing_m,
-            track_length_m - cyclic_delta * sample_spacing_m,
-        )
+        arc_separation = max(0.0, (cyclic_delta - 1) * sample_spacing_m)
         if arc_separation <= required_separation_m:
             continue
         distance = _segment_distance(
