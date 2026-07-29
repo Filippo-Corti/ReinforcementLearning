@@ -76,5 +76,19 @@
 
 **Commit**: 2af327a
 
+## 2026-07-29 — Step 3: Track geometry and validation
+
+**Task**: Turn sampled track data into periodic geometric queries and enforce the documented geometric constraints.
+
+**Result**: Added float64 periodic interpolation for centerline position, heading, normal and curvature; sampled left/right boundaries; exact global closest-segment projection backed by a midpoint KD-tree; and validation for length, vehicle curvature limits, centerline and boundary intersections, seam continuity, and nonlocal centerline separation. Track loading and saving now perform geometric validation by default, with an explicit bypass for diagnostic handling of invalid data. Updated the circular fixture to satisfy the project-scale length, width and steering constraints.
+
+**Dependency**: Added SciPy 1.18.0 for periodic cubic splines and the spatial index.
+
+**Validation**: `pip check` reported no broken requirements; all 72 pytest cases passed; source and tests compiled successfully; and diff whitespace validation passed.
+
+**Files**: `PLAN.md`, `requirements.txt`, `src/envs/geometry.py`, `src/envs/track.py`, `src/envs/__init__.py`, `tests/envs/test_track_geometry.py`, `tests/envs/test_track_io.py`, `tests/fixtures/tracks/valid_circle.json`, `docs/DIARY.md`.
+
+**Commit**: 903e96c
+
 *New diary notes go here...*
 
