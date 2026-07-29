@@ -12,7 +12,7 @@ import pytest
     ("configs", "envs", "gymnasium", "numpy", "pygame"),
 )
 def test_scaffold_module_is_importable(module_name: str) -> None:
-    """Every package required by the Phase-1 scaffold can be imported."""
+    """Every package required by the scaffold can be imported."""
     module = importlib.import_module(module_name)
 
     assert module.__name__ == module_name

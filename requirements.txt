@@ -2,5 +2,4 @@ gymnasium==1.3.0
 numpy==2.4.4
 pygame==2.6.1
 pytest==9.1.1
-# Pygame 2.6.1 still uses pkg_resources, which Setuptools 81 deprecates.
 setuptools==80.10.2
