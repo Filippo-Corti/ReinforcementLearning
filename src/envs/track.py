@@ -8,10 +8,13 @@ from dataclasses import dataclass, field
 from math import hypot, isfinite
 from os import PathLike
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from configs import TrackGenerationConfig, VehicleConfig
 
 
 class TrackValidationError(ValueError):
@@ -341,7 +344,14 @@ class Track:
         )
 
     @classmethod
-    def load(cls, path: str | PathLike[str]) -> Track:
+    def load(
+        cls,
+        path: str | PathLike[str],
+        *,
+        validate_geometry: bool = True,
+        vehicle_config: VehicleConfig | None = None,
+        track_config: TrackGenerationConfig | None = None,
+    ) -> Track:
         """Load and validate a UTF-8 JSON track file."""
         source = Path(path)
         try:
@@ -350,7 +360,16 @@ class Track:
             raise TrackValidationError(
                 f"{source} is not valid JSON: {error.msg}."
             ) from error
-        return cls.from_dict(data)
+        track = cls.from_dict(data)
+        if validate_geometry:
+            from .geometry import validate_track_geometry
+
+            validate_track_geometry(
+                track,
+                vehicle_config=vehicle_config,
+                track_config=track_config,
+            )
+        return track
 
     def to_dict(self) -> dict[str, object]:
         """Return the persistent JSON-compatible representation."""
@@ -382,8 +401,23 @@ class Track:
             "samples": samples,
         }
 
-    def save(self, path: str | PathLike[str]) -> None:
-        """Serialize the track deterministically as UTF-8 JSON."""
+    def save(
+        self,
+        path: str | PathLike[str],
+        *,
+        validate_geometry: bool = True,
+        vehicle_config: VehicleConfig | None = None,
+        track_config: TrackGenerationConfig | None = None,
+    ) -> None:
+        """Validate and serialize the track deterministically as UTF-8 JSON."""
+        if validate_geometry:
+            from .geometry import validate_track_geometry
+
+            validate_track_geometry(
+                self,
+                vehicle_config=vehicle_config,
+                track_config=track_config,
+            )
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         serialized = json.dumps(

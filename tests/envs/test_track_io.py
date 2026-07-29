@@ -37,14 +37,17 @@ def test_valid_circle_fixture_loads_into_read_only_arrays() -> None:
         "curvature": "1/m",
     }
     assert track.generation.seed == 0
-    assert track.width_m == 1.0
-    assert track.sample_spacing_m == 1.0
-    assert track.track_length_m == 8.0
+    assert track.width_m == 12.0
+    assert track.sample_spacing_m == 200.0
+    assert track.track_length_m == 1600.0
     assert track.start_index == 0
     assert track.s_m.dtype == np.float64
     assert track.s_m.shape == (8,)
     assert not track.s_m.flags.writeable
-    np.testing.assert_allclose(track.s_m, np.arange(8, dtype=np.float64))
+    np.testing.assert_allclose(
+        track.s_m,
+        np.arange(8, dtype=np.float64) * 200.0,
+    )
 
 
 def test_save_load_round_trip_preserves_runtime_data(tmp_path: Path) -> None:
