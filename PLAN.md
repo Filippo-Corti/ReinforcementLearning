@@ -100,8 +100,8 @@ command before adding behaviour.
 
 **Work:**
 
-- Use the package layout `src/rlc/`.
-- Create the initial `rlc`, `rlc.envs` and `rlc.configs` packages.
+- Use the flat source layout rooted at `src/`.
+- Create the initial `envs` and `configs` packages directly under `src/`.
 - Create `requirements.txt` with explicit constraints for dependencies used by
   this phase.
 - Add packaging and pytest configuration.
@@ -116,9 +116,8 @@ PyTorch is not required until policy implementation.
 
 - `pyproject.toml`
 - `requirements.txt`
-- `src/rlc/__init__.py`
-- `src/rlc/envs/__init__.py`
-- `src/rlc/configs/__init__.py`
+- `src/envs/__init__.py`
+- `src/configs/__init__.py`
 - `tests/test_package.py`
 - `docs/DIARY.md`
 
@@ -146,7 +145,7 @@ validated source of truth.
 
 **Expected files:**
 
-- `src/rlc/configs/environment.py`
+- `src/configs/environment.py`
 - `tests/configs/test_environment_config.py`
 - `docs/DIARY.md`
 
@@ -173,7 +172,7 @@ procedural generation.
 
 **Expected files:**
 
-- `src/rlc/envs/track.py`
+- `src/envs/track.py`
 - `tests/envs/test_track_io.py`
 - `tests/fixtures/tracks/valid_circle.json`
 - `tests/fixtures/tracks/invalid_*.json`
@@ -203,8 +202,8 @@ procedural generation.
 
 **Expected files:**
 
-- `src/rlc/envs/track.py`
-- optional `src/rlc/envs/geometry.py` if the helpers become substantial
+- `src/envs/track.py`
+- optional `src/envs/geometry.py` if the helpers become substantial
 - `tests/envs/test_track_geometry.py`
 - `docs/DIARY.md`
 
@@ -232,7 +231,7 @@ procedural generation.
 
 **Expected files:**
 
-- `src/rlc/envs/track_generation.py`
+- `src/envs/track_generation.py`
 - `experiments/generate_track.py`
 - `tests/envs/test_track_generation.py`
 - `tracks/.gitkeep`
@@ -263,8 +262,8 @@ procedural generation.
 
 **Expected files:**
 
-- `src/rlc/envs/track.py`
-- `src/rlc/envs/observations.py`
+- `src/envs/track.py`
+- `src/envs/observations.py`
 - `tests/envs/test_frenet.py`
 - `docs/DIARY.md`
 
@@ -293,7 +292,7 @@ rendering.
 
 **Expected files:**
 
-- `src/rlc/envs/dynamics.py`
+- `src/envs/dynamics.py`
 - `tests/envs/test_dynamics.py`
 - `docs/DIARY.md`
 
@@ -322,7 +321,7 @@ shell.
 
 **Expected files:**
 
-- `src/rlc/envs/racing.py` or a focused lifecycle helper module
+- `src/envs/racing.py` or a focused lifecycle helper module
 - `tests/envs/test_episode_lifecycle.py`
 - `tests/envs/test_reward.py`
 - `docs/DIARY.md`
@@ -353,8 +352,8 @@ environment.
 
 **Expected files:**
 
-- `src/rlc/envs/racing.py`
-- `src/rlc/envs/__init__.py`
+- `src/envs/racing.py`
+- `src/envs/__init__.py`
 - `tests/envs/test_racing_env.py`
 - `docs/DIARY.md`
 
@@ -382,8 +381,8 @@ environment.
 
 **Expected files:**
 
-- `src/rlc/envs/rendering.py`
-- `src/rlc/envs/racing.py`
+- `src/envs/rendering.py`
+- `src/envs/racing.py`
 - `tests/envs/test_rendering.py`
 - `docs/DIARY.md`
 

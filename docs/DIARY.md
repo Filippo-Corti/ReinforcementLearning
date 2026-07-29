@@ -22,7 +22,7 @@
 
 **Task**: Expand the initial `PLAN.md` into a practical sequence for building and validating the first racing-environment version.
 
-**Result**: Defined the Phase-1 scope, acceptance criteria, execution rules and 12 sequential implementation milestones. Clarified that manual A/D input controls steering angle, added reward and Gymnasium lifecycle work to the environment scope, deferred grip-limited dynamics and LiDAR, and aligned the suggested source layout on the `src/rlc/` package root.
+**Result**: Defined the Phase-1 scope, acceptance criteria, execution rules and 12 sequential implementation milestones. Clarified that manual A/D input controls steering angle, added reward and Gymnasium lifecycle work to the environment scope, deferred grip-limited dynamics and LiDAR, and aligned the suggested flat source layout under `src/`.
 
 **Files**: `PLAN.md`, `AGENTS.md`, `README.md`, `docs/DIARY.md`.
 
