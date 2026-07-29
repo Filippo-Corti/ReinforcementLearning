@@ -30,6 +30,8 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 
 # Additional Notes
 
+The current implementation roadmap is maintained in [`PLAN.md`](PLAN.md).
+
 ## Full Plan
 
 0. **Task and MDP Formalization.**

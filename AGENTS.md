@@ -26,6 +26,7 @@ It controls the acceleration and the steering wheel. It should be heavily penali
 Try to learn a policy that can solve multiple circuits, in particular circuits not seen during training. You may want to train it on multiple, diverse circuits.
 
 ## General directions
+- Check out the `PLAN.md` file for the currently approved execution roadmap and follow its steps in order.
 - Check out the `docs/MDP.md` file for a formalization of the underlying MDP.
 - Check out the `docs/TRACK.md` file for info on how the racing track should be generated, saved into memory and used.
 - Check out the `docs/DIARY.md` file everytime you need to track the progress you have made on the project.
@@ -45,27 +46,28 @@ This is the suggested layout. Feel free to adapt it as you wish, but make sure t
 
 ```
 src/
-├── envs/
-│   ├── racing.py          # RacingEnv(gym.Env): dynamics, reward, termination, render
-│   ├── track.py           # Track geometry: centerline spline, width w(s),
-│   │                      #   arc-length <-> (x,y) (Frenet) conversion, curvature κ(s)
-│   ├── observations.py    # FrenetObservation / LidarObservation wrappers or builders
-│   └── lidar.py           # ray-casting against the track boundary
-├── models/                # (new) reusable neural components
-│   ├── mlp.py             # make_mlp(in, out, hidden_sizes, activation) — the size knob
-│   ├── policies.py        # GaussianPolicy (mean MLP + log-std), deterministic policy
-│   └── value.py           # ValueNetwork critic
-├── agents/
-│   ├── reinforce.py       # project-owned REINFORCE + optional baseline
-│   ├── actor_critic.py    # A2C with GAE
-│   └── ppo.py             # clipped PPO
-├── utils/
-│   ├── buffers.py         # RolloutBuffer, GAE computation
-│   ├── normalizers.py     # RunningMeanStd for obs / returns
-│   ├── training.py        # project-owned generic train/eval loops
-│   ├── seeding.py         # deterministic SeedSequence spawning
-│   └── plotting.py        # learning-curve + track-trajectory plots
-└── configs/               # dataclass or YAML experiment configs (net size sweep, etc.)
+└── rlc/
+    ├── envs/
+    │   ├── racing.py          # RacingEnv(gym.Env): dynamics, reward, termination, render
+    │   ├── track.py           # Track geometry: centerline spline, width w(s),
+    │   │                      #   arc-length <-> (x,y) (Frenet) conversion, curvature κ(s)
+    │   ├── observations.py    # FrenetObservation / LidarObservation wrappers or builders
+    │   └── lidar.py           # ray-casting against the track boundary
+    ├── models/                # reusable neural components
+    │   ├── mlp.py             # make_mlp(in, out, hidden_sizes, activation) — the size knob
+    │   ├── policies.py        # GaussianPolicy (mean MLP + log-std), deterministic policy
+    │   └── value.py           # ValueNetwork critic
+    ├── agents/
+    │   ├── reinforce.py       # project-owned REINFORCE + optional baseline
+    │   ├── actor_critic.py    # A2C with GAE
+    │   └── ppo.py             # clipped PPO
+    ├── utils/
+    │   ├── buffers.py         # RolloutBuffer, GAE computation
+    │   ├── normalizers.py     # RunningMeanStd for obs / returns
+    │   ├── training.py        # project-owned generic train/eval loops
+    │   ├── seeding.py         # deterministic SeedSequence spawning
+    │   └── plotting.py        # learning-curve + track-trajectory plots
+    └── configs/               # dataclass or YAML experiment configs (net size sweep, etc.)
 experiments/               # thin runner scripts / notebooks that call into rlc/
 tests/                     # env + geometry unit tests
 tracks/                    # circuit definitions (e.g. generated_000.json / oval.json)
