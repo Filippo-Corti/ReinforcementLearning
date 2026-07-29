@@ -64,5 +64,17 @@
 
 **Commit**: 2d4d41f
 
+## 2026-07-29 — Step 2: Track data and persistence
+
+**Task**: Implement the sampled-track data model and versioned JSON persistence boundary.
+
+**Result**: Added immutable track units and generation metadata, owned read-only float64 sample arrays, strict schema and numeric validation, uniform arc-length and implicit-closing-segment checks, deterministic UTF-8 serialization, and public track loading/saving APIs. Added a circular fixture and malformed fixtures covering schema, ordering, closure and JSON failures. Advanced geometric validation remains isolated to the next roadmap task.
+
+**Validation**: `pip check` reported no broken requirements; all 57 pytest cases passed; byte-stable save/load was verified; and the installed package loaded the fixture successfully outside the repository.
+
+**Files**: `PLAN.md`, `src/envs/track.py`, `src/envs/__init__.py`, `tests/envs/test_track_io.py`, `tests/fixtures/tracks/*.json`, `docs/DIARY.md`.
+
+**Commit**: 2af327a
+
 *New diary notes go here...*
 
