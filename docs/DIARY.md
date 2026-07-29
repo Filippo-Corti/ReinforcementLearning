@@ -38,5 +38,19 @@
 
 **Commit**: bedfa4b
 
+## 2026-07-29 — Step 0: Python project scaffold
+
+**Task**: Establish the flat-source Python package structure, dependency manifest, packaging configuration and initial test command.
+
+**Result**: Added importable `src/envs` and `src/configs` packages, configured setuptools and pytest in `pyproject.toml`, pinned the approved Phase-1 dependencies in `requirements.txt`, installed the project in editable mode, and added import smoke tests.
+
+**Dependencies**: Gymnasium 1.3.0, NumPy 2.4.4, Pygame 2.6.1, pytest 9.1.1 and Setuptools 80.10.2. Setuptools remains below version 81 because Pygame 2.6.1 still imports the deprecated `pkg_resources` API.
+
+**Validation**: `pip check` reported no broken requirements; all 5 pytest cases passed; and `envs` and `configs` imported successfully from outside the repository.
+
+**Files**: `PLAN.md`, `pyproject.toml`, `requirements.txt`, `src/envs/__init__.py`, `src/configs/__init__.py`, `tests/test_package.py`, `docs/DIARY.md`.
+
+**Commit**: 4d89e3f
+
 *New diary notes go here...*
 
