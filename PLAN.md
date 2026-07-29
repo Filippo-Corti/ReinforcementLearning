@@ -257,6 +257,8 @@ procedural generation.
 
 ### 5. Implement Cartesian-to-Frenet Projection and Preview
 
+**Status:** Completed on 2026-07-29.
+
 **Objective:** Produce the complete version-0 observation geometry.
 
 **Work:**

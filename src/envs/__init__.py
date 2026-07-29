@@ -7,6 +7,11 @@ from .geometry import (
     validate_track_geometry,
     wrap_angle,
 )
+from .observations import (
+    FrenetProjection,
+    FrenetProjector,
+    signed_progress,
+)
 from .track import (
     Track,
     TrackGenerationMetadata,
@@ -21,6 +26,8 @@ from .track_generation import (
 )
 
 __all__ = [
+    "FrenetProjection",
+    "FrenetProjector",
     "SegmentIndex",
     "SegmentProjection",
     "Track",
@@ -32,6 +39,7 @@ __all__ = [
     "UnsupportedTrackFormatError",
     "generate_track",
     "generate_track_file",
+    "signed_progress",
     "validate_track_geometry",
     "wrap_angle",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from math import isfinite, pi, radians, tan
 
@@ -90,6 +91,29 @@ class SegmentIndex:
 
         search_radius = initial_distance + self._max_half_length_m
         candidates = sorted(self._tree.query_ball_point(point, search_radius))
+        return self._project_candidates(point, candidates)
+
+    def project_candidates(
+        self,
+        point_m: FloatArray,
+        segment_indices: Iterable[int],
+    ) -> SegmentProjection:
+        """Return the closest projection among an explicit segment subset."""
+        point = _point_array(point_m, "point_m")
+        candidates = list(segment_indices)
+        if not candidates:
+            raise ValueError("segment_indices must not be empty.")
+        if any(type(index) is not int for index in candidates):
+            raise ValueError("segment_indices must contain only integers.")
+        if any(not 0 <= index < self.segment_count for index in candidates):
+            raise ValueError("segment_indices must reference indexed segments.")
+        return self._project_candidates(point, candidates)
+
+    def _project_candidates(
+        self,
+        point: FloatArray,
+        candidates: Iterable[int],
+    ) -> SegmentProjection:
         best: SegmentProjection | None = None
         for index in candidates:
             projection, fraction, distance = _project_to_segment(
@@ -152,6 +176,7 @@ class TrackGeometry:
             extended_curvature,
             bc_type="periodic",
         )
+        self._curvature_integral = self._curvature_spline.antiderivative()
 
         unwrapped_heading = np.unwrap(track.heading_rad)
         closing_turn = wrap_angle(float(track.heading_rad[0] - track.heading_rad[-1]))
@@ -219,6 +244,30 @@ class TrackGeometry:
         """Interpolate local curvature periodically at arc length ``s_m``."""
         wrapped_s = self._wrapped_s(s_m)
         return float(self._curvature_spline(wrapped_s))
+
+    def integrated_curvature(self, start_s_m: float, distance_m: float) -> float:
+        """Integrate periodic curvature forward over a non-negative distance."""
+        start = self._wrapped_s(start_s_m)
+        if not isfinite(distance_m) or distance_m < 0:
+            raise ValueError("distance_m must be finite and non-negative.")
+        length = self.track.track_length_m
+        complete_laps, remainder = divmod(distance_m, length)
+        lap_integral = float(
+            self._curvature_integral(length) - self._curvature_integral(0.0)
+        )
+        total = complete_laps * lap_integral
+        end = start + remainder
+        if end <= length:
+            total += float(
+                self._curvature_integral(end) - self._curvature_integral(start)
+            )
+        else:
+            total += float(
+                self._curvature_integral(length)
+                - self._curvature_integral(start)
+                + self._curvature_integral(end - length)
+            )
+        return total
 
     def left_boundary_position(self, s_m: float) -> FloatArray:
         """Interpolate the left boundary at arc length ``s_m``."""

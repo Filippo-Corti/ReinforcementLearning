@@ -182,11 +182,13 @@ $[0,S_{\text{track}})$. The signed lateral offset is
 $$ d=(p-p_{\text{proj}})^\top\hat n(s). $$
 
 To keep this cheap, use a temporally coherent segment window around the previous
-projection. The window size is derived from the maximum distance possible in one
-physics step plus four table samples of margin. Resets, teleports and failed
-local searches use a global spatial index over all centerline segments. A local
-result whose displacement is physically implausible must trigger the global
-fallback rather than being accepted or silently clipped.
+projection. Its half-width in samples is
+$\lceil v_{\max}\Delta t_{\mathrm{phys}}/\Delta s_{\mathrm{gen}}\rceil+4$.
+Resets, teleports and failed local searches use a global spatial index over all
+centerline segments. A local projection farther than
+$w/2+v_{\max}\Delta t_{\mathrm{phys}}+4\Delta s_{\mathrm{gen}}$ from the query
+point is treated as physically implausible and triggers the global fallback
+rather than being accepted or silently clipped.
 
 ### Frenet Observation
 
