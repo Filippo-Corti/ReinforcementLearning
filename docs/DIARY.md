@@ -52,5 +52,17 @@
 
 **Commit**: 4d89e3f
 
+## 2026-07-29 — Step 1: Environment configuration
+
+**Task**: Centralize documented environment constants in typed, immutable and validated configuration objects.
+
+**Result**: Added simulation, vehicle, track-generation, reward and Frenet-observation configuration dataclasses; exported them from `configs`; enforced timing relationships and numeric constraints; and provided deterministic plain-dictionary serialization for future run logging. Training and deferred LiDAR settings were intentionally excluded.
+
+**Validation**: `pip check` reported no broken requirements; all 34 pytest cases passed; and the installed package exposed the configuration successfully outside the repository.
+
+**Files**: `PLAN.md`, `src/configs/environment.py`, `src/configs/__init__.py`, `tests/configs/test_environment_config.py`, `docs/DIARY.md`.
+
+**Commit**: 2d4d41f
+
 *New diary notes go here...*
 
