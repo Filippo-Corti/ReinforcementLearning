@@ -280,3 +280,21 @@ static validation suite passed.
 `tests/experiments/test_view_track.py`, `README.md`, `docs/DIARY.md`.
 
 **Commit**: `feature: add interactive track viewer [ai]`
+
+## 2026-07-31 — Main-branch continuous integration
+
+**Task**: Run the repository's automated validation on GitHub for every push to
+`main`.
+
+**Result**: Added a least-privilege GitHub Actions workflow on Ubuntu and Python
+3.13. It installs the pinned project environment with pip caching, then runs
+dependency validation, Black, Ruff, Pyright, source compilation, pytest and
+whitespace checks. This is continuous integration only; the project currently
+has no deployment target.
+
+**Validation**: Verified the workflow structure and reran every configured CI
+command locally.
+
+**Files**: `.github/workflows/ci.yml`, `docs/DIARY.md`.
+
+**Commit**: `ci: validate every push to main [ai]`
