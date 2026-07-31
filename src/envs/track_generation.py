@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 from scipy.integrate import quad, solve_ivp
 from scipy.interpolate import CubicSpline
 
-from configs import TrackGenerationConfig, CarConfig
+from configs import CarConfig, TrackGenerationConfig
 
 from .geometry import validate_track_geometry, wrap_angle
 from .track import Track, TrackGenerationMetadata, TrackValidationError
@@ -20,9 +20,9 @@ FloatArray = NDArray[np.float64]
 
 
 class TrackGenerationError(RuntimeError):
-    """Raised when all deterministic generation attempts are rejected."""
-
-    pass
+    """
+    Raised when all deterministic generation attempts are rejected.
+    """
 
 
 def generate_track_file(
@@ -32,7 +32,9 @@ def generate_track_file(
     track_config: TrackGenerationConfig | None = None,
     vehicle_config: CarConfig | None = None,
 ) -> Track:
-    """Generate and save a deterministic track file."""
+    """
+    Generate and save a deterministic track file.
+    """
     generation = track_config or TrackGenerationConfig()
     vehicle = vehicle_config or CarConfig()
     track = generate_track(
@@ -54,7 +56,9 @@ def generate_track(
     track_config: TrackGenerationConfig | None = None,
     vehicle_config: CarConfig | None = None,
 ) -> Track:
-    """Generate a valid track deterministically from ``seed`` and configuration."""
+    """
+    Generate a valid track deterministically from ``seed`` and configuration.
+    """
     generation = track_config or TrackGenerationConfig()
     vehicle = vehicle_config or CarConfig()
     attempt_sequences = np.random.SeedSequence(seed).spawn(generation.max_attempts)
@@ -103,18 +107,18 @@ def _generate_candidate(
     track_length = sample_count * config.sample_spacing
     coordinate_scale = track_length / curve_length
 
-    target_curve_s = (
+    target_distances = (
         np.arange(sample_count, dtype=np.float64)
         * config.sample_spacing
         / coordinate_scale
     )
     sample_parameter = _invert_arc_length(
-        target_curve_s,
+        target_distances,
         parameter,
         segment_lengths,
         x_spline,
         y_spline,
-    )   
+    )
     x = coordinate_scale * np.asarray(x_spline(sample_parameter), dtype=np.float64)
     y = coordinate_scale * np.asarray(y_spline(sample_parameter), dtype=np.float64)
     dx = np.asarray(x_spline(sample_parameter, 1), dtype=np.float64)
@@ -147,7 +151,9 @@ def _sample_checkpoints(
     random: np.random.Generator,
     config: TrackGenerationConfig,
 ) -> tuple[FloatArray, FloatArray]:
-    """Sample checkpoints for a candidate track from ``random`` and configuration."""
+    """
+    Sample checkpoints for a candidate track from ``random`` and configuration.
+    """
     sector = 2.0 * pi / config.n_checkpoints
     base_angles = np.arange(config.n_checkpoints, dtype=np.float64) * sector
     angle_jitter = random.uniform(
@@ -170,7 +176,9 @@ def _checkpoint_splines(
     checkpoint_angles: FloatArray,
     checkpoint_positions: FloatArray,
 ) -> tuple[FloatArray, CubicSpline, CubicSpline]:
-    """Build periodic splines from checkpoints."""
+    """
+    Build periodic splines from checkpoints.
+    """
     parameter = np.append(checkpoint_angles, checkpoint_angles[0] + 2.0 * pi)
     x = np.append(checkpoint_positions[:, 0], checkpoint_positions[0, 0])
     y = np.append(checkpoint_positions[:, 1], checkpoint_positions[0, 1])
@@ -186,7 +194,9 @@ def _spline_segment_lengths(
     x_spline: CubicSpline,
     y_spline: CubicSpline,
 ) -> FloatArray:
-    """Compute the arc length of each spline segment."""
+    """
+    Compute the arc length of each spline segment.
+    """
     lengths = [
         quad(
             lambda value: _spline_speed(value, x_spline, y_spline),
@@ -201,13 +211,15 @@ def _spline_segment_lengths(
 
 
 def _invert_arc_length(
-    target_s: FloatArray,
+    target_distances: FloatArray,
     parameter: FloatArray,
     segment_lengths: FloatArray,
     x_spline: CubicSpline,
     y_spline: CubicSpline,
 ) -> FloatArray:
-    """Invert the arc-length function to find spline parameters for target arc lengths."""
+    """
+    Invert the arc-length function to find spline parameters for target distances.
+    """
     curve_length = float(np.sum(segment_lengths))
     solution = solve_ivp(
         lambda _distance, state: np.asarray(
@@ -217,11 +229,11 @@ def _invert_arc_length(
         (0.0, curve_length),
         np.asarray([parameter[0]], dtype=np.float64),
         method="DOP853",
-        t_eval=target_s,
+        t_eval=target_distances,
         rtol=1e-11,
         atol=np.finfo(np.float64).eps,
     )
-    if not solution.success or solution.y.shape != (1, target_s.size):
+    if not solution.success or solution.y.shape != (1, target_distances.size):
         raise TrackValidationError(f"arc-length resampling failed: {solution.message}")
     return np.asarray(solution.y[0], dtype=np.float64)
 
@@ -231,20 +243,24 @@ def _spline_speed(
     x_spline: CubicSpline,
     y_spline: CubicSpline,
 ) -> float:
-    """Compute the speed of a spline at a given parameter value."""
+    """
+    Compute the speed of a spline at a given parameter value.
+    """
     dx = float(x_spline(parameter, 1))
     dy = float(y_spline(parameter, 1))
     return float(np.hypot(dx, dy))
 
 
-def _periodic_curvature(heading_rad: FloatArray, spacing: float) -> FloatArray:
-    """Compute the curvature of a periodic track from its heading angles."""
+def _periodic_curvature(heading: FloatArray, spacing: float) -> FloatArray:
+    """
+    Compute the curvature of a periodic track from its heading angles.
+    """
     heading_change = np.asarray(
         [
             wrap_angle(float(forward - backward))
             for forward, backward in zip(
-                np.roll(heading_rad, -1),
-                np.roll(heading_rad, 1),
+                np.roll(heading, -1),
+                np.roll(heading, 1),
                 strict=True,
             )
         ],

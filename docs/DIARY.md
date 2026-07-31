@@ -114,5 +114,29 @@
 
 **Commit**: fb38d4f
 
-*New diary notes go here...*
+## 2026-07-31 — Post-refactor coherence audit
 
+**Task**: Reconcile the track, geometry, generation and Frenet-observation code
+after simplifying validation and adopting the updated coding conventions.
+
+**Result**: Repaired the public `envs` exports and package imports; completed
+the unit-free API naming; aligned the generator CLI and JSON generation
+metadata; applied the required class and function documentation style; and
+configured Black for the project's Python 3.12 compatibility target. Reworked
+the tests around meaningful configuration, persistence, geometry, deterministic
+generation and Frenet-observation behaviour, removing obsolete defensive checks
+and their unused malformed fixtures.
+
+**Dependency**: Added Black 26.5.1 as the explicitly pinned project formatter.
+
+**Validation**: All 49 tests passed. Black, Ruff, Pyright, `pip check`, source
+compilation, editable installation, out-of-tree package imports and an
+out-of-tree generator/load smoke test passed.
+
+**Files**: `pyproject.toml`, `requirements.txt`, `src/configs/`,
+`src/envs/`, `experiments/generate_track.py`, `tests/`, `docs/TRACK.md`,
+`docs/DIARY.md`.
+
+**Commit**: `fix: align track stack after API simplification [ai]`
+
+*New diary notes go here...*

@@ -9,9 +9,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from configs import (
+    CarConfig,
     FrenetObservationConfig,
     SimulationConfig,
-    CarConfig,
 )
 
 from .geometry import SegmentProjection, TrackGeometry, wrap_angle
@@ -23,7 +23,7 @@ FloatArray = NDArray[np.float64]
 class FrenetProjection:
     """
     Projection of one Cartesian point onto the sampled centerline.
-    
+
     Fields:
         * s: The distance along the centerline to the projected point, in meters.
         * lateral_distance: The signed distance from the projected point to the original point, in meters
@@ -47,8 +47,8 @@ class FrenetProjector:
     It provides methods to build Frenet observations, given:
     - The track geometry (centerline, width, etc.)
     - The vehicle's maximum speed and physics timestep (to determine local search windows)
-    - The vehicle's current position and heading (to compute lateral distance and heading error) 
-    
+    - The vehicle's current position and heading (to compute lateral distance and heading error)
+
     Fields:
         * geometry: The track geometry to project onto.
         * max_speed: The maximum speed of the vehicle, in meters per second.
@@ -68,9 +68,7 @@ class FrenetProjector:
         vehicle = vehicle_config or CarConfig()
         self.geometry = geometry
         self.max_speed = vehicle.max_speed
-        maximum_physics_travel = (
-            vehicle.max_speed * simulation.physics_timestep
-        )
+        maximum_physics_travel = vehicle.max_speed * simulation.physics_timestep
         spacing = geometry.track.sample_spacing
         self.local_window = ceil(maximum_physics_travel / spacing) + 4
         self.maximum_local_distance = (
@@ -132,39 +130,42 @@ class FrenetProjector:
             used_global_search=True,
         )
 
-    def xy_from_frenet(self, s_m: float, lateral_distance_m: float) -> FloatArray:
-        """Convert Frenet coordinates to a Cartesian point."""
-        if not isfinite(lateral_distance_m):
-            raise ValueError("lateral_distance_m must be finite.")
-        return self.geometry.position(s_m) + (
-            lateral_distance_m * self.geometry.normal(s_m)
-        )
+    def xy_from_frenet(self, s: float, lateral_distance: float) -> FloatArray:
+        """
+        Convert Frenet coordinates to a Cartesian point.
+        """
+        if not isfinite(lateral_distance):
+            raise ValueError("lateral_distance must be finite.")
+        return self.geometry.position(s) + (lateral_distance * self.geometry.normal(s))
 
-    def heading_error(self, vehicle_heading_rad: float, s_m: float) -> float:
-        """Return wrapped vehicle heading minus centerline heading."""
-        return wrap_angle(vehicle_heading_rad - self.geometry.heading(s_m))
+    def heading_error(self, vehicle_heading: float, s: float) -> float:
+        """
+        Return wrapped vehicle heading minus centerline heading.
+        """
+        return wrap_angle(vehicle_heading - self.geometry.heading(s))
 
     def curvature_preview(
         self,
-        s_m: float,
+        s: float,
         speed: float,
         *,
         config: FrenetObservationConfig | None = None,
     ) -> float:
-        """Return average curvature over the velocity-dependent lookahead."""
+        """
+        Return average curvature over the velocity-dependent lookahead.
+        """
         self._validate_speed(speed)
         observation = config or FrenetObservationConfig()
         lookahead = (
-            observation.lookahead_base
-            + observation.lookahead_speed_factor * speed
+            observation.lookahead_base + observation.lookahead_speed_factor * speed
         )
-        return self.geometry.integrated_curvature(s_m, lookahead) / lookahead
+        return self.geometry.integrated_curvature(s, lookahead) / lookahead
 
     def observation(
         self,
         point: FloatArray,
         *,
-        vehicle_heading_rad: float,
+        vehicle_heading: float,
         speed: float,
         previous_segment_index: int | None = None,
         config: FrenetObservationConfig | None = None,
@@ -181,7 +182,7 @@ class FrenetProjector:
         values = np.asarray(
             [
                 projection.lateral_distance,
-                self.heading_error(vehicle_heading_rad, projection.s),
+                self.heading_error(vehicle_heading, projection.s),
                 speed,
                 self.curvature_preview(
                     projection.s,
@@ -223,13 +224,8 @@ class FrenetProjector:
         )
 
     def _validate_speed(self, speed: float) -> None:
-        if (
-            not isfinite(speed)
-            or not 0 <= speed <= self.max_speed
-        ):
-            raise ValueError(
-                "speed must be finite and within the vehicle speed range."
-            )
+        if not isfinite(speed) or not 0 <= speed <= self.max_speed:
+            raise ValueError("speed must be finite and within the vehicle speed range.")
 
 
 def signed_progress(
@@ -237,20 +233,18 @@ def signed_progress(
     current_s: float,
     track_length: float,
 ) -> float:
-    """Return signed periodic progress in the half-open principal interval."""
+    """
+    Return signed periodic progress in the half-open principal interval.
+    """
     if (
         not isfinite(previous_s)
         or not isfinite(current_s)
         or not isfinite(track_length)
         or track_length <= 0
     ):
-        raise ValueError(
-            "progress positions must be finite and track_length positive."
-        )
+        raise ValueError("progress positions must be finite and track_length positive.")
     difference = current_s - previous_s
-    return float(
-        (difference + track_length / 2.0) % track_length - track_length / 2.0
-    )
+    return float((difference + track_length / 2.0) % track_length - track_length / 2.0)
 
 
 def _point_array(value: FloatArray, name: str) -> FloatArray:

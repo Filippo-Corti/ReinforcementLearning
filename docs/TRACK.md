@@ -129,13 +129,12 @@ Version 0 files contain:
 ```json
 {
   "format_version": 1,
-  "units": {"length": "m", "angle": "rad", "curvature": "1/m"},
   "generation": {
     "seed": 0,
     "n_checkpoints": 12,
     "base_radius": 250.0,
     "radial_jitter": 0.25,
-    "angular_jitter_sectors": 0.25,
+    "angular_jitter": 0.25,
     "max_attempts": 100
   },
   "width": 12.0,
@@ -149,10 +148,11 @@ Version 0 files contain:
 ```
 
 The sample shown is schematic; `track_length` and all samples come from the
-generator. Loading validates the schema, units, sample order, periodic closing
-segment and all geometric constraints. Unknown `format_version` values are
-rejected. Generation metadata is retained even though runtime behaviour depends
-only on the validated geometry.
+generator. The loader decodes this project-owned format and rejects unknown
+`format_version` values before applying the geometric constraints. The format
+uses meters, radians and inverse meters throughout, as documented by the field
+descriptions rather than by a redundant units object. Generation metadata is
+retained even though runtime behaviour depends only on the validated geometry.
 
 ## Track Usage
 

@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
 from typing import Any, ClassVar
+
 import numpy as np
 from numpy.typing import NDArray
 
-from ..configs import TrackGenerationConfig, CarConfig
+from configs import CarConfig, TrackGenerationConfig
 
 
 class TrackValidationError(ValueError):
-    """Raised when track data does not satisfy the persistent schema."""
-
-    pass
+    """
+    Raised when track data does not satisfy the persistent schema.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +30,7 @@ class TrackGenerationMetadata:
         * n_checkpoints: The number of checkpoints used to generate the track.
         * base_radius: The base radius of the track in meters.
         * radial_jitter: The fraction of the base radius used to jitter the checkpoints radially.
-        * angular_jitter: The fraction of the circle used to jitter the checkpoints angularly.
+        * angular_jitter: The fraction of one checkpoint sector used for angular jitter.
         * max_attempts: The maximum number of attempts to generate a valid track.
     """
 
@@ -43,7 +43,9 @@ class TrackGenerationMetadata:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TrackGenerationMetadata:
-        """Build generation metadata from its JSON representation."""
+        """
+        Build generation metadata from its JSON representation.
+        """
         return cls(
             seed=data["seed"],
             n_checkpoints=data["n_checkpoints"],
@@ -54,7 +56,9 @@ class TrackGenerationMetadata:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return JSON-compatible generation metadata."""
+        """
+        Return JSON-compatible generation metadata.
+        """
         return {
             "seed": self.seed,
             "n_checkpoints": self.n_checkpoints,
@@ -68,7 +72,7 @@ class TrackGenerationMetadata:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Track:
     """
-    Discrete, immutable representation of a closed racing track.
+    Discrete representation of a closed racing track.
     It stores samples of the track's centerline at uniform arc-length intervals, along with
     the track's width and metadata describing how it was generated.
 
@@ -100,7 +104,9 @@ class Track:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Track:
-        """Build a track from a decoded JSON object."""
+        """
+        Build a track from a decoded JSON object.
+        """
         format_version = data["format_version"]
         if format_version != cls.FORMAT_VERSION:
             raise TrackValidationError(
@@ -134,7 +140,9 @@ class Track:
         )
 
     def to_dict(self) -> dict[str, object]:
-        """Return the persistent JSON-compatible representation."""
+        """
+        Return the persistent JSON-compatible representation.
+        """
         samples = [
             {
                 "s": float(s),
@@ -166,7 +174,9 @@ class Track:
         vehicle_config: CarConfig | None = None,
         track_config: TrackGenerationConfig | None = None,
     ) -> Track:
-        """Load and validate a UTF-8 JSON track file."""
+        """
+        Load and validate a UTF-8 JSON track file.
+        """
         source = Path(path)
         try:
             data = json.loads(source.read_text(encoding="utf-8"))
@@ -192,7 +202,9 @@ class Track:
         vehicle_config: CarConfig | None = None,
         track_config: TrackGenerationConfig | None = None,
     ) -> None:
-        """Validate and serialize the track deterministically as UTF-8 JSON."""
+        """
+        Validate and serialize the track deterministically as UTF-8 JSON.
+        """
         if validate_geometry:
             from .geometry import validate_track_geometry
 

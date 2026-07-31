@@ -15,9 +15,7 @@ from .observations import (
 from .track import (
     Track,
     TrackGenerationMetadata,
-    TrackUnits,
     TrackValidationError,
-    UnsupportedTrackFormatError,
 )
 from .track_generation import (
     TrackGenerationError,
@@ -28,15 +26,13 @@ from .track_generation import (
 __all__ = [
     "FrenetProjection",
     "FrenetProjector",
-    "SegmentIndex",
+    "PolylineProjector",
     "SegmentProjection",
     "Track",
     "TrackGenerationError",
     "TrackGenerationMetadata",
     "TrackGeometry",
-    "TrackUnits",
     "TrackValidationError",
-    "UnsupportedTrackFormatError",
     "generate_track",
     "generate_track_file",
     "signed_progress",

@@ -1,9 +1,9 @@
-"""Typed and validated configuration for the racing environment."""
+"""Configuration for the racing environment."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from math import isclose, isfinite
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,13 +30,13 @@ class CarConfig:
     Physical configuration of the racing car.
 
     Fields:
-        * wheelbase_m: The distance between the front and rear axles of the vehicle, in meters.
-        * max_acceleration_m_per_s2: The maximum acceleration of the vehicle, in m/s^2.
-        * max_steering_angle_deg: The maximum steering angle of the vehicle, in degrees.
-        * max_speed_m_per_s: The maximum speed of the vehicle, in m/s.
+        * wheelbase: The distance between the front and rear axles, in meters.
+        * max_acceleration: The maximum acceleration, in meters per second squared.
+        * max_steering_angle: The maximum steering angle, in degrees.
+        * max_speed: The maximum speed, in meters per second.
     """
 
-    wheelbase_m: float = 3.6
+    wheelbase: float = 3.6
     max_acceleration: float = 9.26
     max_steering_angle: float = 30.0
     max_speed: float = 70.0
@@ -45,13 +45,13 @@ class CarConfig:
 @dataclass(frozen=True, slots=True)
 class TrackGenerationConfig:
     """
-    Configuration for the procedural track generation validation.
-    The track is generated starting from a circle of radius ``base_radius_m``
+    Configuration for procedural track generation and geometric validation.
+    The track is generated starting from a circle of radius ``base_radius``
     and then jittered radially and angularly to create a smooth, closed track.
 
     Fields:
         * n_checkpoints: The number of checkpoints used to define the track's shape. Must be at least 3.
-        * base_radius_m: The base radius of the track, in meters.
+        * base_radius: The base radius of the track, in meters.
         * radial_jitter: The fraction of the base radius by which checkpoints can vary radially.
         * angular_jitter: The fraction of the angular range by which checkpoints can vary.
         * sample_spacing: The spacing between samples along the track, in meters.
@@ -94,21 +94,31 @@ class RewardConfig:
 
 @dataclass(frozen=True, slots=True)
 class FrenetObservationConfig:
-    """Configuration of the Frenet Observation of the environment.
-    
+    """
+    Configuration of the Frenet observation.
+
     Fields:
         * lookahead_base: The base lookahead distance for the Frenet observation, in meters.
         * lookahead_speed_factor: The speed factor used to adjust the lookahead distance based on the speed, in seconds.
     """
 
-    lookahead_base: float =  5.0 
-    lookahead_speed_factor: float = 0.7  
+    lookahead_base: float = 5.0
+    lookahead_speed_factor: float = 0.7
 
 
 @dataclass(frozen=True, slots=True)
 class EnvironmentConfig:
-    """Complete configuration of environment-owned behaviour."""
-    
+    """
+    Complete configuration of environment-owned behaviour.
+
+    Fields:
+        * simulation: Simulation timing and episode settings.
+        * vehicle: Physical car settings.
+        * track: Track generation and validation settings.
+        * reward: Reward function settings.
+        * observation: Frenet observation settings.
+    """
+
     simulation: SimulationConfig = field(default_factory=SimulationConfig)
     vehicle: CarConfig = field(default_factory=CarConfig)
     track: TrackGenerationConfig = field(default_factory=TrackGenerationConfig)
@@ -117,6 +127,8 @@ class EnvironmentConfig:
         default_factory=FrenetObservationConfig
     )
 
-    def to_dict(self) -> dict[str, object]:
-        """Return a deterministic plain-dictionary representation."""
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Return a deterministic plain-dictionary representation.
+        """
         return asdict(self)

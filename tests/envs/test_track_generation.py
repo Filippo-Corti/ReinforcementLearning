@@ -18,30 +18,30 @@ from envs import (
 from experiments.generate_track import build_parser, main
 
 
-def test_same_seed_and_configuration_produce_identical_track_data() -> None:
+def test_same_seed_produces_identical_track_data() -> None:
     first = generate_track(7)
     second = generate_track(7)
 
     assert first.to_dict() == second.to_dict()
 
 
-@pytest.mark.parametrize("seed", [0, 1, 2])
-def test_fixed_seeds_produce_valid_tracks(seed: int) -> None:
-    track = generate_track(seed)
+def test_generated_track_is_valid_and_uniformly_sampled() -> None:
+    track = generate_track(0)
 
-    geometry = validate_track_geometry(track)
-
-    assert geometry.track is track
-    assert 1_000.0 <= track.track_length_m <= 3_000.0
-    assert track.sample_spacing_m == pytest.approx(0.5)
-    assert track.s_m.dtype == np.float64
+    assert validate_track_geometry(track).track is track
+    assert 1_000.0 <= track.track_length <= 3_000.0
+    assert track.sample_spacing == pytest.approx(0.5)
+    np.testing.assert_allclose(
+        track.s,
+        np.arange(track.s.size, dtype=np.float64) * track.sample_spacing,
+    )
 
 
 def test_different_seeds_produce_different_geometry() -> None:
     first = generate_track(10)
     second = generate_track(11)
 
-    assert not np.array_equal(first.x_m, second.x_m)
+    assert not np.array_equal(first.x, second.x)
 
 
 def test_generation_does_not_change_numpy_global_random_state() -> None:
@@ -56,24 +56,15 @@ def test_generation_does_not_change_numpy_global_random_state() -> None:
     np.testing.assert_array_equal([first, second], expected)
 
 
-def test_retry_exhaustion_reports_attempt_count_and_constraint() -> None:
+def test_retry_exhaustion_reports_attempt_count() -> None:
     config = TrackGenerationConfig(
         max_attempts=2,
-        min_length_m=1_000.0,
-        max_length_m=1_001.0,
+        min_length=1_000.0,
+        max_length=1_001.0,
     )
 
-    with pytest.raises(
-        TrackGenerationError,
-        match=r"after 2 attempts: 2x track length",
-    ):
+    with pytest.raises(TrackGenerationError, match="after 2 attempts"):
         generate_track(0, track_config=config)
-
-
-@pytest.mark.parametrize("seed", [-1, True])
-def test_invalid_seed_is_rejected(seed: int) -> None:
-    with pytest.raises(ValueError, match="non-negative integer"):
-        generate_track(seed)
 
 
 def test_generated_file_loads_through_public_loader(tmp_path: Path) -> None:

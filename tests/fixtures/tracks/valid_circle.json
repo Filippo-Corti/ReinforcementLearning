@@ -5,7 +5,7 @@
     "n_checkpoints": 8,
     "base_radius": 254.64790894703253,
     "radial_jitter": 0.0,
-    "angular_jitter_sectors": 0.0,
+    "angular_jitter": 0.0,
     "max_attempts": 1
   },
   "width": 12.0,

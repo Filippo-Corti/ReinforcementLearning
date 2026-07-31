@@ -1,19 +1,19 @@
 """Configuration objects."""
 
 from .environment import (
+    CarConfig,
     EnvironmentConfig,
     FrenetObservationConfig,
     RewardConfig,
     SimulationConfig,
     TrackGenerationConfig,
-    CarConfig,
 )
 
 __all__ = [
+    "CarConfig",
     "EnvironmentConfig",
     "FrenetObservationConfig",
     "RewardConfig",
     "SimulationConfig",
     "TrackGenerationConfig",
-    "CarConfig",
 ]

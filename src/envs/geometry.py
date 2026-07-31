@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 from scipy.interpolate import CubicSpline
 from scipy.spatial import cKDTree
 
-from configs import TrackGenerationConfig, CarConfig
+from configs import CarConfig, TrackGenerationConfig
 
 from .track import Track, TrackValidationError
 
@@ -28,7 +28,7 @@ class SegmentProjection:
         * segment_index: The index of the relevant segment in the closed polyline.
         * fraction: The fraction along the segment where the projection occurs, in [0, 1].
         * point: The projected point in Cartesian coordinates, as a 2D array.
-        * distance: The Euclidean distance from the original point to the projected point,
+        * distance: The Euclidean distance from the original point to the projected point.
     """
 
     segment_index: int
@@ -75,7 +75,9 @@ class PolylineProjector:
 
     @property
     def segment_count(self) -> int:
-        """Number of segments in the closed polyline."""
+        """
+        Return the number of segments in the closed polyline.
+        """
         return self.starts.shape[0]
 
     def project(self, point: FloatArray) -> SegmentProjection:
@@ -102,7 +104,7 @@ class PolylineProjector:
     ) -> SegmentProjection:
         """
         Return the closest projection among an explicit segment subset.
-        It may be useful to restrict the search to a local window of segments, 
+        It may be useful to restrict the search to a local window of segments,
         when the point is known to be near a certain portion of the closed polyline.
         """
         point = _point_array(point, "point")
@@ -144,7 +146,9 @@ class PolylineProjector:
         return best
 
     def candidate_pairs(self, maximum_distance: float) -> NDArray[np.int64]:
-        """Return segment-index pairs that may be within a target distance."""
+        """
+        Return segment-index pairs that may be within a target distance.
+        """
         search_radius = maximum_distance + 2.0 * self._max_half_length
         pairs = self._tree.query_pairs(search_radius, output_type="ndarray")
         if pairs.size == 0:
@@ -225,17 +229,21 @@ class TrackGeometry:
         self.left_boundary_projector = PolylineProjector(self.left_boundary)
         self.right_boundary_projector = PolylineProjector(self.right_boundary)
 
-    def position(self, s_m: float) -> FloatArray:
-        """Interpolate centerline position periodically at arc length ``s``."""
-        wrapped = self._wrapped(s_m)
+    def position(self, s: float) -> FloatArray:
+        """
+        Interpolate centerline position periodically at arc length ``s``.
+        """
+        wrapped = self._wrapped(s)
         return np.array(
             [self._x_spline(wrapped), self._y_spline(wrapped)],
             dtype=np.float64,
         )
 
-    def heading(self, s_m: float) -> float:
-        """Interpolate wrapped centerline heading at arc length ``s``."""
-        wrapped = self._wrapped(s_m)
+    def heading(self, s: float) -> float:
+        """
+        Interpolate wrapped centerline heading at arc length ``s``.
+        """
+        wrapped = self._wrapped(s)
         unwrapped = float(
             np.interp(
                 wrapped,
@@ -245,21 +253,27 @@ class TrackGeometry:
         )
         return wrap_angle(unwrapped)
 
-    def normal(self, s_m: float) -> FloatArray:
-        """Return the unit normal pointing left of the centerline tangent."""
-        heading = self.heading(s_m)
+    def normal(self, s: float) -> FloatArray:
+        """
+        Return the unit normal pointing left of the centerline tangent.
+        """
+        heading = self.heading(s)
         return np.array(
             [-np.sin(heading), np.cos(heading)],
             dtype=np.float64,
         )
 
-    def curvature(self, s_m: float) -> float:
-        """Interpolate local curvature periodically at arc length ``s``."""
-        wrapped = self._wrapped(s_m)
+    def curvature(self, s: float) -> float:
+        """
+        Interpolate local curvature periodically at arc length ``s``.
+        """
+        wrapped = self._wrapped(s)
         return float(self._curvature_spline(wrapped))
 
     def integrated_curvature(self, start_s: float, distance: float) -> float:
-        """Integrate periodic curvature forward over a non-negative distance."""
+        """
+        Integrate periodic curvature forward over a non-negative distance.
+        """
         start = self._wrapped(start_s)
         if not isfinite(distance) or distance < 0:
             raise ValueError("distance must be finite and non-negative.")
@@ -282,23 +296,29 @@ class TrackGeometry:
             )
         return total
 
-    def left_boundary_position(self, s_m: float) -> FloatArray:
-        """Interpolate the left boundary at arc length ``s_m``."""
-        return self.position(s_m) + (self.track.width / 2.0) * self.normal(s_m)
+    def left_boundary_position(self, s: float) -> FloatArray:
+        """
+        Interpolate the left boundary at arc length ``s``.
+        """
+        return self.position(s) + (self.track.width / 2.0) * self.normal(s)
 
-    def right_boundary_position(self, s_m: float) -> FloatArray:
-        """Interpolate the right boundary at arc length ``s_m``."""
-        return self.position(s_m) - (self.track.width / 2.0) * self.normal(s_m)
+    def right_boundary_position(self, s: float) -> FloatArray:
+        """
+        Interpolate the right boundary at arc length ``s``.
+        """
+        return self.position(s) - (self.track.width / 2.0) * self.normal(s)
 
     def _wrapped(self, s: float) -> float:
         return float(s % self.track.track_length)
 
 
-def wrap_angle(angle_rad: float) -> float:
-    """Wrap an angle to the half-open interval ``[-pi, pi)``."""
-    if not isfinite(angle_rad):
-        raise ValueError("angle_rad must be finite.")
-    return float((angle_rad + pi) % (2.0 * pi) - pi)
+def wrap_angle(angle: float) -> float:
+    """
+    Wrap an angle to the half-open interval ``[-pi, pi)``.
+    """
+    if not isfinite(angle):
+        raise ValueError("angle must be finite.")
+    return float((angle + pi) % (2.0 * pi) - pi)
 
 
 def validate_track_geometry(
@@ -309,7 +329,7 @@ def validate_track_geometry(
 ) -> TrackGeometry:
     """
     Validate geometric constraints and return prepared track geometry.
-    
+
     This includes checking that:
     - The track length is within the configured generation range.
     - The track curvature does not exceed the vehicle's kinematic steering limit.
@@ -326,7 +346,7 @@ def validate_track_geometry(
             "track length must be within the configured generation range."
         )
 
-    maximum_curvature = tan(radians(vehicle.max_steering_angle)) / (vehicle.wheelbase_m)
+    maximum_curvature = tan(radians(vehicle.max_steering_angle)) / vehicle.wheelbase
     if np.any(np.abs(track.curvature) > maximum_curvature + 1e-12):
         raise TrackValidationError(
             "track curvature exceeds the vehicle kinematic steering limit."

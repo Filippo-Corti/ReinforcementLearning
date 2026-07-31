@@ -27,6 +27,9 @@ filterwarnings = [
     "ignore:pkg_resources is deprecated as an API.*:UserWarning:pygame.pkgdata",
 ]
 
+[tool.black]
+target-version = ["py312"]
+
 [tool.pyright]
 include = ["src", "tests"]
 extraPaths = ["src"]
