@@ -68,7 +68,9 @@ class TrackGenerationMetadata:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Track:
     """
-    Representation of a closed racing track.
+    Discrete, immutable representation of a closed racing track.
+    It stores samples of the track's centerline at uniform arc-length intervals, along with
+    the track's width and metadata describing how it was generated.
 
     Fields:
         * generation: Metadata describing the configuration and seed that produced the track.

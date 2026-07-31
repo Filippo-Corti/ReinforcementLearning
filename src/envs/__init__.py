@@ -1,7 +1,7 @@
 """Racing environment, dynamics, geometry, and observation components."""
 
 from .geometry import (
-    SegmentIndex,
+    PolylineProjector,
     SegmentProjection,
     TrackGeometry,
     validate_track_geometry,

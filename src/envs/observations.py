@@ -42,7 +42,20 @@ class FrenetProjection:
 
 
 class FrenetProjector:
-    """State-aware centerline projector with a safe global fallback."""
+    """
+    Frenet projection processor for a given track and vehicle configuration.
+    It provides methods to build Frenet observations, given:
+    - The track geometry (centerline, width, etc.)
+    - The vehicle's maximum speed and physics timestep (to determine local search windows)
+    - The vehicle's current position and heading (to compute lateral distance and heading error) 
+    
+    Fields:
+        * geometry: The track geometry to project onto.
+        * max_speed: The maximum speed of the vehicle, in meters per second.
+        * local_window: The number of centerline segments to consider for local projection.
+        * maximum_local_distance: The maximum distance from the centerline to consider for local projection,
+          in meters. If the point is further away than this distance, a global search will be performed.
+    """
 
     def __init__(
         self,
@@ -54,12 +67,12 @@ class FrenetProjector:
         simulation = simulation_config or SimulationConfig()
         vehicle = vehicle_config or CarConfig()
         self.geometry = geometry
-        self.maximum_speed_m_per_s = vehicle.max_speed
+        self.max_speed = vehicle.max_speed
         maximum_physics_travel = (
             vehicle.max_speed * simulation.physics_timestep
         )
         spacing = geometry.track.sample_spacing
-        self.local_window_segments = ceil(maximum_physics_travel / spacing) + 4
+        self.local_window = ceil(maximum_physics_travel / spacing) + 4
         self.maximum_local_distance = (
             geometry.track.width / 2.0 + maximum_physics_travel + 4.0 * spacing
         )
@@ -70,10 +83,14 @@ class FrenetProjector:
         *,
         previous_segment_index: int | None = None,
     ) -> FrenetProjection:
-        """Project a point locally when safe, otherwise search globally."""
+        """
+        Return the Frenet projection of a point onto the track centerline.
+        It first attempts to project the point onto a local window of segments around the previous segment index, if provided.
+        If the point is too far from the local window, a global search is performed instead.
+        """
         point = _point_array(point, "point")
         if previous_segment_index is None:
-            projection = self.geometry.centerline_index.project(point)
+            projection = self.geometry.centerline_projector.project(point)
             return self._frenet_projection(
                 point,
                 projection,
@@ -83,21 +100,21 @@ class FrenetProjector:
             type(previous_segment_index) is not int
             or not 0
             <= previous_segment_index
-            < self.geometry.centerline_index.segment_count
+            < self.geometry.centerline_projector.segment_count
         ):
             raise ValueError(
                 "previous_segment_index must reference a centerline segment."
             )
 
-        segment_count = self.geometry.centerline_index.segment_count
+        segment_count = self.geometry.centerline_projector.segment_count
         candidates = {
             (previous_segment_index + offset) % segment_count
             for offset in range(
-                -self.local_window_segments,
-                self.local_window_segments + 1,
+                -self.local_window,
+                self.local_window + 1,
             )
         }
-        local = self.geometry.centerline_index.project_candidates(
+        local = self.geometry.centerline_projector.project_candidates(
             point,
             sorted(candidates),
         )
@@ -108,7 +125,7 @@ class FrenetProjector:
                 used_global_search=False,
             )
 
-        global_projection = self.geometry.centerline_index.project(point)
+        global_projection = self.geometry.centerline_projector.project(point)
         return self._frenet_projection(
             point,
             global_projection,
@@ -152,7 +169,10 @@ class FrenetProjector:
         previous_segment_index: int | None = None,
         config: FrenetObservationConfig | None = None,
     ) -> tuple[FloatArray, FrenetProjection]:
-        """Build ``(d, heading error, speed, curvature preview)``."""
+        """
+        Build the Frenet observation ``(d, heading error, speed, curvature preview)``
+        given the current vehicle state (position, heading, speed) and the previous segment index (for efficiency).
+        """
         self._validate_speed(speed)
         projection = self.project(
             point,
@@ -205,7 +225,7 @@ class FrenetProjector:
     def _validate_speed(self, speed: float) -> None:
         if (
             not isfinite(speed)
-            or not 0 <= speed <= self.maximum_speed_m_per_s
+            or not 0 <= speed <= self.max_speed
         ):
             raise ValueError(
                 "speed must be finite and within the vehicle speed range."

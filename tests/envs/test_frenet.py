@@ -126,7 +126,7 @@ def test_frenet_cartesian_round_trip_on_straight() -> None:
 
 
 def test_projection_onto_explicit_segment_subset() -> None:
-    index = _rectangle_geometry().centerline_index
+    index = _rectangle_geometry().centerline_projector
 
     result = index.project_candidates(np.asarray([-110.0, -97.0]), [0])
 
@@ -160,7 +160,7 @@ def test_temporally_coherent_projection_uses_local_window(
     result = projector.project(point, previous_segment_index=0)
 
     assert not result.used_global_search
-    assert result.segment_index <= projector.local_window_segments
+    assert result.segment_index <= projector.local_window
 
 
 def test_implausible_local_projection_triggers_global_fallback(
@@ -168,7 +168,7 @@ def test_implausible_local_projection_triggers_global_fallback(
 ) -> None:
     projector = FrenetProjector(circle_geometry)
     point = projector.xy_from_frenet(0.0, 0.0)
-    opposite_segment = circle_geometry.centerline_index.segment_count // 2
+    opposite_segment = circle_geometry.centerline_projector.segment_count // 2
 
     result = projector.project(
         point,
@@ -178,7 +178,7 @@ def test_implausible_local_projection_triggers_global_fallback(
     assert result.used_global_search
     assert result.segment_index in {
         0,
-        circle_geometry.centerline_index.segment_count - 1,
+        circle_geometry.centerline_projector.segment_count - 1,
     }
 
 
@@ -269,7 +269,7 @@ def test_invalid_projection_and_observation_inputs_are_rejected(
 
 
 def test_segment_subset_validation(circle_geometry: TrackGeometry) -> None:
-    index = circle_geometry.centerline_index
+    index = circle_geometry.centerline_projector
 
     with pytest.raises(ValueError, match="must not be empty"):
         index.project_candidates(np.zeros(2), [])

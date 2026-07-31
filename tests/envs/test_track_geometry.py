@@ -11,7 +11,7 @@ import pytest
 
 from configs import TrackGenerationConfig
 from envs import (
-    SegmentIndex,
+    PolylineProjector,
     Track,
     TrackGenerationMetadata,
     TrackGeometry,
@@ -125,7 +125,7 @@ def test_boundary_convention_places_left_toward_circle_interior() -> None:
 
 
 def test_segment_index_finds_global_closest_projection() -> None:
-    index = SegmentIndex(
+    index = PolylineProjector(
         np.asarray(
             [
                 [0.0, 0.0],
@@ -164,11 +164,11 @@ def test_segment_index_rejects_invalid_polylines(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        SegmentIndex(np.asarray(points))
+        PolylineProjector(np.asarray(points))
 
 
 def test_segment_index_rejects_invalid_queries() -> None:
-    index = SegmentIndex(np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]))
+    index = PolylineProjector(np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]))
 
     with pytest.raises(ValueError, match="shape"):
         index.project(np.asarray([0.0]))

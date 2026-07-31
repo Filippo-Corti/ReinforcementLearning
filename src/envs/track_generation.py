@@ -25,6 +25,29 @@ class TrackGenerationError(RuntimeError):
     pass
 
 
+def generate_track_file(
+    path: str | PathLike[str],
+    *,
+    seed: int,
+    track_config: TrackGenerationConfig | None = None,
+    vehicle_config: CarConfig | None = None,
+) -> Track:
+    """Generate and save a deterministic track file."""
+    generation = track_config or TrackGenerationConfig()
+    vehicle = vehicle_config or CarConfig()
+    track = generate_track(
+        seed,
+        track_config=generation,
+        vehicle_config=vehicle,
+    )
+    track.save(
+        path,
+        vehicle_config=vehicle,
+        track_config=generation,
+    )
+    return track
+
+
 def generate_track(
     seed: int,
     *,
@@ -53,29 +76,6 @@ def generate_track(
         f"failed to generate a valid track for seed {seed} after "
         f"{generation.max_attempts} attempts"
     )
-
-
-def generate_track_file(
-    path: str | PathLike[str],
-    *,
-    seed: int,
-    track_config: TrackGenerationConfig | None = None,
-    vehicle_config: CarConfig | None = None,
-) -> Track:
-    """Generate and save a deterministic track file."""
-    generation = track_config or TrackGenerationConfig()
-    vehicle = vehicle_config or CarConfig()
-    track = generate_track(
-        seed,
-        track_config=generation,
-        vehicle_config=vehicle,
-    )
-    track.save(
-        path,
-        vehicle_config=vehicle,
-        track_config=generation,
-    )
-    return track
 
 
 def _generate_candidate(
@@ -114,7 +114,7 @@ def _generate_candidate(
         segment_lengths,
         x_spline,
         y_spline,
-    )
+    )   
     x = coordinate_scale * np.asarray(x_spline(sample_parameter), dtype=np.float64)
     y = coordinate_scale * np.asarray(y_spline(sample_parameter), dtype=np.float64)
     dx = np.asarray(x_spline(sample_parameter, 1), dtype=np.float64)

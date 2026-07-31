@@ -17,16 +17,15 @@ from .track import Track, TrackValidationError
 
 FloatArray = NDArray[np.float64]
 
-# TODO: understand this full file
 
 @dataclass(frozen=True, slots=True)
 class SegmentProjection:
     """
-    Closest-point result for one segment in a closed polyline.
-    TODO: complete description
-    
+    Result of projecting a point (x, y) onto a segment of a closed polyline.
+    The closed polyline can either be the centerline or one of the boundaries of a track.
+
     Fields:
-        * segment_index: The index of the segment in the closed polyline.
+        * segment_index: The index of the relevant segment in the closed polyline.
         * fraction: The fraction along the segment where the projection occurs, in [0, 1].
         * point: The projected point in Cartesian coordinates, as a 2D array.
         * distance: The Euclidean distance from the original point to the projected point,
@@ -38,15 +37,21 @@ class SegmentProjection:
     distance: float
 
 
-class SegmentIndex:
+class PolylineProjector:
     """
-    Global exact nearest-segment search backed by a midpoint KD-tree.
-    TODO: what is a KD-tree?
-    
+    Projection processor for a given closed polyline (a sequence of 2D points with the last point implicitly connected to the first).
+    It provides efficient functionalities for:
+    - Projecting a point onto the nearest segment of the closed polyline.
+    - Projecting a point onto a specified subset of segments.
+    - Finding pairs of segments that may be within a specified distance of each other.
+
     Fields:
-        * _starts: The start points of the segments in the closed polyline, as a 2D array.
-        * _ends: The end points of the segments in the closed polyline, as a
-        ...
+        * starts: The start points of the segments in the closed polyline, as a 2D array.
+        * ends: The end points of the segments in the closed polyline, as a 2D array.
+        * lengths: The lengths of the segments in the closed polyline, as a 1D array.
+        * midpoints: The midpoints of the segments in the closed polyline, as a 2D array.
+        * _max_half_length: The maximum half-length of the segments, used for search radius calculations.
+        * _tree: A cKDTree built from the midpoints of the segments, used for efficient nearest-neighbor searches.
     """
 
     def __init__(self, points: FloatArray) -> None:
@@ -59,48 +64,31 @@ class SegmentIndex:
         if np.any(lengths <= 0):
             raise ValueError("closed polylines cannot contain zero-length segments.")
 
-        points.setflags(write=False)
-        ends.setflags(write=False)
-        lengths.setflags(write=False)
         midpoints = (points + ends) / 2.0
-        midpoints.setflags(write=False)
 
-        self._starts = points
-        self._ends = ends
-        self._lengths = lengths
-        self._midpoints = midpoints
+        self.starts = points
+        self.ends = ends
+        self.lengths = lengths
+        self.midpoints = midpoints
         self._max_half_length = float(np.max(lengths) / 2.0)
         self._tree = cKDTree(midpoints)
 
     @property
-    def starts(self) -> FloatArray:
-        """Read-only segment start points."""
-        return self._starts
-
-    @property
-    def ends(self) -> FloatArray:
-        """Read-only segment end points."""
-        return self._ends
-
-    @property
-    def lengths(self) -> FloatArray:
-        """Read-only Euclidean segment lengths."""
-        return self._lengths
-
-    @property
     def segment_count(self) -> int:
         """Number of segments in the closed polyline."""
-        return self._starts.shape[0]
+        return self.starts.shape[0]
 
-    def project(self, point_m: FloatArray) -> SegmentProjection:
-        """Return the exact closest projection over all indexed segments."""
-        point = _point_array(point_m, "point_m")
+    def project(self, point: FloatArray) -> SegmentProjection:
+        """
+        Return the exact closest projection of a point onto the closed polyline.
+        """
+        point = _point_array(point, "point")
         _, nearest_midpoint = self._tree.query(point, k=1)
         initial_index = int(nearest_midpoint)
         _, _, initial_distance = _project_to_segment(
             point,
-            self._starts[initial_index],
-            self._ends[initial_index],
+            self.starts[initial_index],
+            self.ends[initial_index],
         )
 
         search_radius = initial_distance + self._max_half_length
@@ -109,11 +97,15 @@ class SegmentIndex:
 
     def project_candidates(
         self,
-        point_m: FloatArray,
+        point: FloatArray,
         segment_indices: Iterable[int],
     ) -> SegmentProjection:
-        """Return the closest projection among an explicit segment subset."""
-        point = _point_array(point_m, "point_m")
+        """
+        Return the closest projection among an explicit segment subset.
+        It may be useful to restrict the search to a local window of segments, 
+        when the point is known to be near a certain portion of the closed polyline.
+        """
+        point = _point_array(point, "point")
         candidates = list(segment_indices)
         if not candidates:
             raise ValueError("segment_indices must not be empty.")
@@ -132,8 +124,8 @@ class SegmentIndex:
         for index in candidates:
             projection, fraction, distance = _project_to_segment(
                 point,
-                self._starts[index],
-                self._ends[index],
+                self.starts[index],
+                self.ends[index],
             )
             candidate = SegmentProjection(
                 segment_index=index,
@@ -162,7 +154,24 @@ class SegmentIndex:
 
 class TrackGeometry:
     """
-    Periodic interpolators and derived geometry for sampled track data.
+    Geometry utilities for a given Track object.
+    Provides periodic interpolators for centerline position, heading, and curvature,
+    as well as left and right boundary positions, normals, and integrated curvature.
+    All of these help with geometric validation and coordinate transformations.
+
+    Fields:
+        * track: The Track object for which this geometry is defined.
+        * left_boundary: The sampled left boundary of the track, as a 2D array.
+        * right_boundary: The sampled right boundary of the track, as a 2D array.
+        * _x_spline: A periodic cubic spline interpolator for the x-coordinate of the centerline.
+        * _y_spline: A periodic cubic spline interpolator for the y-coordinate of the centerline.
+        * _curvature_spline: A periodic cubic spline interpolator for the curvature of the centerline.
+        * _curvature_integral: The antiderivative of the curvature spline, used for integrated curvature calculations.
+        * _heading_s: The arc lengths at which the centerline heading is sampled, used for interpolation.
+        * _heading_unwrapped: The unwrapped centerline heading values at the sampled arc lengths, used for interpolation.
+        * centerline_projector: A PolylineProjector object for the centerline, used for nearest-segment searches.
+        * left_boundary_projector: A PolylineProjector object for the left boundary, used for nearest-segment searches.
+        * right_boundary_projector: A PolylineProjector object for the right boundary, used for nearest-segment searches.
     """
 
     def __init__(self, track: Track) -> None:
@@ -207,24 +216,14 @@ class TrackGeometry:
             )
         )
         centerline = np.column_stack((track.x, track.y))
-        self._left_boundary = centerline + (track.width / 2.0) * normals
-        self._right_boundary = centerline - (track.width / 2.0) * normals
-        self._left_boundary.setflags(write=False)
-        self._right_boundary.setflags(write=False)
+        self.left_boundary = centerline + (track.width / 2.0) * normals
+        self.right_boundary = centerline - (track.width / 2.0) * normals
+        self.left_boundary.setflags(write=False)
+        self.right_boundary.setflags(write=False)
 
-        self.centerline_index = SegmentIndex(centerline)
-        self.left_boundary_index = SegmentIndex(self._left_boundary)
-        self.right_boundary_index = SegmentIndex(self._right_boundary)
-
-    @property
-    def left_boundary(self) -> FloatArray:
-        """Read-only sampled left boundary array."""
-        return self._left_boundary
-
-    @property
-    def right_boundary(self) -> FloatArray:
-        """Read-only sampled right boundary array."""
-        return self._right_boundary
+        self.centerline_projector = PolylineProjector(centerline)
+        self.left_boundary_projector = PolylineProjector(self.left_boundary)
+        self.right_boundary_projector = PolylineProjector(self.right_boundary)
 
     def position(self, s_m: float) -> FloatArray:
         """Interpolate centerline position periodically at arc length ``s``."""
@@ -308,7 +307,17 @@ def validate_track_geometry(
     vehicle_config: CarConfig | None = None,
     track_config: TrackGenerationConfig | None = None,
 ) -> TrackGeometry:
-    """Validate geometric constraints and return prepared track geometry."""
+    """
+    Validate geometric constraints and return prepared track geometry.
+    
+    This includes checking that:
+    - The track length is within the configured generation range.
+    - The track curvature does not exceed the vehicle's kinematic steering limit.
+    - The centerline does not self-intersect.
+    - The left and right boundaries do not self-intersect.
+    - The left and right boundaries do not intersect each other.
+    - Nonlocal centerline segments are separated by at least the required distance.
+    """
     vehicle = vehicle_config or CarConfig()
     generation = track_config or TrackGenerationConfig()
 
@@ -317,9 +326,7 @@ def validate_track_geometry(
             "track length must be within the configured generation range."
         )
 
-    maximum_curvature = tan(radians(vehicle.max_steering_angle)) / (
-        vehicle.wheelbase_m
-    )
+    maximum_curvature = tan(radians(vehicle.max_steering_angle)) / (vehicle.wheelbase_m)
     if np.any(np.abs(track.curvature) > maximum_curvature + 1e-12):
         raise TrackValidationError(
             "track curvature exceeds the vehicle kinematic steering limit."
@@ -331,28 +338,28 @@ def validate_track_geometry(
         raise TrackValidationError(f"invalid track geometry: {error}") from error
     _validate_periodic_seam(geometry)
     _validate_simple_closed_polyline(
-        geometry.centerline_index,
+        geometry.centerline_projector,
         "centerline",
     )
 
     required_separation = track.width + generation.nonlocal_centerline_margin
     _validate_nonlocal_centerline_separation(
-        geometry.centerline_index,
+        geometry.centerline_projector,
         sample_spacing=track.sample_spacing,
         required_separation=required_separation,
     )
 
     _validate_simple_closed_polyline(
-        geometry.left_boundary_index,
+        geometry.left_boundary_projector,
         "left boundary",
     )
     _validate_simple_closed_polyline(
-        geometry.right_boundary_index,
+        geometry.right_boundary_projector,
         "right boundary",
     )
     _validate_boundaries_do_not_intersect(
-        geometry.left_boundary_index,
-        geometry.right_boundary_index,
+        geometry.left_boundary_projector,
+        geometry.right_boundary_projector,
     )
     return geometry
 
@@ -380,7 +387,7 @@ def _validate_periodic_seam(geometry: TrackGeometry) -> None:
 
 
 def _validate_simple_closed_polyline(
-    index: SegmentIndex,
+    index: PolylineProjector,
     name: str,
 ) -> None:
     pairs = index.candidate_pairs(0.0)
@@ -403,7 +410,7 @@ def _validate_simple_closed_polyline(
 
 
 def _validate_nonlocal_centerline_separation(
-    index: SegmentIndex,
+    index: PolylineProjector,
     *,
     sample_spacing: float,
     required_separation: float,
@@ -438,8 +445,8 @@ def _validate_nonlocal_centerline_separation(
 
 
 def _validate_boundaries_do_not_intersect(
-    left: SegmentIndex,
-    right: SegmentIndex,
+    left: PolylineProjector,
+    right: PolylineProjector,
 ) -> None:
     search_radius = float(np.max(left.lengths) / 2.0 + np.max(right.lengths) / 2.0)
     candidate_lists = left._tree.query_ball_tree(right._tree, search_radius)
