@@ -10,12 +10,10 @@ import numpy as np
 
 from configs import EnvironmentConfig
 
-from .dynamics import NormalizedAction, VehicleState, transition
-from .geometry import TrackGeometry
+from ..tracks import Track, TrackGeometry, generate_track
+from ..vehicle import NormalizedAction, VehicleState, transition
 from .lifecycle import EpisodeLifecycle
 from .rendering import RacingRenderer
-from .track import Track
-from .track_generation import generate_track
 
 
 class RacingEnv(gym.Env[np.ndarray, np.ndarray]):

@@ -7,8 +7,8 @@ from math import cos, sin
 import numpy as np
 import pygame
 
-from .dynamics import VehicleState
-from .geometry import TrackGeometry
+from ..tracks import TrackGeometry
+from ..vehicle import VehicleState
 
 
 class RacingRenderer:

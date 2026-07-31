@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from configs import TrackGenerationConfig
-from envs.track_generation import generate_track_file
+from envs.tracks import generate_track_file
 
 
 def build_parser() -> argparse.ArgumentParser:

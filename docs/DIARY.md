@@ -242,3 +242,23 @@ type checking and dependency checks passed.
 `tests/envs/test_rendering.py`, `docs/DIARY.md`.
 
 **Commit**: `feature: add Pygame racing renderer [ai]`
+
+## 2026-07-31 — Environment package refactor
+
+**Task**: Reorganize the growing environment implementation into smaller,
+domain-focused packages without changing its public behaviour.
+
+**Result**: Grouped the Gymnasium shell, lifecycle and renderer under `racing`;
+track persistence, generation, interpolation, projection, validation and Frenet
+observations under `tracks`; and vehicle dynamics under `vehicle`. Split the
+former geometry module into focused geometry, projection and validation modules,
+kept the top-level `envs` exports stable, updated the generator import and revised
+the documented source layout.
+
+**Validation**: All 74 tests passed. Black, Ruff, Pyright, dependency checks,
+source compilation and diff whitespace validation passed.
+
+**Files**: `AGENTS.md`, `src/envs/`, `experiments/generate_track.py`,
+`docs/DIARY.md`.
+
+**Commit**: `refactor: organize environment packages [ai]`

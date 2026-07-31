@@ -14,7 +14,8 @@ from configs import (
     SimulationConfig,
 )
 
-from .geometry import SegmentProjection, TrackGeometry, wrap_angle
+from .geometry import TrackGeometry, wrap_angle
+from .projection import SegmentProjection
 
 FloatArray = NDArray[np.float64]
 

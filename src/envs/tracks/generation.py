@@ -13,8 +13,9 @@ from scipy.interpolate import CubicSpline
 
 from configs import CarConfig, TrackGenerationConfig
 
-from .geometry import validate_track_geometry, wrap_angle
-from .track import Track, TrackGenerationMetadata, TrackValidationError
+from .geometry import wrap_angle
+from .model import Track, TrackGenerationMetadata, TrackValidationError
+from .validation import validate_track_geometry
 
 FloatArray = NDArray[np.float64]
 

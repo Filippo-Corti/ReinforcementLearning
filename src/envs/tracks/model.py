@@ -185,7 +185,7 @@ class Track:
 
         track = cls.from_dict(data)
         if validate_geometry:
-            from .geometry import validate_track_geometry
+            from .validation import validate_track_geometry
 
             validate_track_geometry(
                 track,
@@ -206,7 +206,7 @@ class Track:
         Validate and serialize the track deterministically as UTF-8 JSON.
         """
         if validate_geometry:
-            from .geometry import validate_track_geometry
+            from .validation import validate_track_geometry
 
             validate_track_geometry(
                 self,

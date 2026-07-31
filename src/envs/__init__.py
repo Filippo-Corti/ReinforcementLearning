@@ -1,37 +1,29 @@
 """Racing environment, dynamics, geometry, and observation components."""
 
-from .dynamics import (
+from .racing import EpisodeLifecycle, EpisodeTransition, RacingEnv, RacingRenderer
+from .tracks import (
+    FrenetProjection,
+    FrenetProjector,
+    PolylineProjector,
+    SegmentProjection,
+    Track,
+    TrackGenerationError,
+    TrackGenerationMetadata,
+    TrackGeometry,
+    TrackValidationError,
+    generate_track,
+    generate_track_file,
+    signed_progress,
+    validate_track_geometry,
+    wrap_angle,
+)
+from .vehicle import (
     DynamicsTransition,
     NormalizedAction,
     PhysicalControls,
     VehicleState,
     map_action,
     transition,
-)
-from .geometry import (
-    PolylineProjector,
-    SegmentProjection,
-    TrackGeometry,
-    validate_track_geometry,
-    wrap_angle,
-)
-from .lifecycle import EpisodeLifecycle, EpisodeTransition
-from .observations import (
-    FrenetProjection,
-    FrenetProjector,
-    signed_progress,
-)
-from .racing import RacingEnv
-from .rendering import RacingRenderer
-from .track import (
-    Track,
-    TrackGenerationMetadata,
-    TrackValidationError,
-)
-from .track_generation import (
-    TrackGenerationError,
-    generate_track,
-    generate_track_file,
 )
 
 __all__ = [

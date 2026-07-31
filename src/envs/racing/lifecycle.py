@@ -8,9 +8,8 @@ import numpy as np
 
 from configs import CarConfig, RewardConfig, SimulationConfig
 
-from .dynamics import DynamicsTransition, VehicleState
-from .geometry import TrackGeometry
-from .observations import FrenetProjection, FrenetProjector, signed_progress
+from ..tracks import FrenetProjection, FrenetProjector, TrackGeometry, signed_progress
+from ..vehicle import DynamicsTransition, VehicleState
 
 
 @dataclass(frozen=True, slots=True)

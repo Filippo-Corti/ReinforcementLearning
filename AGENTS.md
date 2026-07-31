@@ -84,11 +84,19 @@ This is the suggested layout. Feel free to adapt it as you wish, but make sure t
 ```
 src/
 ├── envs/
-│   ├── racing.py          # RacingEnv(gym.Env): dynamics, reward, termination, render
-│   ├── track.py           # Track geometry: centerline spline, width w(s),
-│   │                      #   arc-length <-> (x,y) (Frenet) conversion, curvature κ(s)
-│   ├── observations.py    # FrenetObservation / LidarObservation wrappers or builders
-│   └── lidar.py           # ray-casting against the track boundary
+│   ├── racing/
+│   │   ├── environment.py # RacingEnv(gym.Env): Gymnasium reset/step shell
+│   │   ├── lifecycle.py   # progress, reward, termination and truncation
+│   │   └── rendering.py   # optional Pygame human/rgb_array presentation
+│   ├── tracks/
+│   │   ├── model.py       # sampled track data and JSON persistence
+│   │   ├── geometry.py    # periodic centerline and boundary geometry
+│   │   ├── projection.py  # closest-segment spatial queries
+│   │   ├── validation.py  # track geometry constraints
+│   │   ├── generation.py  # deterministic procedural generation
+│   │   └── observations.py# Frenet projection and observation builders
+│   └── vehicle/
+│       └── dynamics.py    # state, controls and kinematic transition
 ├── models/                # reusable neural components
 │   ├── mlp.py             # make_mlp(in, out, hidden_sizes, activation) — the size knob
 │   ├── policies.py        # GaussianPolicy (mean MLP + log-std), deterministic policy
