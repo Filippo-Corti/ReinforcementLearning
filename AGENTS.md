@@ -32,17 +32,53 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 - Check out the `docs/DIARY.md` file everytime you need to track the progress you have made on the project.
 
 ## Workflow rules
-1. **Plan before code.** For anything nontrivial, outline the approach, build a plan, and list files to be touched. Wait for confirmation before writing any code.
-2. **One concern per task/commit.** Don't mix algorithm changes with logging/refactor changes in the same diff. Once you have finished your task, always commit to branch main.
-3. **Write agile code.** Don't over-engineer code validations and assertions. Keep the code elegant at the cost of allowing a slight misuse. Take into account that it's a university project, not a production-ready package. Test only what is necessary.
-4. **No silent hyperparameter choices.** If a value isn't specified anywhere, ask or flag it as a placeholder — don't pick a "reasonable default" silently in core files.
-5. **Determinism.** All training runs must accept a `--seed` and be reproducible given the same seed + config.
-6. **Cite, don't recall.** For anything algorithm-specific, work from the equations/spec provided in this repo or pasted into the prompt rather than from memory of "how PPO usually works" — implementations vary across papers/codebases.
-7. **Document your changes.** Every functionality that is added/modified/removed to the project should be properly documented not only inside the code and with the git commits, but also in the `docs/DIARY.md` diary file. You can find examples of how to document changes there. Report the commit from point 2 in the diary.
-8. **Do not reuse course-lab code by default.** Code on the `lectures` branch, in lab notebooks, or in earlier exercises is reference material only. Implement project-owned agents and utilities from scratch unless the user explicitly asks to migrate or reuse a specific piece.
-9. **Do not refer to plan or steps in code.** Avoid referring to 'plan-0', 'version-0', 'step-0' or anything of this kind in the code. The code must be understandable without knowing the order with which it was implemented.
 
-## Suggested code structure:
+1. **Plan before code.** For anything nontrivial, outline the approach, build a plan, and list files to be touched. Wait for confirmation before writing any code.
+2. **One concern per task/commit.** Don't mix algorithm changes with logging/refactor changes in the same diff. Once you have finished your task, always commit to branch `main`.
+3. **Document your changes.** Every functionality that is added/modified/removed in the project should be properly documented — not only inside the code and via the git commit, but also in the `docs/DIARY.md` diary file (see that file for examples of the expected format). Reference the commit from rule 2 in the diary entry.
+4. **Cite, don't recall.** For anything algorithm-specific, work from the equations/spec provided in this repo or pasted into the prompt rather than from memory of "how X usually works" — implementations vary across papers/codebases.
+5. **Do not reuse course-lab code by default.** Code on the `lectures` branch, in lab notebooks, or in earlier exercises is reference material only. Implement project-owned agents and utilities from scratch unless the user explicitly asks to migrate or reuse a specific piece.
+6. **No silent hyperparameter choices.** If a value isn't specified anywhere, ask or flag it as a placeholder — don't pick a "reasonable default" silently in core files.
+7. **Determinism.** All code involving RNG must accept a `--seed` argument and be reproducible given the same seed + config.
+
+## Coding rules and conventions
+
+1. **Write agile code.** Don't over-engineer validations, immutability, or assertions. Keep the code elegant at the cost of allowing slight misuse. This is a university project, not a production-ready package — test only what is necessary and interesting to test.
+2. **Do not refer to plan or step labels in code.** Avoid referring to `plan-0`, `version-0`, `step-0`, or anything of this kind in code, comments, or identifiers. The code must be understandable without knowing the order in which it was implemented.
+3. **Do not add units of measure in variable names.**
+4. **Class comments.** First give a clear description of what the class does in 1–3 sentences, then list the Fields:
+
+   ```python
+   class ExampleClass:
+     """
+     This class represents an example of a how a comment should be written 
+     for a class in this repository.
+
+     Fields:
+       * field_name: The description of the field
+       ...
+     """
+   ```
+
+5. **Method/function comments.** Always write the docstring body on its own line(s), not on the same line as the opening `"""`:
+
+   ```python
+   def func(params):
+     """
+     Do this
+     """
+   ```
+
+   not:
+
+   ```python
+   def func(params):
+     """Don't do this"""
+   ```
+
+6. **Use Black formatting.** Always.
+
+### Suggested code structure:
 This is the suggested layout. Feel free to adapt it as you wish, but make sure to update this if you ever choose to:
 
 ```
@@ -97,7 +133,7 @@ Design principles to keep it clean and reproducible:
   matching the course's env convention — invaluable for debugging reward hacking
   by *watching* the car.
 
-## Environment / dependencies
+### Environment / dependencies
 - Use the `.venv` env in this repository.
 - You may install packages into `.venv` as they become necessary for an approved task; no separate permission is needed for ordinary project dependencies.
 - Build the dependency manifest incrementally. Create `requirements.txt` when the first project code is added, and update it in the same task whenever an imported third-party package becomes a project dependency. Use explicit version constraints; create an exact environment freeze before running final experiments.
