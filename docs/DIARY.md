@@ -175,3 +175,25 @@ results.
 `tests/envs/test_dynamics.py`, `docs/DIARY.md`.
 
 **Commit**: `feature: add kinematic vehicle transition [ai]`
+
+## 2026-07-31 — Step 7: Episode lifecycle rules
+
+**Task**: Implement collision, finish, progress, reward and time-limit logic
+separately from the future Gymnasium environment.
+
+**Result**: Added a lifecycle component that projects every physics substep,
+detects point-car crashes, tracks signed unwrapped episode progress, validates
+forward finish-gate crossings after a near-full lap, gives crashes precedence,
+selects the documented reward branches and distinguishes termination from time
+limit truncation. The roadmap now records steps 6 and 7 as completed.
+
+**Validation**: Covered substep collisions, reset/insufficient/backward finish
+crossings, valid lap completion, collision precedence, truncation, the stationary
+timeout total and immediate crash penalty. The full suite, formatting, linting,
+type checking and dependency checks passed.
+
+**Files**: `PLAN.md`, `src/envs/lifecycle.py`, `src/envs/__init__.py`,
+`tests/envs/test_episode_lifecycle.py`, `tests/envs/test_reward.py`,
+`docs/DIARY.md`.
+
+**Commit**: `feature: add episode lifecycle rules [ai]`

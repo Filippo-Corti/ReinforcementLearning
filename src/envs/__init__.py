@@ -15,6 +15,7 @@ from .geometry import (
     validate_track_geometry,
     wrap_angle,
 )
+from .lifecycle import EpisodeLifecycle, EpisodeTransition
 from .observations import (
     FrenetProjection,
     FrenetProjector,
@@ -33,6 +34,8 @@ from .track_generation import (
 
 __all__ = [
     "DynamicsTransition",
+    "EpisodeLifecycle",
+    "EpisodeTransition",
     "FrenetProjection",
     "FrenetProjector",
     "NormalizedAction",

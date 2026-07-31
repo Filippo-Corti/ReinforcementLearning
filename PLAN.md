@@ -289,6 +289,8 @@ procedural generation.
 
 ### 6. Implement the Pure Kinematic Transition
 
+**Status:** Completed on 2026-07-31.
+
 **Objective:** Advance vehicle state independently of Gymnasium, reward and
 rendering.
 
@@ -317,6 +319,8 @@ rendering.
 - One action is exactly four physics substeps.
 
 ### 7. Implement Collision, Finish, Progress and Reward
+
+**Status:** Completed on 2026-07-31.
 
 **Objective:** Implement episode lifecycle rules separately from the Gymnasium
 shell.
