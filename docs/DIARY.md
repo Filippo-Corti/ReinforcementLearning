@@ -155,3 +155,23 @@ how pytest is launched.
 **Commit**: `fix: make pytest invocation independent of entry point [ai]`
 
 *New diary notes go here...*
+
+## 2026-07-31 — Step 6: Pure kinematic transition
+
+**Task**: Implement the deterministic bicycle-model transition independently
+of Gymnasium, lifecycle handling and rendering.
+
+**Result**: Added immutable vehicle-state, normalized-action and physical-control
+units; mapped normalized throttle/brake and steering to the documented limits;
+and implemented four explicit-Euler physics substeps with per-substep speed
+clamping. Each transition returns every intermediate state for the collision and
+finish checks introduced by the next lifecycle step.
+
+**Validation**: Covered stationary motion, explicit-Euler straight acceleration,
+braking, steering direction, control mapping, speed bounds and four-substep
+results.
+
+**Files**: `src/envs/dynamics.py`, `src/envs/__init__.py`,
+`tests/envs/test_dynamics.py`, `docs/DIARY.md`.
+
+**Commit**: `feature: add kinematic vehicle transition [ai]`

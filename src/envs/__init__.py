@@ -1,5 +1,13 @@
 """Racing environment, dynamics, geometry, and observation components."""
 
+from .dynamics import (
+    DynamicsTransition,
+    NormalizedAction,
+    PhysicalControls,
+    VehicleState,
+    map_action,
+    transition,
+)
 from .geometry import (
     PolylineProjector,
     SegmentProjection,
@@ -24,8 +32,11 @@ from .track_generation import (
 )
 
 __all__ = [
+    "DynamicsTransition",
     "FrenetProjection",
     "FrenetProjector",
+    "NormalizedAction",
+    "PhysicalControls",
     "PolylineProjector",
     "SegmentProjection",
     "Track",
@@ -33,9 +44,12 @@ __all__ = [
     "TrackGenerationMetadata",
     "TrackGeometry",
     "TrackValidationError",
+    "VehicleState",
     "generate_track",
     "generate_track_file",
+    "map_action",
     "signed_progress",
+    "transition",
     "validate_track_geometry",
     "wrap_angle",
 ]
