@@ -13,6 +13,7 @@ from configs import EnvironmentConfig
 from .dynamics import NormalizedAction, VehicleState, transition
 from .geometry import TrackGeometry
 from .lifecycle import EpisodeLifecycle
+from .rendering import RacingRenderer
 from .track import Track
 from .track_generation import generate_track
 
@@ -32,7 +33,7 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
         * state: The current kinematic vehicle state.
     """
 
-    metadata = {"render_modes": []}  # noqa: RUF012
+    metadata = {"render_modes": ["human", "rgb_array"]}  # noqa: RUF012
 
     def __init__(
         self,
@@ -41,6 +42,7 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
         track: Track | None = None,
         track_path: str | Path | None = None,
         track_seed: int | None = None,
+        render_mode: str | None = None,
     ) -> None:
         super().__init__()
         if track is not None and track_path is not None:
@@ -49,6 +51,8 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
             raise ValueError("track_seed cannot be combined with an explicit track.")
         if track_path is not None and track_seed is not None:
             raise ValueError("track_seed cannot be combined with track_path.")
+        if render_mode not in self.metadata["render_modes"] + [None]:
+            raise ValueError("render_mode must be None, 'human', or 'rgb_array'.")
 
         self.config = config or EnvironmentConfig()
         if track_path is not None:
@@ -71,6 +75,8 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
         self._track_seed = None if track is None else track.generation.seed
         self._generated_from_reset_seed = track is None
         self._episode_finished = False
+        self.render_mode = render_mode
+        self._renderer: RacingRenderer | None = None
 
         self.action_space = gym.spaces.Box(
             low=-1.0,
@@ -99,6 +105,9 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
         self._ensure_track(seed)
         if self.track is None:
             raise RuntimeError("track initialization failed.")
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
 
         self.geometry = TrackGeometry(self.track)
         start_s = self.track.s[self.track.start_index]
@@ -165,6 +174,25 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
         """
         Release environment resources.
         """
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
+
+    def render(self) -> np.ndarray | None:
+        """
+        Render the current track and vehicle state in the configured mode.
+        """
+        if self.render_mode is None:
+            return None
+        if self.geometry is None or self.state is None:
+            raise RuntimeError("reset must be called before rendering the environment.")
+        if self._renderer is None:
+            self._renderer = RacingRenderer(
+                self.geometry,
+                render_mode=self.render_mode,
+                image_size=(800, 800),
+            )
+        return self._renderer.render(self.state)
 
     def _ensure_track(self, seed: int | None) -> None:
         """

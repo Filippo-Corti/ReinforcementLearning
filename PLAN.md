@@ -385,6 +385,8 @@ environment.
 
 ### 9. Add Pygame Rendering
 
+**Status:** Completed on 2026-07-31.
+
 **Objective:** Visualize the same state and geometry used by the environment.
 
 **Work:**

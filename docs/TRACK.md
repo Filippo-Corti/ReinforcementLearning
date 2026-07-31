@@ -154,6 +154,16 @@ uses meters, radians and inverse meters throughout, as documented by the field
 descriptions rather than by a redundant units object. Generation metadata is
 retained even though runtime behaviour depends only on the validated geometry.
 
+## Rendering
+
+Version 0 presentation uses an 800×800 pixel Pygame canvas. Its camera fits both
+track boundaries into the frame with 40 pixels of padding on every side and uses
+a uniform scale, so geometric angles are visually preserved. The renderer draws
+the road, boundaries, centerline, canonical finish gate and a triangular marker
+whose nose indicates the car heading. These camera, canvas and colour choices
+are display-only and do not affect the MDP state, dynamics, reward or episode
+lifecycle.
+
 ## Track Usage
 
 At each step, the car's Cartesian pose $(x_t, y_t)$ must be translated into the Frenet pose $(s_t, d_t)$, with:

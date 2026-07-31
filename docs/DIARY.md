@@ -219,3 +219,26 @@ for the intentionally unbounded Frenet dimensions.
 `tests/envs/test_racing_env.py`, `docs/DIARY.md`.
 
 **Commit**: `feature: assemble Gymnasium racing environment [ai]`
+
+## 2026-07-31 — Step 9: Pygame rendering
+
+**Task**: Visualize the environment state with optional human and RGB-array
+Pygame rendering.
+
+**Result**: Added a display-only renderer that fits the track boundaries to an
+800×800 camera, draws the road, boundaries, centerline, canonical finish gate
+and heading-visible car marker, and exposes `human` and `rgb_array` modes from
+`RacingEnv`. Renderer creation is lazy, seeded reset safely discards a stale
+renderer, and repeated close calls release the display without affecting physics.
+Documented the canvas and camera choices in `TRACK.md` so they are explicit.
+
+**Validation**: RGB frames have the documented shape and dtype and change after
+state transitions; human rendering opened and closed under SDL's dummy driver;
+Gymnasium's render checker passed; and the complete suite, formatting, linting,
+type checking and dependency checks passed.
+
+**Files**: `PLAN.md`, `docs/TRACK.md`, `src/envs/rendering.py`,
+`src/envs/racing.py`, `src/envs/__init__.py`,
+`tests/envs/test_rendering.py`, `docs/DIARY.md`.
+
+**Commit**: `feature: add Pygame racing renderer [ai]`
