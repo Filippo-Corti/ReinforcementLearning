@@ -139,4 +139,19 @@ out-of-tree generator/load smoke test passed.
 
 **Commit**: `fix: align track stack after API simplification [ai]`
 
+## 2026-07-31 — Pytest entry-point path fix
+
+**Task**: Make the documented test suite work through both the `pytest`
+entry point and `python -m pytest`.
+
+**Result**: Added the repository root explicitly to pytest's import path so
+tests can import the project-owned `experiments` namespace independently of
+how pytest is launched.
+
+**Validation**: All 49 tests passed through both invocation forms.
+
+**Files**: `pyproject.toml`, `docs/DIARY.md`.
+
+**Commit**: `fix: make pytest invocation independent of entry point [ai]`
+
 *New diary notes go here...*

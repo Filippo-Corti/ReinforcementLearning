@@ -21,7 +21,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 addopts = ["-ra", "--strict-config", "--strict-markers"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 testpaths = ["tests"]
 filterwarnings = [
     "ignore:pkg_resources is deprecated as an API.*:UserWarning:pygame.pkgdata",
