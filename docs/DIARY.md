@@ -262,3 +262,21 @@ source compilation and diff whitespace validation passed.
 `docs/DIARY.md`.
 
 **Commit**: `refactor: organize environment packages [ai]`
+
+## 2026-07-31 — Interactive track viewer
+
+**Task**: Add a small experiment for inspecting generated and saved tracks.
+
+**Result**: Added an import-safe CLI that opens the existing human renderer at
+the canonical start pose, accepts exactly one of a deterministic seed or saved
+track path, refreshes at the environment decision rate and exits on Escape or a
+window-close event. Added README commands for both track sources.
+
+**Validation**: Covered CLI source selection, environment construction and main
+delegation without entering the blocking display loop. The full automated and
+static validation suite passed.
+
+**Files**: `experiments/view_track.py`,
+`tests/experiments/test_view_track.py`, `README.md`, `docs/DIARY.md`.
+
+**Commit**: `feature: add interactive track viewer [ai]`

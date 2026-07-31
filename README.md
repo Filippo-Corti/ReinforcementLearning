@@ -52,6 +52,23 @@ finite vehicle footprint, tire slip, or steering-rate limit. Full throttle may
 therefore remain optimal in corners. This is a known model limitation to address
 in step 2, not something to compensate for through reward shaping.
 
+## View a track
+
+Activate the repository's `.venv`, then open a deterministic generated track:
+
+```bash
+python experiments/view_track.py --seed 0
+```
+
+Or display a saved track definition:
+
+```bash
+python experiments/view_track.py --track tracks/example.json
+```
+
+Press Esc or close the Pygame window to exit. This viewer keeps the car at the
+canonical start pose; interactive driving is a separate planned experiment.
+
 ## Policy parameterization
 
 * **Gaussian policy** $\pi_\theta(a|o)=\mathcal{N}(\mu_\theta(o),\,\sigma^2)$ with
