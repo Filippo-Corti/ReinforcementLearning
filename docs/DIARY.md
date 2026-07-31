@@ -154,8 +154,6 @@ how pytest is launched.
 
 **Commit**: `fix: make pytest invocation independent of entry point [ai]`
 
-*New diary notes go here...*
-
 ## 2026-07-31 — Step 6: Pure kinematic transition
 
 **Task**: Implement the deterministic bicycle-model transition independently
