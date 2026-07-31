@@ -195,3 +195,27 @@ type checking and dependency checks passed.
 `docs/DIARY.md`.
 
 **Commit**: `feature: add episode lifecycle rules [ai]`
+
+## 2026-07-31 — Step 8: RacingEnv assembly
+
+**Task**: Assemble the track, kinematic transition and lifecycle rules into a
+Gymnasium-compatible racing environment.
+
+**Result**: Added `RacingEnv` with deterministic reset-seed track generation,
+saved-track loading, canonical zero-speed resets, continuous float32 action and
+Frenet observation spaces, terminal-state handling, and diagnostic progress,
+outcome, elapsed-time and track-seed information. The environment remains
+render-free until the dedicated rendering step. Also corrected a KD-tree
+floating-point boundary case exposed when resetting from a saved track.
+
+**Validation**: Gymnasium's `check_env` passed; seeded action sequences matched;
+saved tracks loaded; reset cleared lifecycle state; terminal observations stayed
+within the declared space; and the complete suite, formatting, linting, type
+checking and dependency checks passed. Gymnasium reports only advisory warnings
+for the intentionally unbounded Frenet dimensions.
+
+**Files**: `PLAN.md`, `src/envs/racing.py`, `src/envs/lifecycle.py`,
+`src/envs/geometry.py`, `src/envs/__init__.py`,
+`tests/envs/test_racing_env.py`, `docs/DIARY.md`.
+
+**Commit**: `feature: assemble Gymnasium racing environment [ai]`

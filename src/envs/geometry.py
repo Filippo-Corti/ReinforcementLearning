@@ -94,7 +94,9 @@ class PolylineProjector:
         )
 
         search_radius = initial_distance + self._max_half_length
-        candidates = sorted(self._tree.query_ball_point(point, search_radius))
+        candidates = sorted(
+            set(self._tree.query_ball_point(point, search_radius)) | {initial_index}
+        )
         return self._project_candidates(point, candidates)
 
     def project_candidates(

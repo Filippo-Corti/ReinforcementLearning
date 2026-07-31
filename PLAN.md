@@ -352,6 +352,8 @@ shell.
 
 ### 8. Assemble and Register `RacingEnv`
 
+**Status:** Completed on 2026-07-31.
+
 **Objective:** Expose the tested components through a compliant Gymnasium
 environment.
 

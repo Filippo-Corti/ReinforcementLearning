@@ -28,6 +28,7 @@ class EpisodeTransition:
         * wrapped_progress: The final projected position along the track.
         * episode_progress: The signed progress accumulated since reset.
         * collision_substep: The one-based physics substep where collision occurred.
+        * termination_substep: The one-based physics substep where the episode terminated.
     """
 
     reward: float
@@ -39,6 +40,7 @@ class EpisodeTransition:
     wrapped_progress: float
     episode_progress: float
     collision_substep: int | None
+    termination_substep: int | None
 
 
 class EpisodeLifecycle:
@@ -102,6 +104,7 @@ class EpisodeLifecycle:
 
         progress_delta = 0.0
         collision_substep: int | None = None
+        termination_substep: int | None = None
         lap_completed = False
         for substep_index, state in enumerate(dynamics.substep_states, start=1):
             position = _position(state)
@@ -126,9 +129,11 @@ class EpisodeLifecycle:
             self._previous_segment_index = projection.segment_index
             if collision:
                 collision_substep = substep_index
+                termination_substep = substep_index
                 break
             if crossing and self.episode_progress >= self._finish_progress_requirement:
                 lap_completed = True
+                termination_substep = substep_index
                 break
 
         self.agent_steps += 1
@@ -152,6 +157,7 @@ class EpisodeLifecycle:
             wrapped_progress=self.wrapped_progress,
             episode_progress=self.episode_progress,
             collision_substep=collision_substep,
+            termination_substep=termination_substep,
         )
 
     @property

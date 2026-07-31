@@ -21,6 +21,7 @@ from .observations import (
     FrenetProjector,
     signed_progress,
 )
+from .racing import RacingEnv
 from .track import (
     Track,
     TrackGenerationMetadata,
@@ -41,6 +42,7 @@ __all__ = [
     "NormalizedAction",
     "PhysicalControls",
     "PolylineProjector",
+    "RacingEnv",
     "SegmentProjection",
     "Track",
     "TrackGenerationError",
