@@ -348,3 +348,21 @@ learning agents and multi-circuit training remain deferred.
 `tests/experiments/test_phase1_acceptance.py`, `docs/DIARY.md`.
 
 **Commit**: `test: add phase one acceptance runner [ai]`
+
+## 2026-08-01 — Manual reset display fix
+
+**Task**: Prevent the manual-driving experiment from losing its Pygame display
+when the user presses R.
+
+**Result**: The reset path now renders the reset pose immediately and skips the
+control step for that frame. This recreates the display closed by environment
+reset before Pygame keyboard state is queried, while keeping the reset state
+visible for a complete frame.
+
+**Validation**: Added a regression test that resets, resumes keyboard-controlled
+stepping and exits. The complete phase acceptance runner passed.
+
+**Files**: `experiments/manual_drive.py`,
+`tests/experiments/test_manual_drive.py`, `docs/DIARY.md`.
+
+**Commit**: `fix: restore display after manual reset [ai]`

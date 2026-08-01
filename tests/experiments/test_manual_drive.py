@@ -132,6 +132,80 @@ def test_driver_keeps_terminal_state_visible_until_exit(
     assert environment.closed
 
 
+def test_driver_restores_display_before_keyboard_poll_after_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Pressing R recreates the display before the next keyboard-controlled step.
+    """
+
+    class FakeClock:
+        def tick(self, _: int) -> None:
+            pass
+
+    class FakeEnvironment:
+        config = SimpleNamespace(
+            simulation=SimpleNamespace(agent_timestep=0.04),
+        )
+        state = type("State", (), {"speed": 0.0})()
+
+        def __init__(self) -> None:
+            self.resets = 0
+            self.renders = 0
+            self.steps = 0
+            self.display_ready = False
+
+        def reset(self) -> tuple[None, dict[str, object]]:
+            self.resets += 1
+            self.display_ready = False
+            return None, {"episode_progress": 0.0}
+
+        def render(self) -> None:
+            self.renders += 1
+            self.display_ready = True
+
+        def step(
+            self, _: np.ndarray
+        ) -> tuple[None, float, bool, bool, dict[str, object]]:
+            self.steps += 1
+            return (
+                None,
+                -0.002,
+                False,
+                False,
+                {
+                    "episode_progress": 0.0,
+                    "collision": False,
+                    "lap_completed": False,
+                },
+            )
+
+        def close(self) -> None:
+            self.display_ready = False
+
+    environment = FakeEnvironment()
+    events = [
+        [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r)],
+        [],
+        [pygame.event.Event(pygame.QUIT)],
+    ]
+
+    def pressed_keys() -> list[bool]:
+        assert environment.display_ready
+        return [False] * 512
+
+    monkeypatch.setattr(pygame.event, "get", lambda: events.pop(0))
+    monkeypatch.setattr(pygame.key, "get_pressed", pressed_keys)
+    monkeypatch.setattr(pygame.time, "Clock", FakeClock)
+    monkeypatch.setattr(pygame.display, "set_caption", lambda _: None)
+
+    manual_drive.run_driver(environment)  # type: ignore[arg-type]
+
+    assert environment.resets == 2
+    assert environment.renders == 3
+    assert environment.steps == 1
+
+
 def test_main_delegates_to_driver_without_running_on_import(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

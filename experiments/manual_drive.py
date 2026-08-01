@@ -95,6 +95,7 @@ def run_driver(environment: RacingEnv) -> None:
             diagnostic_caption(environment, reward, info, completed_reason)
         )
         while running:
+            reset_requested = False
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (
                     event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
@@ -104,9 +105,17 @@ def run_driver(environment: RacingEnv) -> None:
                     _, info = environment.reset()
                     reward = 0.0
                     completed_reason = None
+                    reset_requested = True
 
             if not running:
                 break
+            if reset_requested:
+                environment.render()
+                pygame.display.set_caption(
+                    diagnostic_caption(environment, reward, info, completed_reason)
+                )
+                clock.tick(round(1.0 / environment.config.simulation.agent_timestep))
+                continue
             if completed_reason is None:
                 _, reward, terminated, truncated, info = environment.step(
                     controls_from_keys(pygame.key.get_pressed())
