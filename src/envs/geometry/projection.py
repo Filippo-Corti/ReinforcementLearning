@@ -1,4 +1,4 @@
-"""Closest-segment projection for closed track polylines."""
+"""Closest-segment projection for closed two-dimensional polylines."""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial import cKDTree
 
-FloatArray = NDArray[np.float64]
+from ..types import FloatArray, point_array
+from .segments import project_to_segment
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +73,7 @@ class PolylineProjector:
         """
         Return the exact closest projection onto the closed polyline.
         """
-        point = point_array(point, "point")
+        point = point_array(point)
         _, nearest_midpoint = self._tree.query(point, k=1)
         initial_index = int(nearest_midpoint)
         _, _, initial_distance = project_to_segment(
@@ -95,7 +96,7 @@ class PolylineProjector:
         """
         Return the closest projection among an explicit segment subset.
         """
-        point = point_array(point, "point")
+        point = point_array(point)
         candidates = list(segment_indices)
         if not candidates:
             raise ValueError("segment_indices must not be empty.")
@@ -104,6 +105,29 @@ class PolylineProjector:
         if any(not 0 <= index < self.segment_count for index in candidates):
             raise ValueError("segment_indices must reference indexed segments.")
         return self._project_candidates(point, candidates)
+
+    def candidate_pairs(self, maximum_distance: float) -> NDArray[np.int64]:
+        """
+        Return segment-index pairs that may be within a target distance.
+        """
+        search_radius = maximum_distance + 2.0 * self._max_half_length
+        pairs = self._tree.query_pairs(search_radius, output_type="ndarray")
+        if pairs.size == 0:
+            return np.empty((0, 2), dtype=np.int64)
+        return np.asarray(pairs, dtype=np.int64)
+
+    def candidate_lists(
+        self,
+        other: PolylineProjector,
+        maximum_distance: float,
+    ) -> list[list[int]]:
+        """
+        Return candidate segments from another indexed polyline for each segment.
+        """
+        search_radius = (
+            maximum_distance + self._max_half_length + other._max_half_length
+        )
+        return self._tree.query_ball_tree(other._tree, search_radius)
 
     def _project_candidates(
         self,
@@ -129,53 +153,3 @@ class PolylineProjector:
         if best is None:
             raise RuntimeError("segment index did not return any candidates.")
         return best
-
-    def candidate_pairs(self, maximum_distance: float) -> NDArray[np.int64]:
-        """
-        Return segment-index pairs that may be within a target distance.
-        """
-        search_radius = maximum_distance + 2.0 * self._max_half_length
-        pairs = self._tree.query_pairs(search_radius, output_type="ndarray")
-        if pairs.size == 0:
-            return np.empty((0, 2), dtype=np.int64)
-        return np.asarray(pairs, dtype=np.int64)
-
-    def candidate_lists(
-        self,
-        other: PolylineProjector,
-        maximum_distance: float,
-    ) -> list[list[int]]:
-        """
-        Return candidate segments from another indexed polyline for each segment.
-        """
-        search_radius = (
-            maximum_distance + self._max_half_length + other._max_half_length
-        )
-        return self._tree.query_ball_tree(other._tree, search_radius)
-
-
-def project_to_segment(
-    point: FloatArray,
-    start: FloatArray,
-    end: FloatArray,
-) -> tuple[FloatArray, float, float]:
-    """
-    Project a point onto one finite line segment.
-    """
-    direction = end - start
-    squared_length = float(np.dot(direction, direction))
-    fraction = float(np.dot(point - start, direction) / squared_length)
-    fraction = min(1.0, max(0.0, fraction))
-    projection = start + fraction * direction
-    distance = float(np.linalg.norm(point - projection))
-    return projection, fraction, distance
-
-
-def point_array(value: FloatArray, name: str) -> FloatArray:
-    """
-    Convert a value to a finite two-dimensional float64 point.
-    """
-    point = np.asarray(value, dtype=np.float64)
-    if point.shape != (2,) or not np.all(np.isfinite(point)):
-        raise ValueError(f"{name} must be a finite array with shape (2,).")
-    return point

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pygame
 
-from envs import RacingEnv
+from envs import RacingEnv, TrackWithGeometry
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,8 +26,10 @@ def build_environment(arguments: argparse.Namespace) -> RacingEnv:
     Construct the rendering environment selected by parsed arguments.
     """
     if arguments.track is not None:
-        return RacingEnv(track_path=arguments.track, render_mode="human")
-    return RacingEnv(track_seed=arguments.seed, render_mode="human")
+        track = TrackWithGeometry.load(arguments.track)
+    else:
+        track = TrackWithGeometry.generate(arguments.seed)
+    return RacingEnv(track, render_mode="human")
 
 
 def run_viewer(environment: RacingEnv) -> None:

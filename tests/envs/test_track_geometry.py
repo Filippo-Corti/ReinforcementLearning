@@ -14,8 +14,8 @@ from envs import (
     PolylineProjector,
     Track,
     TrackGenerationMetadata,
-    TrackGeometry,
     TrackValidationError,
+    TrackWithGeometry,
     validate_track_geometry,
     wrap_angle,
 )
@@ -56,7 +56,7 @@ def _polyline_track(points: list[tuple[float, float]]) -> Track:
 
 def test_circle_queries_match_analytic_geometry() -> None:
     track = _circle()
-    geometry = TrackGeometry(track)
+    geometry = TrackWithGeometry(track)
     radius = 800.0 / pi
 
     np.testing.assert_allclose(geometry.position(0.0), [radius, 0.0], atol=1e-12)
@@ -92,7 +92,7 @@ def test_queries_are_periodic_across_the_seam() -> None:
 
 def test_boundary_convention_places_left_toward_circle_interior() -> None:
     track = _circle()
-    geometry = TrackGeometry(track)
+    geometry = TrackWithGeometry(track)
     radius = 800.0 / pi
 
     np.testing.assert_allclose(

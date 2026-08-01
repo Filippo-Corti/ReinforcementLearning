@@ -7,7 +7,12 @@ from math import pi
 import pytest
 
 from configs import CarConfig
-from envs import NormalizedAction, VehicleState, map_action, transition
+from envs import (
+    NormalizedAction,
+    VehicleState,
+    normalized_to_physical_controls,
+    transition,
+)
 
 
 def test_zero_speed_zero_action_remains_stationary() -> None:
@@ -76,7 +81,9 @@ def test_physical_control_mapping_uses_documented_limits() -> None:
     """
     Normalized extrema map to the configured acceleration and steering limits.
     """
-    controls = map_action(NormalizedAction(throttle=-1.0, steering=1.0))
+    controls = normalized_to_physical_controls(
+        NormalizedAction(throttle=-1.0, steering=1.0)
+    )
 
     assert controls.acceleration == pytest.approx(-CarConfig().max_acceleration)
     assert controls.steering_angle == pytest.approx(pi / 6.0)
@@ -110,3 +117,15 @@ def test_transition_returns_one_pose_per_physics_substep() -> None:
 
     assert len(result.substep_states) == 4
     assert result.substep_states[-1] == result.state
+
+
+def test_vehicle_state_exposes_float64_position() -> None:
+    """
+    Position conversion is owned by the state rather than lifecycle callers.
+    """
+    state = VehicleState(x=3.0, y=-2.0, heading=0.0, speed=0.0)
+
+    position = state.position()
+
+    assert position.dtype.name == "float64"
+    assert position.tolist() == [3.0, -2.0]

@@ -1,52 +1,73 @@
-"""Racing environment, dynamics, geometry, and observation components."""
+"""Racing environment, dynamics, geometry, tracks, and observations."""
 
-from .racing import EpisodeLifecycle, EpisodeTransition, RacingEnv, RacingRenderer
-from .tracks import (
-    FrenetProjection,
-    FrenetProjector,
+from .geometry import (
     PolylineProjector,
     SegmentProjection,
+    project_to_segment,
+    segment_distance,
+    segments_intersect,
+    wrap_angle,
+)
+from .observations import (
+    FrenetObservation,
+    FrenetObserver,
+    FrenetProjection,
+    signed_progress,
+)
+from .racing import (
+    ActionOutcome,
+    ActionType,
+    EpisodeLifecycle,
+    ObservationType,
+    RacingEnv,
+    RacingPygameRenderer,
+)
+from .tracks import (
     Track,
     TrackGenerationError,
     TrackGenerationMetadata,
-    TrackGeometry,
     TrackValidationError,
+    TrackWithGeometry,
     generate_track,
     generate_track_file,
-    signed_progress,
     validate_track_geometry,
-    wrap_angle,
 )
 from .vehicle import (
-    DynamicsTransition,
+    KinematicTransition,
     NormalizedAction,
     PhysicalControls,
     VehicleState,
-    map_action,
+    normalized_to_physical_controls,
     transition,
 )
 
 __all__ = [
-    "DynamicsTransition",
+    "ActionOutcome",
+    "ActionType",
     "EpisodeLifecycle",
-    "EpisodeTransition",
+    "FrenetObservation",
+    "FrenetObserver",
     "FrenetProjection",
-    "FrenetProjector",
+    "KinematicTransition",
     "NormalizedAction",
+    "ObservationType",
     "PhysicalControls",
     "PolylineProjector",
     "RacingEnv",
-    "RacingRenderer",
+    "RacingPygameRenderer",
     "SegmentProjection",
     "Track",
     "TrackGenerationError",
     "TrackGenerationMetadata",
-    "TrackGeometry",
     "TrackValidationError",
+    "TrackWithGeometry",
     "VehicleState",
     "generate_track",
     "generate_track_file",
-    "map_action",
+    "normalized_to_physical_controls",
+    "project_to_segment",
+    "segment_distance",
+    "segments_intersect",
     "signed_progress",
     "transition",
     "validate_track_geometry",

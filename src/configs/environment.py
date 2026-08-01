@@ -7,6 +7,36 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
+class EnvironmentConfig:
+    """
+    Complete configuration of environment-owned behaviour.
+
+    Fields:
+        * simulation: Simulation timing and episode settings.
+        * vehicle: Physical car settings.
+        * track: Track generation and validation settings.
+        * reward: Reward function settings.
+        * observation: Frenet observation settings.
+    """
+
+    simulation: SimulationConfig = field(default_factory=lambda: SimulationConfig())
+    vehicle: CarConfig = field(default_factory=lambda: CarConfig())
+    track: TrackGenerationConfig = field(
+        default_factory=lambda: TrackGenerationConfig()
+    )
+    reward: RewardConfig = field(default_factory=lambda: RewardConfig())
+    observation: FrenetObservationConfig = field(
+        default_factory=lambda: FrenetObservationConfig()
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Return a deterministic plain-dictionary representation.
+        """
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class SimulationConfig:
     """
     Configuration for simulation time.
@@ -104,31 +134,3 @@ class FrenetObservationConfig:
 
     lookahead_base: float = 5.0
     lookahead_speed_factor: float = 0.7
-
-
-@dataclass(frozen=True, slots=True)
-class EnvironmentConfig:
-    """
-    Complete configuration of environment-owned behaviour.
-
-    Fields:
-        * simulation: Simulation timing and episode settings.
-        * vehicle: Physical car settings.
-        * track: Track generation and validation settings.
-        * reward: Reward function settings.
-        * observation: Frenet observation settings.
-    """
-
-    simulation: SimulationConfig = field(default_factory=SimulationConfig)
-    vehicle: CarConfig = field(default_factory=CarConfig)
-    track: TrackGenerationConfig = field(default_factory=TrackGenerationConfig)
-    reward: RewardConfig = field(default_factory=RewardConfig)
-    observation: FrenetObservationConfig = field(
-        default_factory=FrenetObservationConfig
-    )
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Return a deterministic plain-dictionary representation.
-        """
-        return asdict(self)

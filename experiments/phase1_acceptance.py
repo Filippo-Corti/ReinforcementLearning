@@ -16,7 +16,7 @@ import numpy as np
 import pygame
 from gymnasium.utils.env_checker import check_env
 
-from envs import RacingEnv, Track, generate_track_file
+from envs import RacingEnv, Track, TrackWithGeometry, generate_track_file
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -103,7 +103,10 @@ def generate_save_reload_render(seed: int, directory: Path) -> Track:
     if generated.to_dict() != reloaded.to_dict():
         raise AssertionError("saved track changed during the load round trip.")
 
-    environment = RacingEnv(track_path=track_path, render_mode="rgb_array")
+    environment = RacingEnv(
+        TrackWithGeometry.load(track_path),
+        render_mode="rgb_array",
+    )
     try:
         environment.reset()
         frame = environment.render()
@@ -120,7 +123,7 @@ def replay(
     """
     Replay actions on one seeded environment and capture complete outputs.
     """
-    environment = RacingEnv(track_seed=seed)
+    environment = RacingEnv(TrackWithGeometry.generate(seed))
     results: list[ReplayTransition] = []
     try:
         environment.reset()
@@ -166,7 +169,7 @@ def run_environment_checker(seed: int) -> None:
     """
     Run Gymnasium's conformance checker on a seeded environment.
     """
-    environment = RacingEnv(track_seed=seed)
+    environment = RacingEnv(TrackWithGeometry.generate(seed))
     try:
         check_env(environment, skip_render_check=False)
     finally:

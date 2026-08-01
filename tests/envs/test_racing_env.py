@@ -9,14 +9,21 @@ import numpy as np
 from gymnasium.utils.env_checker import check_env
 
 from configs import EnvironmentConfig, SimulationConfig
-from envs import RacingEnv
+from envs import RacingEnv, TrackWithGeometry
+
+
+def _environment(seed: int, **kwargs) -> RacingEnv:
+    """
+    Build an environment from a track prepared outside its constructor.
+    """
+    return RacingEnv(TrackWithGeometry.generate(seed), **kwargs)
 
 
 def test_racing_env_passes_gymnasium_checker() -> None:
     """
     The assembled environment satisfies Gymnasium's API contract.
     """
-    check_env(RacingEnv(), skip_render_check=True)
+    check_env(_environment(0), skip_render_check=True)
 
 
 def test_seeded_action_sequences_are_reproducible() -> None:
@@ -28,8 +35,8 @@ def test_seeded_action_sequences_are_reproducible() -> None:
         np.asarray([0.4, -0.2], dtype=np.float32),
         np.asarray([0.0, 0.0], dtype=np.float32),
     ]
-    first = RacingEnv()
-    second = RacingEnv()
+    first = _environment(12)
+    second = _environment(12)
     first_observation, first_info = first.reset(seed=12)
     second_observation, second_info = second.reset(seed=12)
 
@@ -46,7 +53,7 @@ def test_reset_clears_episode_state_and_observation_is_in_space() -> None:
     """
     Reset clears lifecycle counters and returns a declared-space observation.
     """
-    environment = RacingEnv(track_seed=2)
+    environment = _environment(2)
     observation, info = environment.reset()
     environment.step(np.asarray([1.0, 0.0], dtype=np.float32))
     reset_observation, reset_info = environment.reset()
@@ -63,8 +70,8 @@ def test_terminal_observation_and_time_limit_flags_are_valid() -> None:
     A truncated transition returns a valid terminal observation.
     """
     environment = RacingEnv(
+        TrackWithGeometry.generate(3),
         config=EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=1)),
-        track_seed=3,
     )
     environment.reset()
 
@@ -80,15 +87,14 @@ def test_terminal_observation_and_time_limit_flags_are_valid() -> None:
 
 def test_saved_track_can_be_loaded() -> None:
     """
-    A persisted circuit is available through direct environment construction.
+    A persisted circuit can be prepared before environment construction.
     """
     track_path = Path(__file__).parents[1] / "fixtures" / "tracks" / "valid_circle.json"
-    environment = RacingEnv(track_path=track_path)
+    environment = RacingEnv(TrackWithGeometry.load(track_path))
 
     observation, info = environment.reset(seed=99)
 
     assert environment.observation_space.contains(observation)
-    assert environment.track is not None
     assert info["track_seed"] == environment.track.generation.seed
 
 
@@ -96,4 +102,4 @@ def test_direct_construction_is_a_gymnasium_environment() -> None:
     """
     The public class can be used without environment registration.
     """
-    assert isinstance(RacingEnv(track_seed=4), gym.Env)
+    assert isinstance(_environment(4), gym.Env)

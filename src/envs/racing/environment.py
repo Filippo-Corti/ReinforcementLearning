@@ -1,80 +1,60 @@
-"""Gymnasium environment that combines track, dynamics and lifecycle rules."""
+"""Gymnasium environment combining a prepared track and racing dynamics."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
+from numpy.typing import NDArray
 
 from configs import EnvironmentConfig
 
-from ..tracks import Track, TrackGeometry, generate_track
+from ..tracks import Track, TrackWithGeometry
 from ..vehicle import NormalizedAction, VehicleState, transition
-from .lifecycle import EpisodeLifecycle
-from .rendering import RacingRenderer
+from .lifecycle import ActionOutcome, EpisodeLifecycle
+from .rendering import RacingPygameRenderer
+
+ActionType = NDArray[np.float32]
+ObservationType = NDArray[np.float32]
 
 
-class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
+class RacingEnv(gym.Env[ObservationType, ActionType]):
     """
-    Continuous-control Formula 1 racing environment with Frenet observations.
-    It generates or loads one track, advances the kinematic vehicle state and
-    delegates episode outcomes to the lifecycle component.
+    Expose continuous racing controls and Frenet observations through Gymnasium.
 
     Fields:
-        * config: The immutable configuration governing environment behaviour.
-        * track: The loaded or generated circuit used by the current environment.
-        * geometry: Runtime geometry derived from the current track.
+        * config: The environment behaviour configuration.
+        * track: The immutable sampled circuit data.
+        * track_with_geometry: The track's interpolation, boundaries, and indexes.
         * action_space: Normalized throttle/brake and steering controls.
         * observation_space: Frenet observations in float32 physical units.
         * state: The current kinematic vehicle state.
     """
 
+    # Gymnasium and its wrappers inspect this class-level mapping to discover
+    # which render modes the environment supports. It does not affect dynamics.
     metadata = {"render_modes": ["human", "rgb_array"]}  # noqa: RUF012
 
     def __init__(
         self,
+        track: TrackWithGeometry,
         *,
         config: EnvironmentConfig | None = None,
-        track: Track | None = None,
-        track_path: str | Path | None = None,
-        track_seed: int | None = None,
         render_mode: str | None = None,
     ) -> None:
         super().__init__()
-        if track is not None and track_path is not None:
-            raise ValueError("provide either track or track_path, not both.")
-        if track is not None and track_seed is not None:
-            raise ValueError("track_seed cannot be combined with an explicit track.")
-        if track_path is not None and track_seed is not None:
-            raise ValueError("track_seed cannot be combined with track_path.")
         if render_mode not in self.metadata["render_modes"] + [None]:
             raise ValueError("render_mode must be None, 'human', or 'rgb_array'.")
 
         self.config = config or EnvironmentConfig()
-        if track_path is not None:
-            track = Track.load(
-                track_path,
-                vehicle_config=self.config.vehicle,
-                track_config=self.config.track,
-            )
-        if track is None and track_seed is not None:
-            track = generate_track(
-                track_seed,
-                track_config=self.config.track,
-                vehicle_config=self.config.vehicle,
-            )
-
-        self.track = track
-        self.geometry: TrackGeometry | None = None
+        self.track_with_geometry = track
+        self.track: Track = track.track
         self.state: VehicleState | None = None
         self._lifecycle: EpisodeLifecycle | None = None
-        self._track_seed = None if track is None else track.generation.seed
-        self._generated_from_reset_seed = track is None
         self._episode_finished = False
         self.render_mode = render_mode
-        self._renderer: RacingRenderer | None = None
+        self._renderer: RacingPygameRenderer | None = None
 
         self.action_space = gym.spaces.Box(
             low=-1.0,
@@ -85,7 +65,8 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
         self.observation_space = gym.spaces.Box(
             low=np.asarray([-np.inf, -np.pi, 0.0, -np.inf], dtype=np.float32),
             high=np.asarray(
-                [np.inf, np.pi, self.config.vehicle.max_speed, np.inf], dtype=np.float32
+                [np.inf, np.pi, self.config.vehicle.max_speed, np.inf],
+                dtype=np.float32,
             ),
             dtype=np.float32,
         )
@@ -95,41 +76,37 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
         *,
         seed: int | None = None,
         options: dict[str, Any] | None = None,
-    ) -> tuple[np.ndarray, dict[str, Any]]:
+    ) -> tuple[ObservationType, dict[str, Any]]:
         """
-        Reset at the canonical start line with zero speed.
+        Reset at the prepared track's canonical start line with zero speed.
         """
         super().reset(seed=seed)
-        self._ensure_track(seed)
-        if self.track is None:
-            raise RuntimeError("track initialization failed.")
         if self._renderer is not None:
             self._renderer.close()
             self._renderer = None
 
-        self.geometry = TrackGeometry(self.track)
         start_s = self.track.s[self.track.start_index]
-        start_position = self.geometry.position(float(start_s))
+        start_position = self.track_with_geometry.position(float(start_s))
         self.state = VehicleState(
             x=float(start_position[0]),
             y=float(start_position[1]),
-            heading=self.geometry.heading(float(start_s)),
+            heading=self.track_with_geometry.heading(float(start_s)),
             speed=0.0,
         )
         self._lifecycle = EpisodeLifecycle(
-            self.geometry,
+            self.track_with_geometry,
             simulation_config=self.config.simulation,
             vehicle_config=self.config.vehicle,
             reward_config=self.config.reward,
         )
         self._lifecycle.reset(self.state)
         self._episode_finished = False
-        return self._observation(), self._info()
+        return self._observe(), self._info()
 
     def step(
         self,
-        action: np.ndarray,
-    ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
+        action: ActionType,
+    ) -> tuple[ObservationType, float, bool, bool, dict[str, Any]]:
         """
         Apply one normalized control action and return the Gymnasium transition.
         """
@@ -145,7 +122,7 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
                 "action must be a float32 array with shape (2,) in [-1, 1]."
             )
 
-        dynamics = transition(
+        vehicle_transition = transition(
             self.state,
             NormalizedAction(
                 throttle=float(action_values[0]),
@@ -154,76 +131,59 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
             simulation_config=self.config.simulation,
             vehicle_config=self.config.vehicle,
         )
-        outcome = self._lifecycle.advance(dynamics)
+        outcome = self._lifecycle.process_transition(vehicle_transition)
         if outcome.termination_substep is None:
-            self.state = dynamics.state
+            self.state = vehicle_transition.state
         else:
-            self.state = dynamics.substep_states[outcome.termination_substep - 1]
+            self.state = vehicle_transition.substep_states[
+                outcome.termination_substep - 1
+            ]
         self._episode_finished = outcome.terminated or outcome.truncated
         return (
-            self._observation(),
+            self._observe(),
             outcome.reward,
             outcome.terminated,
             outcome.truncated,
             self._info(outcome),
         )
 
-    def close(self) -> None:
-        """
-        Release environment resources.
-        """
-        if self._renderer is not None:
-            self._renderer.close()
-            self._renderer = None
-
-    def render(self) -> np.ndarray | None:
+    def render(self) -> NDArray[np.uint8] | None:
         """
         Render the current track and vehicle state in the configured mode.
         """
         if self.render_mode is None:
             return None
-        if self.geometry is None or self.state is None:
+        if self.state is None:
             raise RuntimeError("reset must be called before rendering the environment.")
         if self._renderer is None:
-            self._renderer = RacingRenderer(
-                self.geometry,
+            self._renderer = RacingPygameRenderer(
+                self.track_with_geometry,
                 render_mode=self.render_mode,
                 image_size=(800, 800),
             )
         return self._renderer.render(self.state)
 
-    def _ensure_track(self, seed: int | None) -> None:
+    def close(self) -> None:
         """
-        Generate a track when one was not supplied by the constructor.
+        Release environment rendering resources.
         """
-        if self.track is not None and not (
-            self._generated_from_reset_seed and seed is not None
-        ):
-            return
-        if seed is not None:
-            self._track_seed = seed
-        elif self._track_seed is None:
-            self._track_seed = int(self.np_random.integers(np.iinfo(np.int64).max))
-        self.track = generate_track(
-            self._track_seed,
-            track_config=self.config.track,
-            vehicle_config=self.config.vehicle,
-        )
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
 
-    def _observation(self) -> np.ndarray:
+    def _observe(self) -> ObservationType:
         """
-        Build the current Frenet observation in the declared dtype.
+        Build the current Frenet observation in the declared Gymnasium dtype.
         """
         if self.state is None or self._lifecycle is None:
             raise RuntimeError("environment state is not initialized.")
-        observation, _ = self._lifecycle.projector.observation(
-            np.asarray([self.state.x, self.state.y], dtype=np.float64),
-            vehicle_heading=self.state.heading,
-            speed=self.state.speed,
+        observation, _ = self._lifecycle.observer.observe(
+            self.state,
+            config=self.config.observation,
         )
-        return observation.astype(np.float32)
+        return observation.as_array().astype(np.float32)
 
-    def _info(self, outcome: Any | None = None) -> dict[str, Any]:
+    def _info(self, outcome: ActionOutcome | None = None) -> dict[str, Any]:
         """
         Return diagnostics shared by reset and step results.
         """
@@ -236,6 +196,6 @@ class RacingEnv(gym.Env[np.ndarray, np.ndarray]):
             "lap_completed": False if outcome is None else outcome.lap_completed,
             "elapsed_time": self._lifecycle.agent_steps
             * self.config.simulation.agent_timestep,
-            "track_seed": self._track_seed,
+            "track_seed": self.track.generation.seed,
             "collision_substep": None if outcome is None else outcome.collision_substep,
         }

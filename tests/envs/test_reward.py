@@ -8,18 +8,18 @@ import numpy as np
 import pytest
 
 from envs import (
-    DynamicsTransition,
     EpisodeLifecycle,
+    KinematicTransition,
     PhysicalControls,
     Track,
     TrackGenerationMetadata,
-    TrackGeometry,
+    TrackWithGeometry,
     VehicleState,
 )
 
 
 @pytest.fixture(scope="module")
-def circle_geometry() -> TrackGeometry:
+def circle_geometry() -> TrackWithGeometry:
     """
     Build a circular track for reward reference checks.
     """
@@ -28,7 +28,7 @@ def circle_geometry() -> TrackGeometry:
     length = sample_count * spacing
     radius = length / (2.0 * pi)
     angles = np.arange(sample_count, dtype=np.float64) * 2.0 * pi / sample_count
-    return TrackGeometry(
+    return TrackWithGeometry(
         Track(
             generation=TrackGenerationMetadata(
                 seed=0,
@@ -63,11 +63,11 @@ def _state(position: np.ndarray) -> VehicleState:
     )
 
 
-def _transition(*states: VehicleState) -> DynamicsTransition:
+def _transition(*states: VehicleState) -> KinematicTransition:
     """
     Construct a transition with explicit substep states for lifecycle testing.
     """
-    return DynamicsTransition(
+    return KinematicTransition(
         state=states[-1],
         substep_states=tuple(states),
         controls=PhysicalControls(acceleration=0.0, steering_angle=0.0),
@@ -83,7 +83,7 @@ def test_stationary_timeout_matches_documented_total(circle_geometry) -> None:
     lifecycle.reset(state)
 
     total = sum(
-        lifecycle.advance(_transition(state, state, state, state)).reward
+        lifecycle.process_transition(_transition(state, state, state, state)).reward
         for _ in range(5_000)
     )
 
@@ -98,6 +98,6 @@ def test_immediate_crash_matches_documented_penalty(circle_geometry) -> None:
     lifecycle.reset(_state(circle_geometry.position(0.0)))
     crashed = _state(circle_geometry.position(0.0) + 7.0 * circle_geometry.normal(0.0))
 
-    result = lifecycle.advance(_transition(crashed))
+    result = lifecycle.process_transition(_transition(crashed))
 
     assert result.reward == pytest.approx(-20.0)

@@ -8,9 +8,14 @@ import numpy as np
 
 from configs import CarConfig, TrackGenerationConfig
 
-from .geometry import TrackGeometry, wrap_angle
-from .model import Track, TrackValidationError
-from .projection import FloatArray, PolylineProjector, project_to_segment
+from ..geometry import (
+    PolylineProjector,
+    segment_distance,
+    segments_intersect,
+    wrap_angle,
+)
+from .errors import TrackValidationError
+from .track import Track, TrackWithGeometry
 
 
 def validate_track_geometry(
@@ -18,7 +23,7 @@ def validate_track_geometry(
     *,
     vehicle_config: CarConfig | None = None,
     track_config: TrackGenerationConfig | None = None,
-) -> TrackGeometry:
+) -> TrackWithGeometry:
     """
     Validate track length, curvature, seams, intersections, and separation.
     """
@@ -37,7 +42,7 @@ def validate_track_geometry(
         )
 
     try:
-        geometry = TrackGeometry(track)
+        geometry = TrackWithGeometry(track)
     except ValueError as error:
         raise TrackValidationError(f"invalid track geometry: {error}") from error
     _validate_periodic_seam(geometry)
@@ -64,7 +69,7 @@ def validate_track_geometry(
     return geometry
 
 
-def _validate_periodic_seam(geometry: TrackGeometry) -> None:
+def _validate_periodic_seam(geometry: TrackWithGeometry) -> None:
     length = geometry.track.track_length
     if not np.allclose(
         geometry.position(0.0),
@@ -94,7 +99,7 @@ def _validate_simple_closed_polyline(
     for first, second in pairs:
         if _segments_are_adjacent(int(first), int(second), index.segment_count):
             continue
-        if _segments_intersect(
+        if segments_intersect(
             index.starts[first],
             index.ends[first],
             index.starts[second],
@@ -122,7 +127,7 @@ def _validate_nonlocal_centerline_separation(
         arc_separation = max(0.0, (cyclic_delta - 1) * sample_spacing)
         if arc_separation <= required_separation:
             continue
-        distance = _segment_distance(
+        distance = segment_distance(
             index.starts[first],
             index.ends[first],
             index.starts[second],
@@ -143,7 +148,7 @@ def _validate_boundaries_do_not_intersect(
     candidate_lists = left.candidate_lists(right, 0.0)
     for left_index, right_indices in enumerate(candidate_lists):
         for right_index in right_indices:
-            if _segments_intersect(
+            if segments_intersect(
                 left.starts[left_index],
                 left.ends[left_index],
                 right.starts[right_index],
@@ -156,89 +161,8 @@ def _validate_boundaries_do_not_intersect(
 
 
 def _segments_are_adjacent(first: int, second: int, count: int) -> bool:
+    """
+    Return whether two segments are neighbours on a closed polyline.
+    """
     difference = abs(first - second)
     return difference == 1 or difference == count - 1
-
-
-def _segments_intersect(
-    first_start: FloatArray,
-    first_end: FloatArray,
-    second_start: FloatArray,
-    second_end: FloatArray,
-) -> bool:
-    scale = max(
-        1.0,
-        float(np.max(np.abs(first_start))),
-        float(np.max(np.abs(first_end))),
-        float(np.max(np.abs(second_start))),
-        float(np.max(np.abs(second_end))),
-    )
-    tolerance = np.finfo(np.float64).eps * scale * 64
-
-    first_a = _cross(first_end - first_start, second_start - first_start)
-    first_b = _cross(first_end - first_start, second_end - first_start)
-    second_a = _cross(second_end - second_start, first_start - second_start)
-    second_b = _cross(second_end - second_start, first_end - second_start)
-
-    if first_a * first_b < -(tolerance**2) and second_a * second_b < -(tolerance**2):
-        return True
-
-    return (
-        (
-            abs(first_a) <= tolerance
-            and _point_on_segment(second_start, first_start, first_end, tolerance)
-        )
-        or (
-            abs(first_b) <= tolerance
-            and _point_on_segment(second_end, first_start, first_end, tolerance)
-        )
-        or (
-            abs(second_a) <= tolerance
-            and _point_on_segment(first_start, second_start, second_end, tolerance)
-        )
-        or (
-            abs(second_b) <= tolerance
-            and _point_on_segment(first_end, second_start, second_end, tolerance)
-        )
-    )
-
-
-def _segment_distance(
-    first_start: FloatArray,
-    first_end: FloatArray,
-    second_start: FloatArray,
-    second_end: FloatArray,
-) -> float:
-    if _segments_intersect(first_start, first_end, second_start, second_end):
-        return 0.0
-    return min(
-        _point_segment_distance(first_start, second_start, second_end),
-        _point_segment_distance(first_end, second_start, second_end),
-        _point_segment_distance(second_start, first_start, first_end),
-        _point_segment_distance(second_end, first_start, first_end),
-    )
-
-
-def _point_segment_distance(
-    point: FloatArray,
-    start: FloatArray,
-    end: FloatArray,
-) -> float:
-    _, _, distance = project_to_segment(point, start, end)
-    return distance
-
-
-def _point_on_segment(
-    point: FloatArray,
-    start: FloatArray,
-    end: FloatArray,
-    tolerance: float,
-) -> bool:
-    return bool(
-        np.all(point >= np.minimum(start, end) - tolerance)
-        and np.all(point <= np.maximum(start, end) + tolerance)
-    )
-
-
-def _cross(first: FloatArray, second: FloatArray) -> float:
-    return float(first[0] * second[1] - first[1] * second[0])

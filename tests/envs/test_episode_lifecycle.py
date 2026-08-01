@@ -9,18 +9,18 @@ import pytest
 
 from configs import SimulationConfig
 from envs import (
-    DynamicsTransition,
     EpisodeLifecycle,
+    KinematicTransition,
     PhysicalControls,
     Track,
     TrackGenerationMetadata,
-    TrackGeometry,
+    TrackWithGeometry,
     VehicleState,
 )
 
 
 @pytest.fixture(scope="module")
-def circle_geometry() -> TrackGeometry:
+def circle_geometry() -> TrackWithGeometry:
     """
     Build a circular track with a canonical gate at its eastern point.
     """
@@ -29,7 +29,7 @@ def circle_geometry() -> TrackGeometry:
     length = sample_count * spacing
     radius = length / (2.0 * pi)
     angles = np.arange(sample_count, dtype=np.float64) * 2.0 * pi / sample_count
-    return TrackGeometry(
+    return TrackWithGeometry(
         Track(
             generation=TrackGenerationMetadata(
                 seed=0,
@@ -61,11 +61,11 @@ def _state(position: np.ndarray) -> VehicleState:
     )
 
 
-def _transition(*states: VehicleState) -> DynamicsTransition:
+def _transition(*states: VehicleState) -> KinematicTransition:
     """
     Construct a transition with explicit substep states for lifecycle testing.
     """
-    return DynamicsTransition(
+    return KinematicTransition(
         state=states[-1],
         substep_states=tuple(states),
         controls=PhysicalControls(acceleration=0.0, steering_angle=0.0),
@@ -80,11 +80,11 @@ def _advance_to(
     Advance a test transition whose four substeps all end at one position.
     """
     state = _state(position)
-    lifecycle.advance(_transition(state, state, state, state))
+    lifecycle.process_transition(_transition(state, state, state, state))
 
 
 def test_collision_is_checked_after_each_physics_substep(
-    circle_geometry: TrackGeometry,
+    circle_geometry: TrackWithGeometry,
 ) -> None:
     """
     A point on the boundary crashes at the substep where it reaches it.
@@ -95,7 +95,9 @@ def test_collision_is_checked_after_each_physics_substep(
     boundary = _state(circle_geometry.position(1.0) + 7.0 * circle_geometry.normal(1.0))
     lifecycle.reset(start)
 
-    result = lifecycle.advance(_transition(on_track, boundary, boundary, boundary))
+    result = lifecycle.process_transition(
+        _transition(on_track, boundary, boundary, boundary)
+    )
 
     assert result.collision
     assert result.terminated
@@ -103,7 +105,9 @@ def test_collision_is_checked_after_each_physics_substep(
     assert result.collision_substep == 2
 
 
-def test_reset_gate_crossing_does_not_finish(circle_geometry: TrackGeometry) -> None:
+def test_reset_gate_crossing_does_not_finish(
+    circle_geometry: TrackWithGeometry,
+) -> None:
     """
     Moving forward from the reset pose cannot immediately complete a lap.
     """
@@ -117,7 +121,7 @@ def test_reset_gate_crossing_does_not_finish(circle_geometry: TrackGeometry) -> 
 
 
 def test_insufficient_and_backward_gate_crossings_do_not_finish(
-    circle_geometry: TrackGeometry,
+    circle_geometry: TrackWithGeometry,
 ) -> None:
     """
     Only a near-full forward lap can complete the episode.
@@ -131,13 +135,15 @@ def test_insufficient_and_backward_gate_crossings_do_not_finish(
     _advance_to(backward, circle_geometry.position(630.0))
 
     assert insufficient.episode_progress == pytest.approx(10.0)
-    assert not insufficient.advance(
+    assert not insufficient.process_transition(
         _transition(_state(circle_geometry.position(0.0)))
     ).lap_completed
     assert backward.episode_progress == pytest.approx(-10.0)
 
 
-def test_forward_full_lap_crossing_terminates(circle_geometry: TrackGeometry) -> None:
+def test_forward_full_lap_crossing_terminates(
+    circle_geometry: TrackWithGeometry,
+) -> None:
     """
     Accumulated forward progress plus a gate crossing completes a lap.
     """
@@ -146,14 +152,18 @@ def test_forward_full_lap_crossing_terminates(circle_geometry: TrackGeometry) ->
     for s in range(10, 640, 10):
         _advance_to(lifecycle, circle_geometry.position(float(s)))
 
-    result = lifecycle.advance(_transition(_state(circle_geometry.position(0.0))))
+    result = lifecycle.process_transition(
+        _transition(_state(circle_geometry.position(0.0)))
+    )
 
     assert result.lap_completed
     assert result.terminated
     assert result.reward == pytest.approx(10.0)
 
 
-def test_collision_takes_precedence_over_finish(circle_geometry: TrackGeometry) -> None:
+def test_collision_takes_precedence_over_finish(
+    circle_geometry: TrackWithGeometry,
+) -> None:
     """
     Crossing the gate while leaving the track receives the crash outcome.
     """
@@ -163,7 +173,7 @@ def test_collision_takes_precedence_over_finish(circle_geometry: TrackGeometry) 
         _advance_to(lifecycle, circle_geometry.position(float(s)))
     off_track_gate = circle_geometry.position(0.0) + 6.1 * circle_geometry.normal(0.0)
 
-    result = lifecycle.advance(_transition(_state(off_track_gate)))
+    result = lifecycle.process_transition(_transition(_state(off_track_gate)))
 
     assert result.collision
     assert not result.lap_completed
@@ -171,7 +181,7 @@ def test_collision_takes_precedence_over_finish(circle_geometry: TrackGeometry) 
 
 
 def test_time_limit_truncates_without_termination(
-    circle_geometry: TrackGeometry,
+    circle_geometry: TrackWithGeometry,
 ) -> None:
     """
     Reaching the time limit remains distinct from an MDP terminal state.
@@ -183,7 +193,7 @@ def test_time_limit_truncates_without_termination(
     start = _state(circle_geometry.position(0.0))
     lifecycle.reset(start)
 
-    result = lifecycle.advance(_transition(start, start, start, start))
+    result = lifecycle.process_transition(_transition(start, start, start, start))
 
     assert result.truncated
     assert not result.terminated

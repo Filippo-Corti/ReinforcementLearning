@@ -1,4 +1,28 @@
-"""Deterministic generation of smooth, uniformly sampled racing tracks."""
+"""Deterministically generate smooth, uniformly sampled racing tracks.
+
+The project-owned generation pipeline is specified in ``docs/TRACK.md``::
+
+    seeded RNG
+        |
+        v
+    jittered polar checkpoints
+        |
+        v
+    periodic cubic x/y splines
+        |
+        v
+    numerical arc-length integration and inversion
+        |
+        v
+    uniformly spaced centerline samples
+        |
+        v
+    headings + periodic curvature -> geometric validation -> track
+
+The implementation uses SciPy's periodic ``CubicSpline``, ``quad``, and
+``solve_ivp`` primitives; it is not an implementation of a named external
+track-generation algorithm.
+"""
 
 from __future__ import annotations
 
@@ -7,23 +31,16 @@ from math import pi
 from os import PathLike
 
 import numpy as np
-from numpy.typing import NDArray
 from scipy.integrate import quad, solve_ivp
 from scipy.interpolate import CubicSpline
 
 from configs import CarConfig, TrackGenerationConfig
 
-from .geometry import wrap_angle
-from .model import Track, TrackGenerationMetadata, TrackValidationError
+from ..geometry import wrap_angle
+from ..types import FloatArray
+from .errors import TrackGenerationError, TrackValidationError
+from .track import Track, TrackGenerationMetadata
 from .validation import validate_track_geometry
-
-FloatArray = NDArray[np.float64]
-
-
-class TrackGenerationError(RuntimeError):
-    """
-    Raised when all deterministic generation attempts are rejected.
-    """
 
 
 def generate_track_file(

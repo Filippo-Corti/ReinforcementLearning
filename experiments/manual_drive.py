@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 import pygame
 
-from envs import RacingEnv
+from envs import RacingEnv, TrackWithGeometry
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,8 +29,10 @@ def build_environment(arguments: argparse.Namespace) -> RacingEnv:
     Construct the human-rendered environment selected by parsed arguments.
     """
     if arguments.track is not None:
-        return RacingEnv(track_path=arguments.track, render_mode="human")
-    return RacingEnv(track_seed=arguments.seed, render_mode="human")
+        track = TrackWithGeometry.load(arguments.track)
+    else:
+        track = TrackWithGeometry.generate(arguments.seed)
+    return RacingEnv(track, render_mode="human")
 
 
 def controls_from_keys(keys: Sequence[bool]) -> np.ndarray:

@@ -8,26 +8,28 @@ import numpy as np
 
 from configs import CarConfig, RewardConfig, SimulationConfig
 
-from ..tracks import FrenetProjection, FrenetProjector, TrackGeometry, signed_progress
-from ..vehicle import DynamicsTransition, VehicleState
+from ..geometry import segments_intersect
+from ..observations import FrenetObserver, FrenetProjection, signed_progress
+from ..tracks import TrackWithGeometry
+from ..vehicle import KinematicTransition, VehicleState
 
 
 @dataclass(frozen=True, slots=True)
-class EpisodeTransition:
+class ActionOutcome:
     """
-    Lifecycle outcome for one agent action.
+    Store lifecycle, reward, and termination results for one agent action.
 
     Fields:
         * reward: The reward selected by the crash, finish, or shaped branch.
-        * terminated: Whether the transition reached a crash or completed lap.
-        * truncated: Whether the time limit was reached without termination.
-        * collision: Whether the car left the track during a physics substep.
-        * lap_completed: Whether the car validly crossed the finish gate.
+        * terminated: Whether this action crashed or completed the lap.
+        * truncated: Whether this action reached the episode time limit.
+        * collision: Whether a physics substep left the track.
+        * lap_completed: Whether a valid finish-gate crossing occurred.
         * progress_delta: The signed progress accumulated during this action.
         * wrapped_progress: The final projected position along the track.
         * episode_progress: The signed progress accumulated since reset.
-        * collision_substep: The one-based physics substep where collision occurred.
-        * termination_substep: The one-based physics substep where the episode terminated.
+        * collision_substep: The one-based substep where collision occurred.
+        * termination_substep: The one-based substep where termination occurred.
     """
 
     reward: float
@@ -44,35 +46,33 @@ class EpisodeTransition:
 
 class EpisodeLifecycle:
     """
-    Track progress, terminal outcomes and reward for one fixed-start episode.
-    The caller supplies dynamics transitions, leaving Gymnasium state handling and
-    rendering outside this focused lifecycle component.
+    Track progress, terminal outcomes, and reward for one fixed-start episode.
 
     Fields:
-        * geometry: The track geometry used for projections, collision and finish checks.
-        * projector: The Frenet projector that maintains temporally coherent projections.
+        * track: The sampled track and derived geometry used by the episode.
+        * observer: The Frenet observer used for coherent centerline projections.
         * simulation: Simulation timing and time-limit configuration.
         * vehicle: Vehicle limits used to derive finish tolerance.
         * reward_config: Reward coefficients for the documented branches.
         * wrapped_progress: The previous projected position along the centerline.
         * episode_progress: The signed progress accumulated since reset.
-        * agent_steps: The number of completed agent actions.
+        * agent_steps: The number of processed agent actions.
     """
 
     def __init__(
         self,
-        geometry: TrackGeometry,
+        track: TrackWithGeometry,
         *,
         simulation_config: SimulationConfig | None = None,
         vehicle_config: CarConfig | None = None,
         reward_config: RewardConfig | None = None,
     ) -> None:
-        self.geometry = geometry
+        self.track = track
         self.simulation = simulation_config or SimulationConfig()
         self.vehicle = vehicle_config or CarConfig()
         self.reward_config = reward_config or RewardConfig()
-        self.projector = FrenetProjector(
-            geometry,
+        self.observer = FrenetObserver(
+            track,
             simulation_config=self.simulation,
             vehicle_config=self.vehicle,
         )
@@ -84,44 +84,42 @@ class EpisodeLifecycle:
 
     def reset(self, state: VehicleState) -> FrenetProjection:
         """
-        Initialize lifecycle progress from a reset state.
+        Reset episode counters and return the state's centerline projection.
         """
-        projection = self.projector.project(_position(state))
+        _, projection = self.observer.observe(state)
         self.wrapped_progress = projection.s
         self.episode_progress = 0.0
         self.agent_steps = 0
-        self._previous_position = _position(state)
+        self._previous_position = state.position()
         self._previous_segment_index = projection.segment_index
         return projection
 
-    def advance(self, dynamics: DynamicsTransition) -> EpisodeTransition:
+    def process_transition(self, transition: KinematicTransition) -> ActionOutcome:
         """
-        Evaluate each physics substep and return the agent-action outcome.
+        Process one action's physics states and return its lifecycle outcome.
         """
         if self._previous_segment_index is None:
-            raise RuntimeError("reset must be called before advancing an episode.")
+            raise RuntimeError("reset must be called before processing a transition.")
 
         progress_delta = 0.0
         collision_substep: int | None = None
         termination_substep: int | None = None
         lap_completed = False
-        for substep_index, state in enumerate(dynamics.substep_states, start=1):
-            position = _position(state)
-            projection = self.projector.project(
-                position,
+        for substep_index, state in enumerate(transition.substep_states, start=1):
+            position = state.position()
+            _, projection = self.observer.observe(
+                state,
                 previous_segment_index=self._previous_segment_index,
             )
             delta = signed_progress(
                 self.wrapped_progress,
                 projection.s,
-                self.geometry.track.track_length,
+                self.track.track.track_length,
             )
             progress_delta += delta
             self.episode_progress += delta
             crossing = self._crosses_finish_gate(self._previous_position, position)
-            collision = (
-                abs(projection.lateral_distance) >= self.geometry.track.width / 2
-            )
+            collision = abs(projection.lateral_distance) >= self.track.track.width / 2
 
             self.wrapped_progress = projection.s
             self._previous_position = position
@@ -146,7 +144,7 @@ class EpisodeLifecycle:
             collision=collision,
             lap_completed=lap_completed,
         )
-        return EpisodeTransition(
+        return ActionOutcome(
             reward=reward,
             terminated=terminated,
             truncated=truncated,
@@ -161,34 +159,44 @@ class EpisodeLifecycle:
 
     @property
     def _finish_progress_requirement(self) -> float:
+        """
+        Return the progress required before a gate crossing can finish the lap.
+        """
         finish_tolerance = max(
-            2.0 * self.geometry.track.sample_spacing,
+            2.0 * self.track.track.sample_spacing,
             self.vehicle.max_speed * self.simulation.agent_timestep,
         )
-        return self.geometry.track.track_length - finish_tolerance
+        return self.track.track.track_length - finish_tolerance
 
     def _crosses_finish_gate(
         self,
         previous_position: np.ndarray,
         current_position: np.ndarray,
     ) -> bool:
-        start_s = self.geometry.track.start_index * self.geometry.track.sample_spacing
-        gate_center = self.geometry.position(start_s)
-        normal = self.geometry.normal(start_s)
+        """
+        Return whether forward motion crosses the finite start/finish gate.
+        """
+        raw_track = self.track.track
+        start_s = raw_track.start_index * raw_track.sample_spacing
+        gate_center = self.track.position(start_s)
+        normal = self.track.normal(start_s)
         tangent = np.asarray(
             [
-                np.cos(self.geometry.heading(start_s)),
-                np.sin(self.geometry.heading(start_s)),
+                np.cos(self.track.heading(start_s)),
+                np.sin(self.track.heading(start_s)),
             ]
         )
-        gate_start = gate_center - self.geometry.track.width / 2.0 * normal
-        gate_end = gate_center + self.geometry.track.width / 2.0 * normal
+        gate_start = gate_center - raw_track.width / 2.0 * normal
+        gate_end = gate_center + raw_track.width / 2.0 * normal
         previous_longitudinal = float(np.dot(previous_position - gate_center, tangent))
         current_longitudinal = float(np.dot(current_position - gate_center, tangent))
         return (
             previous_longitudinal < 0.0 <= current_longitudinal
-            and _segments_intersect(
-                previous_position, current_position, gate_start, gate_end
+            and segments_intersect(
+                previous_position,
+                current_position,
+                gate_start,
+                gate_end,
             )
         )
 
@@ -199,6 +207,9 @@ class EpisodeLifecycle:
         collision: bool,
         lap_completed: bool,
     ) -> float:
+        """
+        Select the documented crash, finish, or shaped reward branch.
+        """
         if collision:
             return -self.reward_config.crash_penalty
         if lap_completed:
@@ -207,42 +218,5 @@ class EpisodeLifecycle:
             -self.reward_config.time_penalty_rate * self.simulation.agent_timestep
             + self.reward_config.progress_coefficient
             * progress_delta
-            / self.geometry.track.track_length
+            / self.track.track.track_length
         )
-
-
-def _position(state: VehicleState) -> np.ndarray:
-    """
-    Return a state position as a float64 Cartesian vector.
-    """
-    return np.asarray([state.x, state.y], dtype=np.float64)
-
-
-def _segments_intersect(
-    first_start: np.ndarray,
-    first_end: np.ndarray,
-    second_start: np.ndarray,
-    second_end: np.ndarray,
-) -> bool:
-    """
-    Return whether two closed two-dimensional line segments intersect.
-    """
-    first_orientation = _orientation(first_start, first_end, second_start)
-    second_orientation = _orientation(first_start, first_end, second_end)
-    third_orientation = _orientation(second_start, second_end, first_start)
-    fourth_orientation = _orientation(second_start, second_end, first_end)
-    return (
-        first_orientation * second_orientation <= 0.0
-        and third_orientation * fourth_orientation <= 0.0
-    )
-
-
-def _orientation(start: np.ndarray, end: np.ndarray, point: np.ndarray) -> float:
-    """
-    Return the signed two-dimensional orientation of a point around a segment.
-    """
-    displacement = end - start
-    relative_point = point - start
-    return float(
-        displacement[0] * relative_point[1] - displacement[1] * relative_point[0]
-    )

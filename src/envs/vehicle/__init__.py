@@ -1,19 +1,18 @@
-"""Vehicle state and kinematic dynamics."""
+"""Vehicle state, controls, and kinematic transition kernel."""
 
-from .dynamics import (
-    DynamicsTransition,
+from .controls import (
     NormalizedAction,
     PhysicalControls,
-    VehicleState,
-    map_action,
-    transition,
+    normalized_to_physical_controls,
 )
+from .kernel import KinematicTransition, transition
+from .state import VehicleState
 
 __all__ = [
-    "DynamicsTransition",
+    "KinematicTransition",
     "NormalizedAction",
     "PhysicalControls",
     "VehicleState",
-    "map_action",
+    "normalized_to_physical_controls",
     "transition",
 ]

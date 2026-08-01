@@ -5,14 +5,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from envs import RacingEnv
+from envs import RacingEnv, TrackWithGeometry
 
 
 def test_rgb_array_render_returns_declared_image() -> None:
     """
     RGB rendering returns an 800-square uint8 frame with visible drawing.
     """
-    environment = RacingEnv(track_seed=5, render_mode="rgb_array")
+    environment = RacingEnv(
+        TrackWithGeometry.generate(5),
+        render_mode="rgb_array",
+    )
     environment.reset()
 
     image = environment.render()
@@ -28,7 +31,10 @@ def test_rgb_array_render_updates_after_a_step() -> None:
     """
     Rendering reflects the vehicle state after a transition.
     """
-    environment = RacingEnv(track_seed=6, render_mode="rgb_array")
+    environment = RacingEnv(
+        TrackWithGeometry.generate(6),
+        render_mode="rgb_array",
+    )
     environment.reset()
     before = environment.render()
     for _ in range(20):
@@ -48,7 +54,10 @@ def test_human_rendering_smoke_test_releases_resources(
     Human-mode rendering opens and closes through Pygame's dummy video driver.
     """
     monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
-    environment = RacingEnv(track_seed=7, render_mode="human")
+    environment = RacingEnv(
+        TrackWithGeometry.generate(7),
+        render_mode="human",
+    )
     environment.reset()
 
     assert environment.render() is None

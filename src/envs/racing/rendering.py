@@ -7,30 +7,30 @@ from math import cos, sin
 import numpy as np
 import pygame
 
-from ..tracks import TrackGeometry
+from ..tracks import TrackWithGeometry
 from ..vehicle import VehicleState
 
 
-class RacingRenderer:
+class RacingPygameRenderer:
     """
     Draw a racing track and a heading-visible point-car marker with Pygame.
     The camera fits the immutable track boundaries, so drawing has no effect on
     simulation state or episode outcomes.
 
     Fields:
-        * geometry: The track geometry to draw.
+        * track: The sampled track and derived geometry to draw.
         * render_mode: Whether to update a window or return RGB image data.
         * image_size: The output width and height in pixels.
     """
 
     def __init__(
         self,
-        geometry: TrackGeometry,
+        track: TrackWithGeometry,
         *,
         render_mode: str,
         image_size: tuple[int, int],
     ) -> None:
-        self.geometry = geometry
+        self.track = track
         self.render_mode = render_mode
         self.image_size = image_size
         self._surface = pygame.Surface(image_size)
@@ -67,9 +67,7 @@ class RacingRenderer:
         """
         Return the boundary-fitting camera origin and uniform display scale.
         """
-        boundaries = np.vstack(
-            (self.geometry.left_boundary, self.geometry.right_boundary)
-        )
+        boundaries = np.vstack((self.track.left_boundary, self.track.right_boundary))
         minimum = np.min(boundaries, axis=0)
         maximum = np.max(boundaries, axis=0)
         span = maximum - minimum
@@ -97,25 +95,23 @@ class RacingRenderer:
         """
         Draw road fill, boundaries and the centerline.
         """
-        road = np.vstack(
-            (self.geometry.left_boundary, self.geometry.right_boundary[::-1])
-        )
+        road = np.vstack((self.track.left_boundary, self.track.right_boundary[::-1]))
         pygame.draw.polygon(self._surface, (68, 68, 72), self._screen_points(road))
         pygame.draw.lines(
             self._surface,
             (235, 235, 235),
             True,
-            self._screen_points(self.geometry.left_boundary),
+            self._screen_points(self.track.left_boundary),
             width=3,
         )
         pygame.draw.lines(
             self._surface,
             (235, 235, 235),
             True,
-            self._screen_points(self.geometry.right_boundary),
+            self._screen_points(self.track.right_boundary),
             width=3,
         )
-        centerline = np.column_stack((self.geometry.track.x, self.geometry.track.y))
+        centerline = np.column_stack((self.track.track.x, self.track.track.y))
         pygame.draw.lines(
             self._surface,
             (218, 180, 38),
@@ -128,12 +124,12 @@ class RacingRenderer:
         """
         Draw the canonical finish-gate segment.
         """
-        start_index = self.geometry.track.start_index
+        start_index = self.track.track.start_index
         pygame.draw.line(
             self._surface,
             (221, 65, 65),
-            self._screen_point(self.geometry.right_boundary[start_index]),
-            self._screen_point(self.geometry.left_boundary[start_index]),
+            self._screen_point(self.track.right_boundary[start_index]),
+            self._screen_point(self.track.left_boundary[start_index]),
             width=4,
         )
 
