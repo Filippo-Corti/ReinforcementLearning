@@ -166,6 +166,24 @@ lifecycle.
 
 ## Track Usage
 
+Runtime track preparation is intentionally separate from the Gymnasium
+environment. `Track` owns the sampled, persistent circuit data, while
+`TrackWithGeometry` combines it with periodic interpolation, sampled boundaries
+and spatial indexes. Generate or load that prepared object before constructing
+the environment:
+
+```python
+from envs import RacingEnv, TrackWithGeometry
+
+generated_environment = RacingEnv(TrackWithGeometry.generate(seed=0))
+saved_environment = RacingEnv(TrackWithGeometry.load("tracks/circuit.json"))
+```
+
+`RacingEnv` accepts only a `TrackWithGeometry`; it does not select between a raw
+track, a file path and a generation seed. This keeps deterministic data
+generation and persistence outside the simulation lifecycle and lets callers
+reuse one prepared circuit across environments.
+
 At each step, the car's Cartesian pose $(x_t, y_t)$ must be translated into the Frenet pose $(s_t, d_t)$, with:
 * $s_t$ being the arc-length distance along the centerline between the start of the circuit and the closest centerline point to $(x_t, y_t)$.
 * $d_t$ being the signed lateral offset, positive on the left side of the

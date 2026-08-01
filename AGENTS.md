@@ -77,6 +77,37 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
    ```
 
 6. **Use Black formatting.** Always.
+7. **Inventory linked feedback before editing.** When review comments or TODOs
+   span multiple modules, read all of them and map their shared concepts and
+   consumers before changing any one location. Treat them as one architectural
+   concern when solving them independently would create temporary or duplicated
+   APIs.
+8. **Organize modules by responsibility.** Split a module when it owns several
+   independently named concepts, and place each concept in the package that owns
+   its domain. Do not split merely to reduce line count; every file and package
+   should have a clear, stable purpose.
+9. **Keep orchestration outside core objects.** Constructors for core simulation
+   components should accept prepared domain objects. Loading files, generating
+   data, selecting seeds and interpreting CLI arguments belong in factories or
+   experiment code unless the component itself owns that lifecycle.
+10. **Use names that reveal role and timescale.** Distinguish data from the
+    processor that creates it, physical transitions from lifecycle outcomes, and
+    per-action results from complete-episode summaries. Avoid generic names such
+    as `Result`, `Manager`, or `Geometry` when a more specific role is known.
+11. **Preserve semantic data until framework boundaries.** Represent meaningful
+    internal records with named dataclasses rather than anonymous arrays or
+    tuples. Convert to NumPy arrays only at numerical or framework interfaces
+    such as Gymnasium observations.
+12. **Centralize shared primitives.** Search the repository before adding small
+    geometry, conversion or typing helpers. Put truly shared primitives in a
+    neutral package and remove local copies in the same change.
+13. **Lead APIs with their primary operation.** Put the main public method first,
+    keep secondary helpers lower in the class, and make implementation-only
+    operations private. Public names and docstrings should make return values and
+    mutation scope clear without requiring the caller to read the implementation.
+14. **Explain framework-required declarations.** Add a short explanation for
+    otherwise opaque class attributes, metadata or hooks required by Gymnasium,
+    Pygame or another framework, including whether they affect the MDP.
 
 ### Suggested code structure:
 This is the suggested layout. Feel free to adapt it as you wish, but make sure to update this if you ever choose to:
@@ -84,19 +115,26 @@ This is the suggested layout. Feel free to adapt it as you wish, but make sure t
 ```
 src/
 ├── envs/
+│   ├── geometry/
+│   │   ├── angles.py      # reusable angular operations
+│   │   ├── projection.py  # closest-segment spatial queries
+│   │   └── segments.py    # reusable finite-segment operations
+│   ├── observations/
+│   │   └── frenet.py      # Frenet observation data and observer
 │   ├── racing/
 │   │   ├── environment.py # RacingEnv(gym.Env): Gymnasium reset/step shell
 │   │   ├── lifecycle.py   # progress, reward, termination and truncation
 │   │   └── rendering.py   # optional Pygame human/rgb_array presentation
 │   ├── tracks/
-│   │   ├── model.py       # sampled track data and JSON persistence
-│   │   ├── geometry.py    # periodic centerline and boundary geometry
-│   │   ├── projection.py  # closest-segment spatial queries
-│   │   ├── validation.py  # track geometry constraints
+│   │   ├── errors.py      # track-specific validation and generation errors
 │   │   ├── generation.py  # deterministic procedural generation
-│   │   └── observations.py# Frenet projection and observation builders
-│   └── vehicle/
-│       └── dynamics.py    # state, controls and kinematic transition
+│   │   ├── track.py       # sampled tracks, derived geometry and persistence
+│   │   └── validation.py  # track-specific geometry constraints
+│   ├── vehicle/
+│   │   ├── controls.py    # normalized actions and physical controls
+│   │   ├── kernel.py      # kinematic transition kernel
+│   │   └── state.py       # vehicle state
+│   └── types.py           # numerical types shared across environment domains
 ├── models/                # reusable neural components
 │   ├── mlp.py             # make_mlp(in, out, hidden_sizes, activation) — the size knob
 │   ├── policies.py        # GaussianPolicy (mean MLP + log-std), deterministic policy

@@ -366,3 +366,35 @@ stepping and exits. The complete phase acceptance runner passed.
 `tests/experiments/test_manual_drive.py`, `docs/DIARY.md`.
 
 **Commit**: `fix: restore display after manual reset [ai]`
+
+## 2026-08-01 — Environment responsibility refactor
+
+**Task**: Resolve the linked source TODO review as one architectural change and
+record conventions that prevent the same organizational drift.
+
+**Result**: Split vehicle state, controls and the kinematic kernel; moved reusable
+angles, segment operations and polyline projection into a shared geometry
+package; introduced a dedicated observations package with named
+`FrenetObservation` data and a primary `FrenetObserver.observe` API; combined
+sampled tracks and derived runtime geometry under `TrackWithGeometry`; scoped
+track errors to the tracks package; and renamed action-level, transition and
+Pygame-rendering types to reveal their roles. `RacingEnv` now accepts one
+prepared `TrackWithGeometry`, with deterministic generation and file loading
+performed by callers. Experiments and tests use the same construction boundary.
+
+**Documentation**: Added the runtime track-preparation API to `TRACK.md`, updated
+the source-layout reference, and added review-inventory, responsibility,
+orchestration, naming, semantic-data, shared-primitive, API-ordering and
+framework-explanation rules to `AGENTS.md`.
+
+**Validation**: The Phase-1 acceptance runner passed with seed 0. It included
+dependency checking, Black, Ruff, Pyright, compilation, 86 tests, whitespace
+validation, deterministic replay, track persistence, RGB rendering, Gymnasium
+conformance and the manual-driver SDL smoke test. Gymnasium emitted only its
+existing advisory warnings for intentionally unbounded observation dimensions
+and direct, unregistered construction.
+
+**Files**: `AGENTS.md`, `docs/TRACK.md`, `src/configs/`, `src/envs/`,
+`experiments/`, `tests/`, `docs/DIARY.md`.
+
+**Commit**: `68038bb`
