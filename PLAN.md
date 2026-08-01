@@ -457,6 +457,8 @@ key returns that control axis to zero.
 
 ### 11. Run the Phase-1 Acceptance Pass
 
+**Status:** Completed on 2026-08-01.
+
 **Objective:** Prove that the environment MVP is ready for agent development.
 
 **Work:**

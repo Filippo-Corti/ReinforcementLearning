@@ -318,3 +318,33 @@ validation suite passed.
 `tests/experiments/test_manual_drive.py`, `README.md`, `docs/DIARY.md`.
 
 **Commit**: `feature: add manual driving experiment [ai]`
+
+## 2026-08-01 — Step 11: Phase-1 acceptance pass
+
+**Task**: Verify the complete racing-environment MVP before beginning agent
+development.
+
+**Result**: Added the import-safe `experiments/phase1_acceptance.py` runner. It
+executes dependency, formatting, linting, type, compilation, pytest and diff
+whitespace checks; generates, saves, reloads and RGB-renders an explicitly
+seeded track; compares complete outputs from repeated fixed action replays;
+runs Gymnasium's environment checker; and starts then exits the manual driver
+using SDL's dummy backend. Added focused tests for the acceptance helpers and
+documented the command and pinned dependency versions in the README.
+
+**Commands**: `python -m pip check`, `python -m black --check src experiments
+tests`, `python -m ruff check src experiments tests`, `python -m pyright src
+tests experiments`, `python -m compileall -q src experiments tests`, `python
+-m pytest`, `git diff --check`, and `python experiments/phase1_acceptance.py
+--seed 0`. The recorded run used Python 3.13.12 from the repository `.venv`;
+the README gives the fresh-environment invocation.
+
+**Known version-0 limitations**: The car is a collision point and uses a
+kinematic bicycle model without lateral grip, aerodynamic drag, tire slip,
+steering-rate limits or a finite vehicle footprint. LiDAR, randomized starts,
+learning agents and multi-circuit training remain deferred.
+
+**Files**: `PLAN.md`, `README.md`, `experiments/phase1_acceptance.py`,
+`tests/experiments/test_phase1_acceptance.py`, `docs/DIARY.md`.
+
+**Commit**: `test: add phase one acceptance runner [ai]`

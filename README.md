@@ -88,6 +88,31 @@ track. The window title shows speed, episode progress, reward and terminal
 status. After a crash, completed lap or time limit, the final state remains on
 screen until you reset or exit with Esc/window close.
 
+## Validate the environment
+
+Run the acceptance pass from a fresh repository virtual environment:
+
+```bash
+python -m venv /tmp/rl-phase1
+/tmp/rl-phase1/bin/python -m pip install --editable .
+/tmp/rl-phase1/bin/python experiments/phase1_acceptance.py --seed 0
+```
+
+The acceptance runner executes `pip check`, Black, Ruff, Pyright, bytecode
+compilation, the full pytest suite and `git diff --check`. It also generates,
+saves, reloads and RGB-renders a track; compares all outputs from two identical
+action replays; runs Gymnasium's environment checker; and starts then quits the
+manual driver through SDL's dummy video backend. Its pinned dependency set is
+Python 3.12+ with Black 26.5.1, Gymnasium 1.3.0, NumPy 2.4.4, Pygame 2.6.1,
+Pyright 1.1.411, pytest 9.1.1, Ruff 0.16.0, SciPy 1.18.0 and setuptools
+80.10.2 (see `requirements.txt` for the authoritative manifest).
+
+Version 0 deliberately uses a point-car kinematic bicycle model. It has no
+lateral-grip limit, aerodynamic drag, tire slip, steering-rate limit or finite
+vehicle footprint, so it can make unrealistic full-throttle cornering possible.
+LiDAR, randomized starts, learning agents and multi-circuit training are also
+deferred work.
+
 ## Policy parameterization
 
 * **Gaussian policy** $\pi_\theta(a|o)=\mathcal{N}(\mu_\theta(o),\,\sigma^2)$ with
