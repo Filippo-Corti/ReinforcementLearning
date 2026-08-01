@@ -298,3 +298,23 @@ command locally.
 **Files**: `.github/workflows/ci.yml`, `docs/DIARY.md`.
 
 **Commit**: `ci: validate every push to main [ai]`
+
+## 2026-08-01 — Step 10: Manual driving experiment
+
+**Task**: Add the requested interactive, end-to-end environment validation tool.
+
+**Result**: Added an import-safe keyboard driver for deterministic generated or
+saved tracks. W/S control the signed throttle/brake axis and A/D the signed
+steering axis; R resets the same track; Escape and the window close event exit
+cleanly. It advances the environment at the documented 25 decision steps per
+second and exposes speed, progress, reward and terminal status in the window
+title. Terminal states remain visible until a user reset or exit.
+
+**Validation**: Added parser, environment-construction, action-sign,
+terminal-loop and main-delegation tests. The complete automated and static
+validation suite passed.
+
+**Files**: `PLAN.md`, `experiments/manual_drive.py`,
+`tests/experiments/test_manual_drive.py`, `README.md`, `docs/DIARY.md`.
+
+**Commit**: `feature: add manual driving experiment [ai]`

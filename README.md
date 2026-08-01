@@ -69,6 +69,25 @@ python experiments/view_track.py --track tracks/example.json
 Press Esc or close the Pygame window to exit. This viewer keeps the car at the
 canonical start pose; interactive driving is a separate planned experiment.
 
+## Drive a track manually
+
+Launch the keyboard driver with a deterministic generated track:
+
+```bash
+python experiments/manual_drive.py --seed 0
+```
+
+Or drive a saved track definition:
+
+```bash
+python experiments/manual_drive.py --track tracks/example.json
+```
+
+Use W/S for throttle/brake, A/D to steer left/right, and R to reset the current
+track. The window title shows speed, episode progress, reward and terminal
+status. After a crash, completed lap or time limit, the final state remains on
+screen until you reset or exit with Esc/window close.
+
 ## Policy parameterization
 
 * **Gaussian policy** $\pi_\theta(a|o)=\mathcal{N}(\mu_\theta(o),\,\sigma^2)$ with
