@@ -398,3 +398,36 @@ and direct, unregistered construction.
 `experiments/`, `tests/`, `docs/DIARY.md`.
 
 **Commit**: `68038bb`
+
+## 2026-08-03 — Phase-2 learned-baseline roadmap
+
+**Task**: Evaluate the completed Phase-1 repository, archive its execution
+roadmap and define the next phase without advancing the environment model ahead
+of observed learning evidence.
+
+**Result**: Confirmed that every Phase-1 plan step is represented in the clean
+`main` worktree and moved the completed roadmap to
+`docs/old-plans/phase-1-racing-environment-mvp.md`. Replaced `PLAN.md` with the
+Phase-2 learned-baseline and grip-validation roadmap. Its additive gates first
+specify and test metrics, seed streams, neural-policy primitives, rollouts and
+vanilla REINFORCE; then require a learned version-0 racing result and a recorded
+curvature-conditioned speed/throttle diagnosis before lateral-grip work can
+begin. The same reward and training comparison must be repeated after the
+minimal approved grip change, and a learned value baseline remains a later,
+separately measured algorithm increment. A2C, PPO and the network-size study are
+explicitly deferred.
+
+**Validation**: The first acceptance attempt exposed local environment drift:
+Black was declared in `requirements.txt` but absent from `.venv`. Installed the
+already pinned `black==26.5.1` without changing the dependency manifest, then ran
+`python experiments/phase1_acceptance.py --seed 0`. Dependency, formatting,
+linting, type, compilation and whitespace checks passed, as did all 86 tests,
+deterministic replay, track persistence, RGB rendering, Gymnasium conformance
+and the manual-driver SDL smoke test. Gymnasium retained only its documented
+advisory warnings about unbounded observation dimensions and direct,
+unregistered construction.
+
+**Files**: `PLAN.md`,
+`docs/old-plans/phase-1-racing-environment-mvp.md`, `docs/DIARY.md`.
+
+**Commit**: `docs: define phase two learning roadmap [ai]`
