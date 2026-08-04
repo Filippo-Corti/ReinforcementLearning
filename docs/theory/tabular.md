@@ -120,8 +120,8 @@ To the limit, SARSA and Q-Leraning both converge to the target $q_\star$, howeve
 * SARSA is *more conservative*, as it evaluates states for how good they are now, not how good they could be if we used a greedy policy. It "knows" the risk of its exploratory policy.
 * Q-Learning is *more optimistic*, as it ignores the fact that it's exploring. This makes convergence faster.
 
-In short, Q-Learning evaluates a greedy policy, while behaving according to an $\epsilon$-greedy one.
-Instead, SARSA evaluates the $\epsilon$-greedy policy directly.
+> In short, Q-Learning evaluates a greedy policy, while behaving according to an $\epsilon$-greedy one.
+> Instead, SARSA evaluates the $\epsilon$-greedy policy directly.
 
 #### Different Variances during Training
 
