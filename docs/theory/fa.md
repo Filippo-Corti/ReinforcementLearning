@@ -105,3 +105,61 @@ In fact, we only need to:
 > * Convergence guarantees do not apply anymore.
 > * The target moves as we change values for $\mathbf{w}$, which makes the training harder.
 
+### VFA Semi-Gradient SARSA
+
+We can implement using the same logic the SARSA Algorithm, the *on-policy* semi-gradient variant.
+
+The update rule is:
+$$ \mathbf{w} \leftarrow \mathbf{w} + \alpha \big[y_t - \hat{q}(S_t, A_t; \mathbf{w})\big] \, \nabla_{\mathbf{w}} \hat{q}(S_t, A_t; \mathbf{w}) $$
+But this time $y_t$ is the SARSA target, that is:
+$$ y_t = R_{t+1} + \gamma \cdot \hat{q}(S_{t+1}, A_{t+1}; \mathbf{w}) $$
+
+Just as in the tabular scenario, SARSA factors the cost of *its own exploration* into the Q-function estimation and therefore produces more cautious policies. 
+
+
+### The Deadly Triad
+
+Let us consider three properties:
+1. **Bootstrapping** (Temporal Differences).
+2. **Off-Policy Learning**.
+3. **Function Approximation**.
+
+If we consider pairs of these, Reinforcement Learning works fine:
+
+* **Bootstrapping & Off-Policy, without VFA** is standard Tabular Q-Learning for which we have seen there are solid convergence guarantees.
+* **Bootstrapping & Function Approximation, On-Policy** is VFA Semi-Gradient SARSA. It is considered a solid method.
+* **Off-Policy & Function Approximation, without Bootstrapping** is Monte-Carlo Learning with VFA. It is in principle very similar to standard supervised learning.
+
+However, if we consider all 3 elements at the same time we have what Sutton and Barto call *the deadly triad*. VFA Semi-Gradient Q-Learning, in fact, might work but -- in general -- has no theoretical guarantees and can instead cause **instability issues**.
+
+The instability is caused by a conceptual asymmetry between FA Methods and Off-Policy Learning.
+Let us first observe that:
+* *Tabular* Learning only updates one specific $Q(\bar{s}, \bar{a})$ at a time. All the other Q-table entries are untouched.
+* *VFA* Learning, instead, updates the weights $\mathbf{w}$, which consequently vary many values of $Q(s, a)$.
+
+To this, we add that:
+* *On-Policy* Learning uses every pair $(s, a)$ as *sample* as often as it uses it as *bootstrap target*. In fact, after having used $(s_{t+1}, a_1)$ as target, SARSA always performs $a_1$ in $s_{t+1}$ and therefore uses $(s_{t+1}, a_1)$ the immediately next update. 
+* *Off-Policy* Learning does not have this equilibrium. Instead, any pair $(s, a)$ is used as *sample* and *target* a different number of times. In fact, after having used $(s_{t+1}, a_{greedy})$ as target for a certain update, Q-Learning proceeds by choosing an action $a_1$ with its behavioral policy, which won't necessarily correspond to $a_{greedy}$.
+
+The combination of these two observations is the source of the instability:
+* When $(s, a)$ is used as *sample*, its own value estimate is corrected using something real (grounded in reality).
+* When $(s, a)$ is used as *target*, it conceptually isn't updated. However, due to *VFA*, it is likely that it shares some features with the state that is being updated (the one used as *sample*). This means that it will receive an ungrounded update, purely as a side effect.
+
+It is therefore possible for Q-Learning to use a pair $(s, a)$ heavily as *bootstrap target* and very rarely as *sample*. 
+It is also possible that the collateral updates that it receives push towards a different direction than the pushes that it would receive if it were to be updated directly.
+When this happens, **VFA Semi-Gradient Q-Learning** fails to converge and, instead, diverges to unstable, ungrounded values.
+
+The **Baird's counterexample** is a hand-built MDP that shows the negative effects of the deadly triad, by crafting a scenario where a certain state ($s_7$) is referenced as target much more often than as a sample.
+
+### Tracking the Weight Norm during Training
+
+When moving from a *tabular* to a *VFA* setting, we lose the simple possibility of drawing the Q-table as a heatmap in the states space.
+In order to achieve the same effect in **Value-Function Approximation**, we can just sample from the function $\hat{q}(s, a)$ and build the heatmap in a very similar fashion.
+
+Another metric that can be helpful when training in *VFA* is instead the **Weight Norm** (or Frobenius Norm):
+$$ \lVert W \rVert _F = \sqrt{\sum_{a,i} W^2_{a,i}} $$
+
+In a stable regime, where the deadly triad does not cause any problem, we expect $ \lVert W \rVert _F $ to converge to a finite value, reflecting the magnitude of the value-function being represented.
+In an unstable regime, the weight norm $ \lVert W \rVert _F $drifts upwards without a bound.
+
+A simple diagnostic of a training run in *VFA* is the plotting of $ \lVert W \rVert _F $, observing if it appears to grow indefinitely or to be bounded asymptotically.
