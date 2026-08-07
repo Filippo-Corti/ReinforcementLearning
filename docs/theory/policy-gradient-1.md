@@ -1,5 +1,9 @@
 # 5. Policy Gradient (Finite Horizon - Actor-Only)
 
+Let us consider **Policy Gradient Algorithms**:
+1. **Finite Horizon**: episodes last a fixed number of timesteps $T$.
+2. **Actor-Only**: we *only* employ policy approximation, without any VFA. The so-called "actor" is the policy itself.
+
 With Value-Function Approximation we were dealing with the idea of building a parametrized function, either $\hat{v}_{\mathbf{w}}(s)$ or $\hat{q}_{\mathbf{w}}(s, a)$, that could represent a good approximation for the actual value-function $V$ of action-value-function $Q$ of the MDP.
 Having found this approximation (that is, having found proper values for $\mathbf{w}$), we were then able to extract the policy as:
 $$ \pi(s) = \text{arg} \max_a \hat{q}_{\mathbf{w}}(s, a) $$
@@ -31,8 +35,8 @@ Let's consider this newly introduced scenario:
 * Continuous State Space $\mathcal{S}$ and Action Space $\mathcal{A}$;
 * Transition Kernel ${p(\cdot \mid s, a) : s \in \mathcal{S}, a \in \mathcal{A}}$;
 * Reward Function $r : \mathcal{S} \times \mathcal{A} \rightarrow [-1, 1]$;
-* Starting-state Distributio $p_0$.
-* (For the moment) Finite Horizon $T \in \mathbb{N}$
+* Starting-state Distribution $p_0$.
+* Finite Horizon $T \in \mathbb{N}$
 * (In general) Policy $\pi(\cdot \vert s) \in \Delta(\mathcal{A}) $, a mapping between a state $s$ and a distribution over the actions.
 
 With the idea of parametrized policies $\pi_{\mathbf{\theta}}$, we only consider the **Parametric Policy Space** (or *policy class*):
@@ -125,6 +129,17 @@ $$ \mathbb{E}_{\tau \sim p_{\mathbf{\theta}}} \left[ g(\mathbf{\theta}; \tau) \r
 > \hat{\nabla} J(\mathbf{\theta}) = \frac{1}{n} \sum_{i=1}^{n}{g(\mathbf{\theta}; \tau^i)} = \frac{1}{n} \sum_{i=1}^{n}{\left( \sum_{t=0}^{T-1}{\nabla \log{\pi_{\mathbf{\theta}}(A_t^i \mid S_t^i)}} \right) \cdot R(\tau^i)}
 > $$
 > where the trajectories $\tau^1, \dots, \tau^n$ are i.i.d. and $n$ is called the *batch size*.
+
+### The full REINFORCE Algorithm
+
+For clarity, here is the full REINFORCE Algorithm with all the pieces from above:
+1. Collect a batch of $n$ independent trajectories $\tau^1, \dots. \tau^n$ by playing the current policy $\pi_{\mathbf{\theta}_k}$.
+2. Compute the **REINFORCE Estimator**:
+    $$ \hat{\nabla} J(\mathbf{\theta}) = \frac{1}{n} \sum_{i=1}^{n}{\left( \sum_{t=0}^{T-1}{\nabla \log{\pi_{\mathbf{\theta}}(A_t^i \mid S_t^i)}} \right) \cdot R(\tau^i)} $$
+3. Use the estimate to update the policy parameters: 
+$$ \mathbf{\theta}_{k+1} \leftarrow \mathbf{\theta}_k + \alpha \hat{\nabla} J(\mathbf{\theta}_k) $$
+4. Repeat for $k=0,1, \dots$.
+
 
 
 ## Policy-Gradient Algorithms: Pros and Cons
