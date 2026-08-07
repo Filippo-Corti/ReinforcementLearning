@@ -90,7 +90,7 @@ As an alternative, REINFORCE uses the **REINFORCE Estimator**:
     * Denote a *trajectory* by $\tau = \left( S_0, A_0, \dots, S_{T-1}, A_{T-1}, S_T \right)$. That is the sequence of states and actions observed during a (finite horizon) episode.
     * We can express the probability of observing the trajectory $\tau$ by playing the policy $\pi$ as:
     $$ p_\pi(\tau) = p_0(S_0) \cdot \prod_{t=0}^{T-1} \pi(A_t \mid S_t) p(S_{t+1} \mid S_t, A_t)$$
-    * The return of the trajectory *tau* is of course:
+    * The return of the trajectory $\tau$ is of course:
     $$ R(\tau) = \sum_{t=0}^{T-1} r(S_t, A_t) $$
     * Having defined returns and probabilities, the **Performance Function** $J$ for a certain policy $\pi_{\mathbf{\theta}}$ is simply:
     $$ J(\mathbf{\theta}) = \mathbb{E}_{\tau \sim p_{\mathbf{\theta}}} \left[ R(\tau ) \right] $$
@@ -106,6 +106,7 @@ $$ \textit{\dots Proof of the Finite-Horizon Policy-Gradient Theorem \dots} $$
 
 * From which we can immediately define the **REINFORCE Estimator**, given a trajectory $\tau = (S_0, A_0, \dots, S_T)$:
 $$ g(\mathbf{\theta}; \tau) = \left( \sum_{t=0}^{T-1}{\nabla \log{\pi_{\mathbf{\theta}}(A_t \mid S_t)}} \right) \cdot R(\tau) $$
+If for the *actual gradient* we would need to know the exact probability of each trajectory being observed, the REINFORCE Estimator simply assumes that we can average that quantity for many observed trajectories and it will eventually (for $n \rightarrow \infty$) converge to the actual gradient.
 
 The **REINFORCE Estimator** is:
 1. **Monte Carlo**, as it is a way to estimate a quantity $x$ which is defined as:
@@ -120,7 +121,9 @@ $$ \mathbb{E}_{\tau \sim p_{\mathbf{\theta}}} \left[ g(\mathbf{\theta}; \tau) \r
 
 
 > Observe that $\hat{\nabla} J(\mathbf{\theta}_k)$ is nothing other than the batched version of the REINFORCE Estimator:
-> $$\hat{\nabla} J(\mathbf{\theta}_k) = \frac{1}{n} \sum_{i=1}^{n}{g(\mathbf{\theta}; \tau^i)}$$
+> $$
+> \hat{\nabla} J(\mathbf{\theta}) = \frac{1}{n} \sum_{i=1}^{n}{g(\mathbf{\theta}; \tau^i)} = \frac{1}{n} \sum_{i=1}^{n}{\left( \sum_{t=0}^{T-1}{\nabla \log{\pi_{\mathbf{\theta}}(A_t^i \mid S_t^i)}} \right) \cdot R(\tau^i)}
+> $$
 > where the trajectories $\tau^1, \dots, \tau^n$ are i.i.d. and $n$ is called the *batch size*.
 
 
@@ -128,18 +131,18 @@ $$ \mathbb{E}_{\tau \sim p_{\mathbf{\theta}}} \left[ g(\mathbf{\theta}; \tau) \r
 
 We compare Policy-Gradient Algorithms to other families of RL Algorithms, in particular **Value-Function Approximation**:
 
-| #     | Advantage                                  | Description                                                                                                                                                                  |
-| ----- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1** | **Continuous actions**                     | Naturally support continuous action spaces.                                                                                                                                  |
-| **2** | **Convergence guarantees**                 | Well-understood **local convergence guarantees**, even when function approximation is involved.                                                                              |
-| **3** | **Robustness to noise**                    | Compared to value-based methods, actions (or action distributions) change less abruptly when states or parameters are perturbed. This typically yields more stable learning. |
+| # | Advantage | Description |
+| ----- | -------------------------------- | ---------------------------------- |
+| **1** | **Continuous actions**           | Naturally support continuous action spaces. |
+| **2** | **Convergence guarantees**       | Well-understood **local convergence guarantees**, even when function approximation is involved. |
+| **3** | **Robustness to noise**          | Compared to value-based methods, actions (or action distributions) change less abruptly when states or parameters are perturbed. This typically yields more stable learning. |
 | **4** | **Stochastic policies**                    | Naturally support stochastic policies, which are necessary in **partially observable** and **strategic** environments, while also providing a minimal amount of exploration. |
-| **5** | **Less reliance on the Markov assumption** | Suffer less from violations of the Markov assumption since it is not exploited directly, at least in actor-only algorithms.                                                  |
-| **6** | **Easy incorporation of domain knowledge** | The policy space can be designed to include only behaviors relevant to the application, e.g., controllers with a small number of tunable parameters.                         |
-| **7** | **Safety**                                 | The policy space can be designed to exclude unsafe behaviors.                                                                                                                |
+| **5** | **Less reliance on the Markov assumption** | Suffer less from violations of the Markov assumption since it is not exploited directly, at least in actor-only algorithms. |
+| **6** | **Easy incorporation of domain knowledge** | The policy space can be designed to include only behaviors relevant to the application, e.g., controllers with a small number of tunable parameters.  |
+| **7** | **Safety**                                 | The policy space can be designed to exclude unsafe behaviors.   |
 
-| #     | Disadvantage               | Description                                                                                                                                                                                                                                       |
-| ----- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| # | Disadvantage | Description |
+| ----- | -------------------------------- | ---------------------------------- |
 | **1** | **High variance**          | Gradient estimators tend to have high variance, making convergence slow and requiring large amounts of simulation data. Variance-reduction techniques can help mitigate this.                                                                     |
 | **2** | **Bias**                   | The policy space may not include good policies if it is not designed carefully.                                                                                                                                                                   |
 | **3** | **Local optima**           | Only convergence to **local optima** is guaranteed in general. Nonconvex optimization heuristics, such as random restarts, can be employed. Global convergence can be ensured in some special cases, e.g., **Linear Quadratic Regulators (LQR)**. |
@@ -149,4 +152,25 @@ We compare Policy-Gradient Algorithms to other families of RL Algorithms, in par
 
 A big problem that **Policy-Gradient Algorithms** have to deal with is **Variance**. This is expected, as we are using a *Monte-Carlo* Approach.
 
-In order to contain this issue, several variance reduction techniques have been explored:
+In order to contain this issue, several variance reduction techniques are known:
+
+1. **Using larger batch sizes $n$**. This is the simplest approach: due to the law of large numbers, the more samples we get the more the random fluctuations around the mean will cancel each other out.
+2. **REINFORCE with a Baseline**. We can add a **baseline** $b \in \mathbb{R}$ (a *constant* that is *independent* of the trajectories) to the REINFORCE Estimator, obtaining the **REINFORCE Estimator with Baseline**:
+    $$ \hat{\nabla} J(\mathbf{\theta}) = \frac{1}{n} \sum_{i=1}^{n}{\left( \sum_{t=0}^{T-1}{\nabla \log{\pi_{\mathbf{\theta}}(A_t^i \mid S_t^i)}} \right) \cdot \left( R(\tau^i) - b \right)} $$
+    This is a *unbiased* estimator (its expected value matches the real quantity we are estimating) and, if $b$ is properly chosen, it can help with reducing variance.
+    A common choice for $b$ is the **average baseline**:
+    $$ b = \frac{1}{n} \sum_{i=1}^{n}{R(\tau^i)} $$
+    In principle, this quantity should be independent of the trajectories so we should compute it on a *different* set of trajectories. In practice, we typically use the same set and accept some bias.
+    > A proof of the unbiasedness of the REINFORCE Estimator with Baseline can be found in the notes.
+3. **GPOMDP Estimator**. We can use a slightly different estimator, which re-arranges terms from the REINFORCE Estimator and drops some terms that do not contribute to the expectation but may be a source of variance:
+    $$ \hat{\nabla} J_\text{GPOMDP}(\mathbf{\theta}) = \frac{1}{n} \sum_{i=1}^{n}{\sum_{t=0}^{T-1}{\nabla \log{\pi_{\mathbf{\theta}}(A_t^i \mid S_t^i) \sum_{h=t}^{T-1}{r(S_h^i, A_h^i)}}}} $$
+    Notice how we are pushing the return term $R(\tau^i)$ inside the sum and associating each probability with just the part of the return it is actually responsible for. This is the *first form* of the **GPOMDP** (Gradient-based Policy Optimization for POMDPs) **Estimator**.
+    A *second form*, equivalent to the first one, is:
+    $$ \hat{\nabla} J_\text{GPOMDP}(\mathbf{\theta}) = \frac{1}{n} \sum_{i=1}^{n}{\sum_{t=0}^{T-1}{r(S_t^i, A_t^i) \sum_{h=0}^{t}{\nabla \log{\pi_{\mathbf{\theta}}(A_h^i \mid S_h^i)}}}} $$
+    > The GPOMDP Estimator is also unbiased. A proof can be found in the notes.
+
+Finally, note that we can also combine **GPOMDP Estimator** with a **Baseline**:
+$$ \hat{\nabla} J_\text{GPOMDP}(\mathbf{\theta}) = \frac{1}{n} \sum_{i=1}^{n}{\sum_{t=0}^{T-1}{\left(r(S_t^i, A_t^i) - b_t \right) \sum_{h=0}^{t}{\nabla \log{\pi_{\mathbf{\theta}}(A_h^i \mid S_h^i)}}}} $$
+with $b_t$ being compute over rewards rather than returns:
+$$ b_t = \frac{1}{n} \sum_{i=1}^{n} r(S_t^i, A_t^i)
+

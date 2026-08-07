@@ -235,3 +235,5 @@ looking for; make the plots say it.
 - If training is unstable -> Add the previous action to the state observation
 
 - If training is slow -> random starting distribution
+
+- Infinite horizon -> The car is supposed to keep going indefinitely -> I would have to make sure that it does not crash intentionally
