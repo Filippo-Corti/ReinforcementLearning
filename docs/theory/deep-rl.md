@@ -16,7 +16,7 @@ The algorithm works as follows:
     * Collect a rollout of $T$ timesteps, interacting with the environment using the current policy $\pi_{\mathbf{\theta}}$.
     A rollout typically represents a long trajectory or a sequence of variable-length episodes. 
     Assuming there to be multiple episodes, we denote $\tau_t$ the final timestep of the episode that is running at timestep $t$.
-    * Compute **Returns-to-go**, which represen the **Critic Targets**, for each timestep $t$:
+    * Compute **Returns-to-go**, which represent the **Critic Targets**, for each timestep $t$:
         $$ G_t = \sum_{k=t}^{\tau_t} \gamma^{k-t} R_{k+1} $$
     * Compute the **TD errors** based on the current critic $v_{\mathbf{w}}$:
     $$ 
@@ -188,9 +188,90 @@ To get around this issue, the **TRPO Algorithm** does two things:
 
 Which means that in the end the **TRPO** algorithm optimizes only for the first term of the surrogate loss $\mathcal{L}(\pi')$, but making sure the constraint (2) is satisfied.
 
-Unfortunately, the computation of **TRPO** is fairly tumultuous, involving the **Natural Gradient**, the **Fisher Matrix** and more...
+Unfortunately, the computation of **TRPO** is fairly tumultuous, involving the **Natural Gradient**, the **Fisher Matrix** and more... 
+These are all necessary in order to perfor the **constrained update of the actor's parameters $\theta$**.
 
 ## 7.6 Proximal Policy Optimization (PPO)
 
 **PPO** arises as a more *practical* alternative to **TRPO**. 
+With **PPO**:
+* We still replace the **TV** term with the Pinker's inequality, which expresses it through the **KL-Divergence**.
+* We still avoid to have this term in the **Surrogate Loss** we are optimizing (in some versions of PPO we instead keep it):
+    * In TRPO, the solution was to add a constraint that then required some complex calculations.
+    * In PPO, the solution is simpler: we apply **clipping** to terms in the **Surrogate Loss**, so that we *approximately* limit updates to the **policy's parameters**.
 
+More precisely, notice that the original **surrogate loss** contains:
+$$ \frac{\pi'(A \mid S)}{\pi(A \mid S)} \mathbb{A}^\text{...}_t = \omega_{\theta' / \theta} \, \mathbb{A}^\text{...}_t  $$
+where we assume a certain **Advantage Estimator** is used (e.g., **GAE**'s $\mathbb{A}^\text{GAE}_t$) and we rename the fraction term $\omega_{\theta' / \theta}$.
+
+Then, **PPO clips exactly the term $\omega_{\theta' / \theta}$**:
+$$ \mathrm{clip}(\omega_{\theta' / \theta}, 1 - \epsilon, 1 + \epsilon) $$
+
+Which means that the **Surrogate Loss** employed by **PPO** is now:
+$$
+\mathcal{L}_{\mathrm{actor}}(\theta)
+=
+-\sum_{t=0}^{T-1}
+\min\left\{
+\omega_{\theta'/\theta}(S_t, A_t)\hat{\mathbb{A}}_t,\,
+\operatorname{clip}\left(
+\omega_{\theta'/\theta}(S_t, A_t),
+1-\epsilon,
+1+\epsilon
+\right)\hat{\mathbb{A}}_t
+\right\}.
+$$
+
+> Notice that the role of the **min** operator is to avoid that **clipping** simply avoids any abrupt change: we avoid abrupt changes towards *advantageous* directions, while allowing those that penalize the current policy.
+
+The final **PPO Algorithm** becomes:
+1. Initialize the parameters $\mathbf{\theta}$ for the actor and $\mathbf{w}$ for the critic.
+2. For each iteration:
+    * Collect a rollout of $T$ timesteps, interacting with the environment using the current policy $\pi_{\mathbf{\theta}}$.
+    * Compute the **Critic Targets** $y_t$ and the **Advantage Estimates** $\hat{\mathbb{A}_t}$, using the current critic $v_{\mathbf{w}}$.
+    * Define the **Actor Loss**:
+        $$
+        \mathcal{L}_{\mathrm{actor}}(\theta)
+        =
+        -\sum_{t=0}^{T-1}
+        \min\left\{
+        \omega_{\theta'/\theta}(S_t, A_t)\hat{\mathbb{A}}_t,\,
+        \operatorname{clip}\left(
+        \omega_{\theta'/\theta}(S_t, A_t),
+        1-\epsilon,
+        1+\epsilon
+        \right)\hat{\mathbb{A}}_t
+        \right\}.
+        $$
+    * Define the **Critic Loss**:
+        $$
+        \mathcal{L}_{\mathrm{critic}}(w)
+        =
+        \frac{1}{2}
+        \sum_{t=0}^{T-1}
+        (v_\mathbf{w}(S_t) - y_t)^2
+        $$
+    * Run a step (or multiple, in the **multi-epoch variant**) of **Gradient Descent** using **Adam Optimizer**, minimizing the loss:
+        $$ \mathcal{L}_\text{actor}(\mathbf{\theta}) + \mathcal{L}_\text{critic}(\mathbf{w}) $$
+        with respect to the parameters $\mathbf{\theta}$ and $\mathbf{w}$.
+    > Again, we do not really minimize the sum of the two losses. Instead, we minimize $\mathcal{L}_\text{actor}(\mathbf{\theta})$ fixing $\mathbf{w}$ and then minimize $\mathcal{L}_\text{critic}(\mathbf{w})$ fixing $\mathbf{\theta}$.
+
+The **Clipping** operation in **PPO** is the force that avoids too abrupt (optimistic) changes to $\theta$:
+* It mitigates the **bias**, as it makes the assumption $d^{\pi'} \approx d^\pi$ reasonable.
+* It mitigates the **variance**, thanks to the clipping of the importance weights.
+
+## Conclusions:
+
+| Algorithm     | Class                      | On vs Off Policy | Description                                                                                                                                                  | Reference Paper                                                                                                             |
+| ------------- | -------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| **DQN**       | Value-based                | **Off-policy**   | Learns an action-value function $Q(s,a)$ with a neural network; uses experience replay and a target network to stabilize Q-learning.                         | Mnih et al., 2015 — *Human-level control through deep reinforcement learning*                                               |
+| **REINFORCE** | Policy gradient            | **On-policy**    | Directly optimizes the policy using a Monte-Carlo estimate of the return as the policy-gradient weight.                                                      | Williams, 1992 — *Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning*                |
+| **A2C**       | Actor-Critic               | **On-policy**    | Combines a policy (actor) with a value-function critic; uses the 1-step TD error as an advantage estimate.                                                   | Mnih et al., 2016 — *Asynchronous Methods for Deep Reinforcement Learning*                                                  |
+| **A2C + GAE** | Actor-Critic               | **On-policy***   | A2C using Generalized Advantage Estimation, which combines multiple TD errors to obtain a more favorable bias–variance trade-off for the advantage estimate. | Schulman et al., 2016 — *High-Dimensional Continuous Control Using Generalized Advantage Estimation*                        |
+| **DDPG**      | Deterministic Actor-Critic | **Off-policy**   | Uses a deterministic policy gradient with an actor and critic, together with experience replay and target networks.                                          | Lillicrap et al., 2016 — *Continuous control with deep reinforcement learning*                                              |
+| **TD3**       | Deterministic Actor-Critic | **Off-policy**   | Improves DDPG using two critics, delayed actor updates, and target-policy smoothing to reduce overestimation and instability.                                | Fujimoto et al., 2018 — *Addressing Function Approximation Error in Actor-Critic Methods*                                   |
+| **SAC**       | Stochastic Actor-Critic    | **Off-policy**   | Extends actor-critic learning with a maximum-entropy objective, encouraging exploration while maximizing expected reward.                                    | Haarnoja et al., 2018 — *Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor* |
+| **TRPO**      | Trust-Region Actor-Critic  | **On-policy***   | Optimizes a surrogate objective while constraining the KL divergence between the old and new policies, limiting the size of policy updates.                  | Schulman et al., 2015 — *Trust Region Policy Optimization*                                                                  |
+| **PPO**       | Trust-Region Actor-Critic  | **On-policy***   | Simplifies TRPO by replacing its explicit trust-region constraint with a clipped surrogate objective that discourages excessively large policy updates.      | Schulman et al., 2017 — *Proximal Policy Optimization Algorithms*                                                           |
+
+\* Single-epoch versions. If the collected rollout is reused for multiple optimization epochs, the first epoch is on-policy, while subsequent epochs are technically off-policy with respect to the data-collection policy.
