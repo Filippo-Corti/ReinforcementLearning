@@ -88,7 +88,6 @@ Putting everything together we have defined an algorithm for the infinite horizo
         $$
         \hat{\nabla} J(\mathbf{\theta}) = \frac{1}{1-\gamma} \nabla \log{\pi_{\mathbf{\theta}}(A_T \mid S_T)} \left( G - b(S_T) \right)
         $$
-        eventually using a baseline $.
 
 2. Use the estimate to update the policy parameters: 
 $$ \mathbf{\theta}_{k+1} \leftarrow \mathbf{\theta}_k + \alpha \hat{\nabla} J(\mathbf{\theta}_k) $$
