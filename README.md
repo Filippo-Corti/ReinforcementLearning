@@ -30,27 +30,34 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 
 # Additional Notes
 
-The current implementation roadmap is maintained in [`PLAN.md`](PLAN.md).
+The current implementation roadmap is maintained in [`PLAN.md`](PLAN.md). The
+scientific comparisons, measures and analysis rules are specified separately in
+[`EXPERIMENT.md`](EXPERIMENT.md).
 
 ## Full Plan
 
-0. **Task and MDP Formalization.**
-1. **Frenet + kinematic env, single circuit.** Markov-like, smooth, cheap.
-   Get REINFORCE to *move forward at all* before touching anything fancy.
-2. **Add the grip limit and tune reward scales** until the learned policy
-   visibly brakes for corners. This is your "the environment is actually
-   interesting" checkpoint.
-3. **Switch algorithms** REINFORCE → A2C → PPO on the *same* env, so algorithmic
-   gains aren't confounded with env changes.
-4. **Run the network-size sweep** (the graded scientific objective) with your
-   best-performing algorithm.
-5. **Only then** tackle the LiDAR POMDP and the multi-circuit generalization
-   variant.
+0. **Task, track and MDP formalization.**
+1. **Phase 1 — racing-environment baseline.** Build and validate the procedural
+   track, Frenet geometry, kinematic dynamics, episode lifecycle and rendering.
+2. **Phase 2 — experiment-ready learning system.** Implement deterministic
+   training infrastructure, REINFORCE, A2C+GAE, PPO, conditional lateral grip,
+   LiDAR and multi-track orchestration. Smoke-test every experimental path.
+3. **Experiment 1 — policy-space complexity.** Run REINFORCE, A2C+GAE and PPO
+   with small, medium and large policy networks on one fixed circuit using
+   Frenet observations and five paired training roots.
+4. **Experiment 2 — generalization and observations.** Select a PPO policy size
+   by the preregistered Experiment 1 rule, train on procedurally generated
+   circuits, and compare Frenet with LiDAR on held-out circuits.
+5. **Scientific report.** Analyze final task performance, interactions and time
+   to convergence, computational cost, between-seed variation and generalization
+   without hiding failed or non-converged runs.
 
 The version 0 kinematic model intentionally has no lateral grip limit, drag,
 finite vehicle footprint, tire slip, or steering-rate limit. Full throttle may
-therefore remain optimal in corners. This is a known model limitation to address
-in step 2, not something to compensate for through reward shaping.
+therefore remain optimal in corners. A capable learned policy will first be
+diagnosed on version 0. The minimum grip constraint will be added before the
+measurement runs only if the preregistered pilot trigger is met; the reward
+remains unchanged during that decision.
 
 ## View a track
 
@@ -110,74 +117,35 @@ Pyright 1.1.411, pytest 9.1.1, Ruff 0.16.0, SciPy 1.18.0 and setuptools
 Version 0 deliberately uses a point-car kinematic bicycle model. It has no
 lateral-grip limit, aerodynamic drag, tire slip, steering-rate limit or finite
 vehicle footprint, so it can make unrealistic full-throttle cornering possible.
-LiDAR, randomized starts, learning agents and multi-circuit training are also
-deferred work.
+Learning agents, LiDAR and multi-circuit training are Phase-2 work; randomized
+starts and more detailed vehicle dynamics remain outside the approved
+experiments.
 
-## Policy parameterization
+## Learning and experiment design
 
-* **Gaussian policy** $\pi_\theta(a|o)=\mathcal{N}(\mu_\theta(o),\,\sigma^2)$ with
-  an MLP mean. Start with a **state-independent, learnable log-std** (a single
-  parameter vector) — it's stabler than a state-dependent head early on.
-* **Bound the actions correctly.** Either squash with $\tanh$ (and use the
-  change-of-variables correction in $\log\pi$ if you go the SAC-style route) or,
-  simpler for PPO, keep an unbounded Gaussian and **clip** the sampled action to
-  $[-1,1]$ in the env. Pick one and be consistent; the $\tanh$ correction is a
-  classic silent bug.
-* Make **depth and width first-class knobs** (e.g. `hidden_sizes=(64,64)`), since
-  varying them *is* the experiment. Keep everything else fixed across the sweep.
+The three agents use one project-owned bounded Gaussian policy interface and a
+shared MLP builder. Exact probability, return, advantage, bootstrapping and loss
+semantics will be frozen in `docs/LEARNING.md` before implementation. Course-lab
+agent code is not reused by default.
 
-## Algorithms
+Experiment 1 varies only the actor hidden sizes:
 
-* **REINFORCE (baseline).** Implement a project-owned continuous-action version;
-  course-lab code is not reused unless explicitly requested. Add a **baseline**
-  (a value network or even a batch-mean return) to cut variance — this is the
-  natural bridge to Actor–Critic.
+- small: `(32, 32)`;
+- medium: `(64, 64)`; and
+- large: `(256, 256)`.
 
-* **Actor–Critic / A2C (next).** Add a critic $V_\phi(o)$ and switch the policy
-  gradient to use an **advantage** estimate. Use **GAE($\lambda$)** for the
-  advantage — it's a small function and pays for itself immediately. Train actor
-  and critic together; normalize advantages per batch.
+For A2C and PPO, critic capacity remains fixed across actor sizes. Each of the
+nine algorithm/size cells uses five paired training roots and an equal
+environment-interaction budget. The primary evidence is lap completion, lap
+time with its completion denominator, progress and crash rate. Return, learning-
+curve area, interactions/time to convergence, throughput, memory and
+optimization diagnostics are also retained.
 
-* **PPO (the workhorse).** Clipped surrogate objective, multiple epochs of
-  minibatch updates over each rollout, value-clipping optional, an **entropy
-  bonus** to keep exploration alive, and (optionally) an early-stop on a KL
-  threshold. PPO is the right final algorithm for continuous control at this
-  scale and is what your sweep results should be reported on.
-
-  Practical settings that matter more than the algorithm choice:
-  * **Observation normalization** (running mean/std) — near-mandatory for PPO.
-  * **Reward/return scaling** or advantage normalization.
-  * **Vectorized environments** for throughput (Gymnasium `SyncVectorEnv` /
-    `AsyncVectorEnv`).
-  * Orthogonal init, `tanh` activations, Adam with a modest LR (~3e-4), GAE
-    $\lambda\approx0.95$.
-
-## The scientific experiment (network size vs. performance/efficiency)
-
-Hold the algorithm (PPO), env, reward, and all other hyperparameters fixed. Vary
-only `hidden_sizes` across, say, `{(32,), (64,64), (256,256), (256,256,256)}`.
-For each configuration, run **≥3–5 seeds** and report:
-
-* **Final performance** — mean ± std of *deterministic* (mean-action) evaluation
-  return / best lap time, over held-out eval episodes.
-* **Sample efficiency** — environment steps (not iterations) to reach a fixed
-  return threshold.
-* **Wall-clock to converge** — on one fixed machine, as the proposal requires;
-  log it alongside step counts so you can separate "needs more data" from "needs
-  more compute per step."
-
-Plot learning curves with seed variance bands (mean ± std or IQM). The expected
-narrative — bigger nets → better asymptote but more data/compute, with
-diminishing or negative returns past some width — is exactly what the grader is
-looking for; make the plots say it.
-
-## Evaluation protocol
-
-* Evaluate with the **deterministic** policy (use $\mu_\theta$, no sampling).
-* Fixed set of eval seeds / start states, separate from training.
-* Report a **task metric** (lap time, % of lap completed, off-track rate), not
-  just raw return — return is reward-shaping-dependent and not comparable across
-  reward tweaks.
+Experiment 2 uses PPO and selects the smallest adequate actor through the rule
+declared before seeing multi-track test results. Frenet and LiDAR runs are paired
+by training root, procedural track schedule and held-out circuits. Evaluation is
+deterministic and does not update normalization or consume training randomness.
+See [`EXPERIMENT.md`](EXPERIMENT.md) for the complete protocol.
 
 ## Final suggestions
 
@@ -202,8 +170,8 @@ looking for; make the plots say it.
   everything.
 
 * **The multi-circuit variant is a generalization study — treat it as such.**
-  Train on a diverse *set* of tracks (procedural generation + curvature/width
-  randomization), hold out several tracks, and report the **train/test gap**.
+  Train on diverse seeds from the frozen procedural generator, hold out disjoint
+  circuit seeds, and report the **train/test gap**.
   This is where the Frenet+curvature-preview observation shines: it's
   track-agnostic by construction, whereas a policy that memorizes absolute
   $(x,y)$ cannot generalize. Worth stating explicitly as a hypothesis and testing

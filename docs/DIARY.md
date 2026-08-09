@@ -431,3 +431,36 @@ unregistered construction.
 `docs/old-plans/phase-1-racing-environment-mvp.md`, `docs/DIARY.md`.
 
 **Commit**: `docs: define phase two learning roadmap [ai]`
+
+## 2026-08-09 — Experiment-ready Phase-2 roadmap
+
+**Task**: Revisit Phase 2 after fixing the project's experimental direction and
+formally specify the two planned studies.
+
+**Result**: Replaced the learned-baseline-only roadmap with an experiment-ready
+implementation phase covering shared neural and rollout primitives,
+REINFORCE, A2C+GAE, PPO, reproducible artifacts, analysis, the conditional grip
+gate, LiDAR, deterministic multi-track scheduling and reduced end-to-end smoke
+matrices. The full measurement runs remain outside Phase 2; acceptance instead
+proves that all configurations execute and that their manifests contain no
+unresolved scientific choices.
+
+Added `EXPERIMENT.md` as the authoritative empirical protocol. Experiment 1 is
+a 3-algorithm by 3-actor-size design with five paired training roots on one
+fixed Frenet circuit. Only actor capacity varies across sizes while critic
+capacity stays fixed. Experiment 2 selects the smallest adequate PPO actor by a
+predeclared Experiment 1 rule, then compares paired Frenet and LiDAR runs on
+procedural training circuits and disjoint held-out circuits. The protocol
+defines experimental units, pilot/measurement separation, the pre-measurement
+grip decision, deterministic evaluation, convergence and censoring, task and
+computational measures, optimization diagnostics, seed-level aggregation,
+required reports, artifacts and limitations. Updated the README to summarize
+the approved sequence and link to the dedicated protocol.
+
+**Validation**: `git diff --check` passed and all 86 tests passed. Gymnasium
+retained only its two documented advisory warnings about the intentionally
+unbounded Frenet observation dimensions.
+
+**Files**: `PLAN.md`, `EXPERIMENT.md`, `README.md`, `docs/DIARY.md`.
+
+**Commit**: `docs: define experiment-ready phase two [ai]`

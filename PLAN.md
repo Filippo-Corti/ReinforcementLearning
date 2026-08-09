@@ -1,161 +1,219 @@
-# Project Plan — Phase 2: Learned Baseline and Grip Validation
+# Project Plan — Phase 2: Experiment-Ready Learning System
 
 ## Goal
 
-Build the first reproducible, project-owned learning path for the racing
-environment and use it to test the most important known limitation of the
-version-0 dynamics. Phase 2 must:
+Build and validate every environment, learning, measurement and orchestration
+component needed to run the two studies specified in [`EXPERIMENT.md`](EXPERIMENT.md).
+At the end of Phase 2, the repository must be able to launch the complete
+experiment matrices without adding code or making an undocumented scientific
+choice.
 
-- establish deterministic non-learning reference policies and task metrics;
-- implement and validate a configurable Gaussian neural policy;
-- implement vanilla REINFORCE from the equations approved for this project;
-- demonstrate a measurable learning signal on the unchanged Phase-1
-  environment;
-- observe and quantify how the learned policy behaves around curves before
-  changing the physics;
-- add a lateral-grip constraint only after the version-0 behaviour has been
-  demonstrated;
-- repeat the learning comparison without changing the reward or unrelated
-  training choices; and
-- measure the effect of adding a learned value baseline only after vanilla
-  REINFORCE has its own recorded result.
+Phase 2 must:
 
-This phase is a controlled model-validation study, not the final network-size
-experiment. Its purpose is to build confidence that later algorithm and policy
-complexity comparisons measure learning rather than an untested environment,
-reward or training pipeline.
+- establish deterministic configuration, seeding, logging, checkpointing and
+  evaluation contracts;
+- implement a shared configurable policy MLP and the value-function components
+  needed by actor-critic algorithms;
+- implement project-owned REINFORCE, A2C with GAE and PPO from approved
+  equations;
+- prove that every algorithm learns on a small controlled problem and that the
+  complete racing path runs end to end;
+- evaluate a capable policy on version-0 physics before deciding whether to add
+  lateral grip;
+- add and validate the minimum grip constraint only if the recorded pilot
+  confirms unrealistic high-speed cornering;
+- add LiDAR observations without duplicating the racing dynamics or lifecycle;
+- support deterministic training on procedurally generated circuits and
+  evaluation on disjoint held-out circuits;
+- generate all raw records and derived summaries required by both experiments;
+  and
+- smoke-test every Experiment 1 and Experiment 2 configuration before the
+  expensive measurement runs begin.
 
-## Additive Development Rule
+The full multi-seed measurement runs are not Phase-2 acceptance tests. They
+begin only after this roadmap is complete and the experiment manifest has been
+frozen. Pilot, tuning and smoke-test results must use seed namespaces and result
+directories that cannot be mistaken for measurement results.
 
-Every advancement in this roadmap depends on evidence from the simpler system
-immediately before it. A passing unit test is necessary but is not enough when a
-step makes a behavioural claim: the relevant training or evaluation result must
-also be recorded.
+## Scientific Boundary
 
-In particular:
+[`EXPERIMENT.md`](EXPERIMENT.md) is the authoritative study design. This file
+describes how to build and validate the system that will execute that design.
+The distinction is important:
 
-1. Do not add a learned value baseline until vanilla REINFORCE has been tested
-   and measured.
-2. Do not add lateral grip until a learned policy on version-0 physics has been
-   evaluated and its speed and throttle around curves have been inspected.
-3. Do not tune the reward to encourage braking while version-0 physics still
-   makes full-throttle cornering feasible.
-4. Do not add a more advanced algorithm to hide a failing policy, rollout,
-   return or seeding implementation.
-5. Do not proceed through a failed validation gate. Diagnose the current layer,
-   amend the relevant specification if necessary, and obtain confirmation
-   before continuing.
+- **Phase-2 validation** asks whether implementations are correct,
+  deterministic and connected properly.
+- **Pilots** choose or verify predeclared experimental settings without being
+  reported as final evidence.
+- **Measurement runs** estimate the effects of policy-network size, learning
+  algorithm and observation representation using the frozen protocol.
 
-The central comparison is therefore:
-
-```text
-tested environment
-  -> tested reference policies and metrics
-  -> tested policy primitives
-  -> tested vanilla REINFORCE
-  -> observed version-0 learned behaviour
-  -> specified and tested grip constraint
-  -> repeated learning comparison
-  -> tested variance-reduction baseline
-```
+Pilot results may change a setting only through an explicit update to
+`EXPERIMENT.md` made before measurement starts. Once the measurement manifest is
+frozen, failed or surprising runs are retained; they are not repaired by
+changing budgets, metrics, reward, tracks or hyperparameters for selected
+configurations.
 
 ## Authoritative Specifications
 
 Implementation decisions must agree with:
 
-- [`docs/MDP.md`](docs/MDP.md) for the environment state, observation, action,
-  version-0 dynamics, reward and episode lifecycle;
-- [`docs/TRACK.md`](docs/TRACK.md) for track geometry, Frenet projection,
-  progress and lap completion;
-- the learning specification introduced in Step 0 for the policy distribution,
-  objective, returns, optimization, evaluation and reproducibility contract;
-- [`AGENTS.md`](AGENTS.md) for workflow, testing, determinism, dependency and
-  documentation rules; and
+- [`EXPERIMENT.md`](EXPERIMENT.md) for hypotheses, comparison matrices,
+  experimental units, measures, aggregation and fairness rules;
+- [`docs/MDP.md`](docs/MDP.md) for state, observations, actions, dynamics,
+  reward and episode lifecycle;
+- [`docs/TRACK.md`](docs/TRACK.md) for track generation, geometry, Frenet
+  projection, LiDAR ray casting, progress and lap completion;
+- the learning specification introduced in Step 0 for project-specific policy,
+  target and loss equations;
+- the relevant derivations in `docs/theory/`, in particular
+  `policy-gradient-1.md`, `policy-gradient-2.md`, `actor-critic.md` and
+  `deep-rl.md`;
+- [`AGENTS.md`](AGENTS.md) for workflow, code organization, determinism,
+  dependency and documentation rules; and
 - the archived Phase-1 roadmap in
   [`docs/old-plans/phase-1-racing-environment-mvp.md`](docs/old-plans/phase-1-racing-environment-mvp.md)
   for the accepted environment baseline.
 
-Algorithm code must be implemented from the approved project equations. The
-README's current algorithm discussion is useful motivation but is not a complete
-algorithm specification.
+The theory notes establish the algorithm family, but do not settle every
+implementation detail. `docs/LEARNING.md` must resolve truncation bootstrap,
+loss reduction, action bounding, normalization and optimizer semantics before
+agent code is written.
+
+## Experimental Invariants
+
+The following invariants apply across the implementation and experiment
+configuration:
+
+1. The Experiment 1 size factor changes the **actor/policy network only**. The
+   critic architecture remains fixed across sizes so critic capacity is not
+   confounded with policy-space complexity.
+2. Small, medium and large actors use hidden sizes `(32, 32)`, `(64, 64)` and
+   `(256, 256)` respectively. Actor parameter count is recorded rather than
+   inferred only from these labels.
+3. Every Experiment 1 cell receives the same training-environment interaction
+   budget, evaluation cadence, fixed circuit, observation, reward, physics
+   version and five paired root seeds.
+4. Algorithm-specific hyperparameters may differ because the algorithms have
+   different update rules. They are calibrated only with the medium actor and
+   pilot seeds, then frozen before the size sweep.
+5. Experiment 2 uses PPO and selects one actor size by the predeclared rule in
+   `EXPERIMENT.md`; it does not choose the most flattering network after looking
+   at held-out circuits.
+6. Frenet and LiDAR runs use paired root seeds, training-track schedules,
+   budgets, PPO settings and held-out circuits. Neither actor nor critic receives
+   privileged observations in the LiDAR condition.
+7. Training interactions, evaluation interactions and pilot interactions are
+   counted and stored separately.
+8. Deterministic evaluation never updates model parameters, optimizer state,
+   normalization statistics or random streams used for training.
+9. A completed lap and a crash are environment outcomes, not inferred from a
+   reward threshold.
+10. Return is reported, but task conclusions also use completion, lap time,
+    progress and crash rate so reward shaping cannot stand in for driving
+    performance.
 
 ## Scope Boundaries
 
-Phase 2 includes only the minimum learning and physics changes needed for the
-controlled comparison above. It deliberately excludes:
+Phase 2 includes the complete software and validation path for both experiments,
+including short pilots and smoke runs. It excludes:
 
-- A2C, GAE and PPO;
-- the formal policy-network size sweep;
-- finite vehicle footprint, tire slip, aerodynamic drag and steering-rate
-  limits;
-- LiDAR observations;
-- randomized starts and curricula;
-- vectorized training environments;
-- multi-track training and held-out-track generalization; and
-- reward tuning not justified by the gated comparison.
+- the full 45-run Experiment 1 measurement matrix;
+- the full paired Experiment 2 measurement matrix;
+- final hypothesis tests or scientific conclusions from those runs;
+- changing the reward after individual measurement results are observed;
+- recurrent policies or frame stacking for the LiDAR condition;
+- finite vehicle footprint, tire slip, aerodynamic drag, load transfer and
+  steering-rate limits;
+- broad or per-network hyperparameter searches;
+- selecting tracks or checkpoints using held-out test performance;
+- comparing additional algorithms or observation types; and
+- treating pilot, tuning or smoke-test results as measurement data.
 
-These remain candidates for later plans. Observation normalization, entropy
-regularization, return scaling and other common training additions are also not
-enabled silently. Each must be introduced as a separately measured increment if
-the simpler training path demonstrates a concrete need.
+Randomized start states, reward scaling, entropy bonuses, gradient clipping and
+other training mechanisms are not assumed silently. If the approved learning
+contract uses one, its value and scope must be explicit and it must be held
+fixed wherever `EXPERIMENT.md` requires.
 
 ## Definition of Done
 
 Phase 2 is complete only when all of the following are true:
 
-- One command can evaluate deterministic reference policies and emit stable
-  episode summaries for a fixed seed and configuration.
-- Policy, rollout and training random-number streams are independently derived
-  from one explicit root seed and reproduce the same run on the same supported
-  software and hardware configuration.
-- The shared MLP and bounded continuous-action policy pass focused numerical,
-  shape, gradient and determinism tests.
-- Vanilla REINFORCE passes small analytical tests and demonstrates learning on a
-  deliberately simple continuous-control problem before racing training begins.
-- A version-0 racing run shows a predeclared improvement over the non-learning
-  reference selected in the experiment specification.
-- Deterministic evaluations record return, normalized lap progress, completion,
-  crash, lap time, action, speed and curvature diagnostics.
-- The version-0 report explicitly establishes whether the learned policy slows
-  for curves. Lateral-grip work begins only after this evidence exists.
-- The grip model and every new physical constant are approved in `docs/MDP.md`
-  before implementation.
-- Low-speed behaviour remains compatible with version 0, while focused tests
-  demonstrate the intended high-speed grip limitation.
-- The before/after grip comparison holds reward, observation, track, seeds,
-  policy architecture, optimizer and training budget fixed unless a documented
-  incompatibility makes that impossible.
-- The grip-limited learned policy is evaluated with the same metrics. If braking
-  does not emerge, the result is treated as a failed behavioural gate and is
-  diagnosed before reward changes or further algorithms are attempted.
-- The learned value baseline is compared with vanilla REINFORCE using the same
-  environment version and evaluation protocol.
-- All experiment configurations and summaries needed to reproduce the claims
-  are retained in a documented, machine-readable form; large transient
-  checkpoints are not committed by default.
-- The complete automated and static validation suite passes, and the README and
-  diary explain how to reproduce the phase acceptance run.
+- `docs/LEARNING.md` contains every equation and boundary convention needed to
+  implement REINFORCE, A2C+GAE and PPO for bounded, vector-valued actions.
+- The experiment document contains no unresolved choice that can alter a
+  measurement result: budgets, evaluation cadence, convergence threshold,
+  algorithm settings, fixed circuit, seed sets, track splits and selection
+  rules are frozen in a machine-readable manifest.
+- One root seed deterministically derives independent streams for parameter
+  initialization, policy sampling, environment reset, training-track selection,
+  minibatch order and evaluation.
+- Configurations, dependency versions, git state, machine context and complete
+  seed provenance are retained with every run.
+- The shared MLP, bounded Gaussian policy, value network and observation
+  normalizer pass shape, gradient, numerical and reproducibility tests.
+- Rollout records preserve observation, action, reward, log-probability, value,
+  termination, truncation, next observation, episode and track identity.
+- Hand-computed trajectories verify Monte Carlo return-to-go, bootstrapped
+  returns and GAE under both termination and truncation.
+- REINFORCE, A2C+GAE and PPO match analytical loss cases and improve a small
+  deterministic continuous-control task across the approved validation seeds.
+- The shared racing runner can train, checkpoint, resume and deterministically
+  evaluate all three algorithms without algorithm-specific experiment scripts.
+- Episode, update, evaluation, timing, resource and optimization diagnostics
+  use one documented schema and can be aggregated without parsing console text.
+- A capable version-0 policy has been evaluated by curvature, speed, throttle
+  and steering, and the decision to retain or replace version-0 physics is
+  recorded before experiment manifests are frozen.
+- If grip is required, its equations and constants are approved in
+  `docs/MDP.md`, version-0 behaviour remains selectable, and analytical and
+  behavioural validation passes without changing the reward.
+- Both Frenet and LiDAR environments pass Gymnasium conformance and deterministic
+  observation tests while sharing the same dynamics and lifecycle.
+- A deterministic multi-track scheduler produces disjoint pilot, training,
+  validation and test track streams without regenerating a different circuit
+  after resume.
+- A reduced Experiment 1 matrix executes every algorithm/actor-size cell and
+  produces the expected artifacts.
+- A reduced Experiment 2 matrix trains and evaluates paired Frenet and LiDAR
+  PPO runs on disjoint procedurally generated circuits.
+- The analysis command regenerates tables and plots from raw artifacts and does
+  not depend on manually copied values.
+- The final acceptance runner passes dependency, formatting, linting, type,
+  compilation, test, whitespace, deterministic replay and experiment smoke
+  checks.
 
-## Decisions That Must Be Resolved Explicitly
+## Decisions That Must Be Frozen
 
-No implementation step may silently choose the following values or semantics:
+The following decisions may be calibrated during Phase 2, but none may remain
+implicit when measurement starts:
 
-1. The bounded Gaussian action construction and its exact log-probability.
-2. Whether returns use the provisional `gamma=0.9995`, `gamma=1`, or an approved
-   comparison before fixing one value.
-3. Policy initialization, activation, initial log standard deviation, optimizer
-   and learning rate.
-4. Episode or transition batching, training budget and update frequency.
-5. The fixed training track, evaluation episodes, root seeds, reference policy,
-   success threshold and rules for declaring a learning improvement.
-6. The result directory, run identifier and machine-readable log schema.
-7. The mathematical lateral-grip rule and every associated physical constant.
-8. The criterion used to compare vanilla REINFORCE with the learned value
-   baseline.
+1. The squashed or otherwise bounded Gaussian distribution, numerical epsilon,
+   standard-deviation parameterization and exact log-probability.
+2. Network activation, initialization and fixed critic architecture.
+3. Discount and GAE factors, return/advantage normalization, entropy term,
+   gradient clipping and bootstrap treatment for each episode ending.
+4. Optimizers, learning rates, rollout or trajectory batch sizes, minibatch
+   sizes, epochs and update frequency for each algorithm.
+5. Training interaction budget, evaluation cadence, checkpoint cadence and
+   logging cadence.
+6. The fixed Experiment 1 track and its geometry-only selection procedure.
+7. Pilot, measurement and evaluation seed identities.
+8. The scripted reference controller and the convergence threshold derived
+   without consulting measurement outcomes.
+9. The exact PPO actor-size selection rule applied after Experiment 1.
+10. Training, validation and test track-pool sizes and deterministic seed
+    namespaces for Experiment 2.
+11. The hardware, execution device, environment worker count, thread settings
+    and timing boundaries used for computational-cost comparisons.
+12. The quantitative trigger for adding lateral grip and, if triggered, the
+    mathematical grip model and every new physical constant.
+13. Result paths, run identifiers, schemas, retained checkpoints and trajectory
+    sampling cadence.
 
-Step 0 resolves items 1–6. The version-0 evidence step resolves the measurement
-needed before item 7 can be proposed. The value-baseline step resolves item 8
-before implementing that advancement.
+`EXPERIMENT.md` distinguishes decisions already approved from decisions to be
+locked by the preparatory pilots. Changing a frozen decision requires a dated
+amendment applied uniformly to every affected measurement cell.
 
 ## Execution Rules
 
@@ -166,129 +224,80 @@ step:
 2. resolve every decision marked pending for that step;
 3. obtain confirmation;
 4. implement the smallest complete increment;
-5. run both the focused validation gate and all existing tests;
+5. run the focused validation gate and all existing tests;
 6. update `docs/DIARY.md`; and
 7. commit to `main` using the project commit convention.
 
-Training runs used as validation gates must identify their configuration, root
-seed, environment steps and wall-clock duration. A failed or inconclusive run is
-evidence to investigate the current layer; it is not permission to skip ahead.
+All RNG-dependent entry points accept `--seed`. Training and pilot commands
+also record the seed-derived stream identities they actually use. A failed
+validation gate is evidence about the current layer and must be diagnosed before
+advancing to a more complex algorithm.
 
 ## Practical Execution Steps
 
-### 0. Specify the Learning and Evaluation Contract
+### 0. Specify the Learning Contract and Freeze Protocol Fields
 
 **Status:** Pending.
 
-**Objective:** Turn the high-level algorithm notes into an authoritative,
-reviewable specification before adding learning code.
+**Objective:** Translate the repository theory and experiment design into exact,
+project-specific equations and an auditable decision registry.
 
 **Work:**
 
-- Write the exact bounded policy distribution, sampling transform and
-  log-probability equations.
-- Specify trajectory return-to-go calculation, terminal versus truncated
-  handling and the selected discount protocol.
-- Specify the vanilla REINFORCE objective and sign convention used by the
-  optimizer.
-- Define policy initialization, optimizer, learning rate, batching, update
-  frequency and training budget as explicit experiment configuration.
-- Define the root-seed derivation for environment, action sampling, parameter
-  initialization and evaluation.
-- Select the fixed generated track and reference-policy seeds used during this
-  phase.
-- Define deterministic evaluation, the reference comparison, the learning gate
-  and the metrics required for behavioural analysis.
-- Define the run directory and machine-readable configuration, episode-summary,
-  update-summary and trajectory-sample schemas.
-- Update the README only where its current informal recommendations conflict
-  with the approved specification.
+- Specify the bounded continuous policy distribution, sampling transform,
+  deterministic action and summed log-probability.
+- Specify REINFORCE returns and objective, A2C value targets and GAE, and PPO's
+  clipped objective and value update.
+- Define termination and time-limit truncation bootstrapping for every target.
+- Decide initialization, normalization, optimizer, loss reduction and numerical
+  conventions.
+- Fill the algorithm, budget, cadence, seed, fixed-track, convergence and
+  multi-track split fields marked for Phase-2 locking in `EXPERIMENT.md`.
+- Define pilot-only settings separately from measurement settings.
+- Correct README guidance where it conflicts with the approved contract.
 
 **Expected files:**
 
 - `docs/LEARNING.md`
-- `README.md` if clarification is required
-- `docs/DIARY.md`
-
-**Validation gate:**
-
-- Every equation needed to implement vanilla REINFORCE is present and internally
-  consistent.
-- Every core training hyperparameter has an approved value or an explicitly
-  approved finite comparison; no placeholder enters source code.
-- Truncation bootstrapping semantics are unambiguous for vanilla Monte Carlo
-  returns.
-- The learning and behavioural gates can be calculated solely from the defined
-  log records.
-- The specification receives confirmation before Step 1 begins.
-
-### 1. Add Deterministic Episode Metrics and Reference Policies
-
-**Status:** Pending; depends on Step 0.
-
-**Objective:** Establish observable, reproducible environment behaviour before
-introducing a neural policy.
-
-**Work:**
-
-- Define named episode and trajectory diagnostic records.
-- Record return, episode length, elapsed time, normalized progress, completion,
-  crash, lap time, actions, speed and preview curvature.
-- Implement the approved non-learning references, including a random-action
-  policy and simple deterministic controls appropriate to the approved
-  comparison.
-- Add a thin evaluation experiment that runs the selected fixed track and writes
-  the approved summaries.
-- Keep reference-policy parameters explicit; do not bury controller gains or
-  action values in implementation code.
-
-**Expected files:**
-
-- `src/utils/metrics.py`
-- `src/utils/seeding.py`
-- `src/utils/__init__.py`
-- `experiments/evaluate_baselines.py`
-- `tests/utils/test_metrics.py`
-- `tests/utils/test_seeding.py`
-- `tests/experiments/test_evaluate_baselines.py`
+- `EXPERIMENT.md`
 - `README.md`
 - `docs/DIARY.md`
 
 **Validation gate:**
 
-- Repeated runs with the same root seed produce identical reference-policy
-  actions and episode summaries.
-- Synthetic episode tests distinguish crash, completion and truncation metrics.
-- The fixed-track reference results are saved and inspectable.
-- At least one deterministic control sanity check establishes that observations,
-  actions and progress move in the expected directions. If no approved
-  reference can make meaningful progress, diagnose the environment/control
-  interface before adding learning.
+- Every implemented loss and target can be derived solely from the written
+  equations.
+- Every result-affecting choice has a value or an explicitly bounded pilot
+  selection procedure.
+- Measurement, pilot and smoke seed namespaces cannot overlap accidentally.
+- The specification receives confirmation before Step 1 begins.
 
-### 2. Add Explicit Training Configuration and Seed Streams
+### 1. Add Training Configuration, Dependencies and Seed Streams
 
-**Status:** Pending; depends on Step 1.
+**Status:** Pending; depends on Step 0.
 
-**Objective:** Represent every approved training choice and random stream before
-implementing models or updates.
+**Objective:** Represent all approved training choices and random streams before
+models or optimizers are introduced.
 
 **Work:**
 
-- Add immutable configuration records for the policy, vanilla REINFORCE run and
-  deterministic evaluation.
-- Serialize configurations in a stable form suitable for result metadata.
-- Derive independent NumPy, environment and PyTorch seeds from one root
-  `SeedSequence` without changing global random state unexpectedly.
-- Add PyTorch to the dependency manifest using the approved explicit version
-  constraint.
-- Configure deterministic PyTorch behaviour to the extent supported by the
-  selected execution device and document any remaining platform limitation.
+- Add immutable serializable configurations for the actor, critic, each agent,
+  rollout collection, evaluation, logging and experiment matrices.
+- Make the three actor architectures named configurations while retaining the
+  exact `hidden_sizes` values in serialized output.
+- Add PyTorch using an explicit supported version constraint.
+- Derive named NumPy, PyTorch, environment, track-schedule, minibatch and
+  evaluation seeds from one root `SeedSequence`.
+- Configure deterministic PyTorch behaviour for the approved device and record
+  limitations that cannot be guaranteed across platforms.
 
 **Expected files:**
 
 - `src/configs/training.py`
+- `src/configs/experiments.py`
 - `src/configs/__init__.py`
 - `src/utils/seeding.py`
+- `src/utils/__init__.py`
 - `requirements.txt`
 - `tests/configs/test_training_config.py`
 - `tests/utils/test_seeding.py`
@@ -297,436 +306,690 @@ implementing models or updates.
 
 **Validation gate:**
 
-- Configuration serialization is stable and includes every approved choice.
-- Equal root seeds derive equal independent streams; changing the root seed
-  changes them.
-- Model initialization and sampled action sequences reproduce for a fixed seed.
-- `pip check` passes with the updated dependency manifest.
+- Configuration serialization is stable and contains every approved choice.
+- Equal root seeds reproduce every named stream; different root seeds change
+  them; deriving one stream does not consume another.
+- Global NumPy and PyTorch RNG state is not modified unexpectedly.
+- `pip check` passes with the pinned dependency set.
 
-### 3. Implement and Test the Shared MLP
+### 2. Establish Metrics, Artifact Schemas and Reference Policies
 
-**Status:** Pending; depends on Step 2.
+**Status:** Pending; depends on Step 1.
 
-**Objective:** Introduce the single network-size-controlled neural primitive
-without coupling it to a learning algorithm.
+**Objective:** Make behaviour and resource use observable before adding a
+learned policy.
 
 **Work:**
 
-- Implement `make_mlp` from the approved activation and initialization
-  specification.
-- Make `hidden_sizes` the only structural depth/width input.
-- Keep input/output dimensions explicit and avoid racing-specific assumptions in
-  the model builder.
-- Test parameter shapes, forward shapes, gradients, initialization and seeded
-  reproducibility.
+- Define named transition, episode, update, evaluation, timing and resource
+  records matching `EXPERIMENT.md`.
+- Define a versioned run directory containing configuration, manifest, metadata,
+  JSONL or CSV metrics, checkpoints and selected evaluation trajectories.
+- Record git commit and dirty status, dependency freeze, platform, processor,
+  device, thread and worker information.
+- Implement random-action and deterministic scripted driving references with
+  explicit controller settings.
+- Add deterministic reference evaluation on a generated and saved circuit.
+- Ensure evaluation interactions and time are separated from training measures.
+
+**Expected files:**
+
+- `src/utils/metrics.py`
+- `src/utils/artifacts.py`
+- `src/utils/references.py`
+- `src/utils/__init__.py`
+- `experiments/evaluate_references.py`
+- `tests/utils/test_metrics.py`
+- `tests/utils/test_artifacts.py`
+- `tests/utils/test_references.py`
+- `tests/experiments/test_evaluate_references.py`
+- `README.md`
+- `docs/DIARY.md`
+
+**Validation gate:**
+
+- Synthetic episodes distinguish completion, crash and time-limit truncation.
+- Same-seed reference evaluations produce identical actions and summaries.
+- Training, evaluation and pilot counters cannot be aggregated accidentally.
+- An interrupted artifact write is either complete or detected as incomplete.
+- The scripted controller makes meaningful forward progress; otherwise the
+  environment/control boundary is diagnosed before learning work begins.
+
+### 3. Implement Shared Neural Models
+
+**Status:** Pending; depends on Step 2.
+
+**Objective:** Add reusable actor and critic components whose capacity and
+probability semantics are controlled entirely by configuration.
+
+**Work:**
+
+- Implement the shared MLP builder with explicit input, output, activation,
+  initialization and hidden sizes.
+- Implement the bounded Gaussian policy, stochastic sampling, deterministic
+  evaluation and corrected vector log-probability from Step 0.
+- Implement the value network through the same MLP builder.
+- Report actor, critic and total trainable parameter counts independently.
+- Keep racing-specific observation dimensions outside the model definitions.
 
 **Expected files:**
 
 - `src/models/mlp.py`
+- `src/models/policies.py`
+- `src/models/value.py`
 - `src/models/__init__.py`
 - `tests/models/test_mlp.py`
+- `tests/models/test_policies.py`
+- `tests/models/test_value.py`
 - `docs/DIARY.md`
 
 **Validation gate:**
 
-- Empty, shallow and multi-layer approved configurations build the documented
-  topology.
-- Batched and single-observation forward passes have the expected shapes.
-- Backpropagation reaches every trainable parameter.
-- Fixed initialization seeds reproduce parameters exactly on the supported
-  device.
+- All three actor sizes construct the documented topology and parameter counts.
+- Single and batched observations produce correct output shapes.
+- Actions always satisfy the environment bounds and log-probabilities match
+  independent numerical calculations away from transform singularities.
+- Gradients reach every intended actor, dispersion and critic parameter.
+- Fixed initialization and sampling seeds reproduce parameters and actions.
+- Deterministic evaluation does not consume the policy sampling stream.
 
-### 4. Implement and Test the Bounded Gaussian Policy
+### 4. Implement Normalization, Rollout Records, Returns and GAE
 
 **Status:** Pending; depends on Step 3.
 
-**Objective:** Map Frenet observations to valid continuous racing actions with
-the exact probability semantics approved in Step 0.
+**Objective:** Preserve semantic transition data and verify every target before
+it is used by an optimizer.
 
 **Work:**
 
-- Implement the policy mean using the shared MLP.
-- Implement the approved standard-deviation parameterization.
-- Implement stochastic sampling, deterministic mean-action evaluation and
-  log-probability calculation for bounded vector actions.
-- Sum log-probabilities over the action dimensions exactly once.
-- Keep observation normalization absent unless separately justified and
-  approved.
+- Implement running observation statistics that update only during training,
+  can be saved and restored, and remain frozen during evaluation.
+- Define a semantic on-policy rollout record for vector observations and
+  actions, including track and episode identity.
+- Compute the approved Monte Carlo returns, bootstrapped value targets and GAE.
+- Preserve distinct `terminated` and `truncated` masks.
+- Support complete-episode batches for REINFORCE and fixed-length rollouts
+  spanning episode boundaries for A2C and PPO.
 
 **Expected files:**
 
-- `src/models/policies.py`
-- `src/models/__init__.py`
-- `tests/models/test_policies.py`
+- `src/utils/normalizers.py`
+- `src/utils/buffers.py`
+- `src/utils/__init__.py`
+- `tests/utils/test_normalizers.py`
+- `tests/utils/test_buffers.py`
 - `docs/DIARY.md`
 
 **Validation gate:**
 
-- Sampled and deterministic actions always satisfy the environment action
-  bounds and dtype/shape contract.
-- Numerical distribution tests agree with the approved transform and Jacobian
-  equations away from singular boundaries.
-- Deterministic evaluation does not consume the sampling random stream.
-- Gradients reach both mean-network and approved dispersion parameters.
-- Seeded samples and log-probabilities reproduce.
+- Hand-computed trajectories match every return, target and advantage.
+- Termination removes the bootstrap while truncation follows the exact approved
+  convention.
+- No transition is lost, duplicated or assigned to the wrong episode at a
+  rollout boundary.
+- Saved and restored normalizers produce identical values.
+- Evaluation leaves normalization statistics unchanged.
 
-### 5. Implement Rollout Collection and Monte Carlo Returns
+### 5. Add the Shared On-Policy Training and Evaluation Engine
 
 **Status:** Pending; depends on Step 4.
 
-**Objective:** Test data collection and return computation independently of the
-optimizer.
+**Objective:** Give every algorithm the same collection, evaluation,
+checkpointing and accounting boundary.
 
 **Work:**
 
-- Define semantic per-transition and complete-episode records.
-- Collect observations, sampled actions, rewards, termination and truncation
-  without losing their meanings in anonymous tuples.
-- Compute return-to-go using the exact Step-0 equations.
-- Preserve Gymnasium termination and truncation semantics.
-- Produce the episode metrics defined in Step 1 from the same rollout.
+- Define the project-owned agent update contract for continuous vector actions.
+- Implement environment collection for complete episodes and fixed rollouts.
+- Implement deterministic checkpoint evaluation at exact training-step
+  boundaries without contaminating training streams.
+- Save and restore models, optimizers, normalizers, counters, active episode
+  state where required, and RNG state.
+- Measure environment collection, optimization, evaluation and total duration
+  separately.
+- Record environment steps as the primary budget while also retaining episodes
+  and updates.
 
 **Expected files:**
 
-- `src/utils/buffers.py`
+- `src/agents/types.py`
+- `src/agents/__init__.py`
 - `src/utils/training.py`
+- `src/utils/evaluation.py`
+- `src/utils/checkpointing.py`
 - `src/utils/__init__.py`
-- `tests/utils/test_buffers.py`
 - `tests/utils/test_training.py`
+- `tests/utils/test_evaluation.py`
+- `tests/utils/test_checkpointing.py`
 - `docs/DIARY.md`
 
 **Validation gate:**
 
-- Hand-computed finite trajectories match every calculated return.
-- Terminated and time-truncated examples follow the approved semantics.
-- No transition is dropped or duplicated at episode boundaries.
-- A fixed policy and seed reproduce the complete rollout and summary.
+- A fixed policy and seed reproduce transitions, counters and evaluation
+  summaries.
+- Resume from a checkpoint matches an uninterrupted short run on the supported
+  device.
+- Evaluation cadence does not change sampled training actions or final weights.
+- Timing categories are non-overlapping and reconcile with recorded total time.
+- Collected records contain everything required by all three agents.
 
-### 6. Implement Vanilla REINFORCE and Verify the Base Learner
+### 6. Implement and Validate REINFORCE
 
 **Status:** Pending; depends on Step 5.
 
-**Objective:** Prove the simplest approved policy-gradient implementation before
-using it to interpret racing behaviour.
+**Objective:** Establish the simplest project-owned policy-gradient learner
+before introducing a critic.
 
 **Work:**
 
-- Implement the project-owned vanilla REINFORCE loss and update.
-- Do not add a critic, learned baseline, GAE, PPO clipping, entropy bonus or
-  observation normalization.
-- Add a deliberately small continuous-control test environment or analytical
-  objective whose improvement can be established cheaply and deterministically.
-- Log update loss, return statistics, gradient diagnostics and environment-step
-  count using the Step-0 schema.
-- Add a thin training entry point driven entirely by explicit configuration and
-  root seed.
+- Implement the exact Step-0 REINFORCE estimator and optimizer loss.
+- Keep the implementation actor-only; do not silently introduce a learned
+  critic.
+- Log policy loss, entropy or dispersion diagnostics, gradient norm, weight norm
+  and update magnitude.
+- Add a small deterministic continuous-control validation problem.
+- Connect REINFORCE to the shared training entry point.
 
 **Expected files:**
 
 - `src/agents/reinforce.py`
 - `src/agents/__init__.py`
-- `src/utils/training.py`
-- `experiments/train_reinforce.py`
+- `experiments/train.py`
 - `tests/agents/test_reinforce.py`
-- `tests/fixtures/envs/` if a test environment is needed
-- `tests/experiments/test_train_reinforce.py`
-- `README.md`
+- `tests/fixtures/envs/continuous_control.py`
+- `tests/experiments/test_train.py`
 - `docs/DIARY.md`
 
 **Validation gate:**
 
-- Analytical loss and gradient cases match hand calculations.
-- One update changes parameters in the expected direction.
-- Across the predeclared fixed seeds, the simple continuous-control task meets
-  its predeclared improvement threshold.
-- Repeating a same-seed short run reproduces parameters, summaries and sampled
-  actions on the supported device.
-- If the learner fails this gate, racing training does not begin.
+- Analytical loss and gradient examples match hand calculations.
+- One controlled update changes action probability in the expected direction.
+- The validation problem meets its predeclared improvement gate across the
+  validation seeds.
+- Same-seed short runs reproduce parameters, actions and summaries.
+- Failure stops progress to A2C rather than being hidden by its critic.
 
-### 7. Establish the Version-0 Learned Racing Baseline
+### 7. Implement and Validate A2C with GAE
 
 **Status:** Pending; depends on Step 6.
 
-**Objective:** Demonstrate and measure policy learning on the unchanged Phase-1
-environment before altering its physics.
+**Objective:** Add synchronous actor-critic learning using the already tested
+policy, value model, rollout and GAE components.
 
 **Work:**
 
-- Train vanilla REINFORCE on the approved fixed track, configuration and seed
-  set.
-- Evaluate checkpoints using deterministic actions and the fixed evaluation
-  protocol.
-- Compare with the approved non-learning reference using return, normalized
-  progress, completion and crash rate rather than training loss alone.
-- Retain the exact configuration, summaries and selected evaluation trajectories
-  required by the learning gate.
-- Do not change the reward, observation, initial-state distribution or dynamics
-  during this step.
+- Implement the approved A2C actor and critic objectives.
+- Use detached GAE advantages and approved value targets without leaking critic
+  gradients into the actor.
+- Keep actor and critic optimizers or parameter groups exactly as specified.
+- Log actor loss, critic loss, entropy, explained variance, target and advantage
+  statistics, gradient norms, weight norms and update magnitude.
+- Connect A2C to the same training and evaluation entry point.
 
 **Expected files:**
 
-- `experiments/train_reinforce.py`
-- `experiments/evaluate_policy.py`
-- focused tests for any new orchestration behaviour
-- `README.md`
+- `src/agents/a2c.py`
+- `src/agents/__init__.py`
+- `experiments/train.py`
+- `tests/agents/test_a2c.py`
+- `tests/experiments/test_train.py`
 - `docs/DIARY.md`
-- the approved small Phase-2 result summaries
 
 **Validation gate:**
 
-- The predeclared learning criterion is met across the approved seeds.
-- Deterministic evaluation outperforms the selected non-learning reference on
-  the approved primary task metric.
-- Complete configuration and environment-step counts accompany the result.
-- If vanilla REINFORCE shows no reliable racing learning signal, stop and
-  diagnose this layer. Do not add grip. Any proposal to introduce variance
-  reduction earlier than planned requires a documented result and separate
-  approval.
+- Analytical actor, critic and combined update cases match the approved
+  equations.
+- Actor and critic gradients are isolated as specified.
+- `lambda=0` matches the approved one-step advantage boundary case.
+- The controlled validation problem meets its predeclared improvement gate.
+- Same-seed runs reproduce rollout, targets, updates and summaries.
 
-### 8. Diagnose Learned Speed Choice Around Curves
+### 8. Implement and Validate PPO
 
 **Status:** Pending; depends on Step 7.
 
-**Objective:** Establish empirical evidence for or against the documented
-version-0 full-throttle limitation.
+**Objective:** Add clipped, multi-epoch sample reuse without changing the shared
+data or evaluation contracts.
 
 **Work:**
 
-- Replay the selected learned policy deterministically without updating it.
-- Align throttle, steering and speed with current and preview curvature.
-- Report speed and throttle by predeclared absolute-curvature bins or another
-  approved equivalent statistic.
-- Plot or tabulate representative trajectories and action/speed traces.
-- Distinguish a policy that has not learned useful steering from a capable
-  policy that deliberately keeps accelerating through curves.
-- Record crashes and incomplete laps so survivorship does not bias the
-  conclusion.
+- Store behaviour-policy log-probabilities and values at collection time.
+- Implement the clipped surrogate objective, approved value objective and
+  entropy term.
+- Implement deterministic seeded minibatch ordering and multiple update epochs.
+- Log approximate KL, clip fraction, importance-ratio statistics, entropy,
+  actor and critic losses, explained variance, gradient norms, weight norms and
+  update magnitude.
+- Implement any approved KL stop as an explicit configuration choice.
 
 **Expected files:**
 
-- `src/utils/plotting.py`
-- `experiments/analyze_policy.py`
-- `tests/utils/test_plotting.py`
-- `tests/experiments/test_analyze_policy.py`
-- `README.md`
+- `src/agents/ppo.py`
+- `src/agents/__init__.py`
+- `experiments/train.py`
+- `tests/agents/test_ppo.py`
+- `tests/experiments/test_train.py`
 - `docs/DIARY.md`
-- the approved small Phase-2 analysis outputs
 
 **Validation gate:**
 
-- The analysis is reproducible from a saved configuration and policy checkpoint.
-- The report explicitly answers whether the learned policy reduces throttle or
-  speed as curvature increases.
-- The policy has already met Step 7's learning criterion, so the result is not an
-  artifact of an untrained controller.
-- Grip specification may begin only if the evidence confirms that version-0
-  dynamics permit unrealistic cornering behaviour relevant to the objective. If
-  it does not, stop and revise the physical hypothesis before changing dynamics.
+- Hand-built positive and negative advantage cases verify the clipped minimum.
+- A no-change policy produces unit importance ratios and zero approximate KL.
+- Minibatches cover every rollout row exactly once per epoch.
+- Old log-probabilities remain fixed across optimization epochs.
+- The controlled validation problem meets its predeclared improvement gate.
+- Same-seed short runs reproduce minibatch order and final parameters.
 
-### 9. Specify the Minimum Lateral-Grip Model
+### 9. Add Reproducible Analysis and Reporting
 
-**Status:** Pending; depends on Step 8 confirming the model limitation.
+**Status:** Pending; depends on Step 8.
 
-**Objective:** Define the smallest physical change that creates a real
-speed-versus-curvature trade-off without introducing a full dynamic tire model.
+**Objective:** Derive every table, curve and diagnostic in `EXPERIMENT.md` from
+machine-readable run artifacts.
 
 **Work:**
 
-- Add the proposed lateral-acceleration or equivalent grip equation to
-  `docs/MDP.md`.
-- State how infeasible steering behaves, how the rule is evaluated at physics
-  substeps and how it interacts with collision and speed bounds.
-- Define every new physical constant with source or derivation; do not select a
-  hidden threshold from desired reward behaviour.
-- Specify whether version-0 dynamics remain selectable for the controlled
-  comparison and how the environment version is logged.
-- Derive low-speed compatibility, straight-line and high-speed curved-motion
-  test cases before implementation.
-- Keep the reward and observation unchanged.
+- Aggregate at the training-seed level without treating repeated checkpoints or
+  tracks as independent training runs.
+- Compute final performance, learning-curve area, time and interactions to
+  convergence, censoring status and between-seed dispersion.
+- Compute paired algorithm, size and observation summaries where the design is
+  paired.
+- Plot learning curves with uncertainty, task outcomes, convergence/resource
+  trade-offs and optimization diagnostics.
+- Plot curvature-conditioned throttle, speed and steering without excluding
+  crashes or incomplete laps.
+- Make report generation deterministic and independent of file discovery order.
+
+**Expected files:**
+
+- `src/utils/analysis.py`
+- `src/utils/plotting.py`
+- `experiments/analyze_results.py`
+- `tests/utils/test_analysis.py`
+- `tests/utils/test_plotting.py`
+- `tests/experiments/test_analyze_results.py`
+- `README.md`
+- `docs/DIARY.md`
+
+**Validation gate:**
+
+- Synthetic fixtures with known aggregates, ties, failed runs and right-censored
+  convergence produce the expected summaries.
+- Paired differences match run identities rather than directory ordering.
+- Completed-only lap-time summaries always include completion counts.
+- Re-running analysis yields byte-stable data tables and semantically identical
+  plots.
+
+### 10. Select the Fixed Circuit and Calibrate Pilot Settings
+
+**Status:** Pending; depends on Step 9.
+
+**Objective:** Choose measurement settings without using measurement seeds or
+held-out outcomes.
+
+**Work:**
+
+- Generate candidate Experiment 1 circuits and select one using only the
+  predeclared geometry criteria in `EXPERIMENT.md`.
+- Save the selected circuit as versioned data and record its generator config
+  and seed.
+- Evaluate the reference policies and define the fixed convergence threshold
+  from reference and pilot evidence.
+- Calibrate algorithm-specific settings with the medium actor only, equal pilot
+  interaction allowances and pilot seed namespace.
+- Freeze budgets, cadences, controller settings, algorithm configurations and
+  the computational-cost execution environment.
+- Retain every calibration run, including failures, under pilot-only paths.
+
+**Expected files:**
+
+- `tracks/experiment_1.json`
+- `src/configs/experiments.py`
+- `EXPERIMENT.md`
+- `experiments/calibrate.py`
+- focused orchestration tests
+- `README.md`
+- `docs/DIARY.md`
+- small pilot summaries, not measurement results
+
+**Validation gate:**
+
+- Circuit selection can be reproduced without loading any policy result.
+- Every algorithm has one frozen configuration applied to all three actor
+  sizes.
+- Pilot and measurement roots are disjoint and visibly labeled.
+- The frozen convergence rule can be evaluated from logged checkpoints alone.
+- No held-out Experiment 2 track participates in this step.
+
+### 11. Diagnose Version-0 Cornering
+
+**Status:** Pending; depends on Step 10.
+
+**Objective:** Decide from a capable learned policy whether version-0 dynamics
+make unrealistic full-speed cornering relevant to the study.
+
+**Work:**
+
+- Train the designated pilot PPO configuration on version-0 physics.
+- Require the policy to pass the capability gate before interpreting its speed
+  choice.
+- Replay deterministic policies and align current/preview curvature with speed,
+  throttle and steering.
+- Report all predeclared curvature bins, crashes and incomplete trajectories.
+- Apply the quantitative grip trigger in `EXPERIMENT.md` without changing it
+  after seeing the traces.
+- Record a decision to retain version 0 or begin the conditional grip work.
+
+**Expected files:**
+
+- `experiments/diagnose_cornering.py`
+- focused analysis tests
+- `EXPERIMENT.md`
+- `docs/DIARY.md`
+- the approved compact pilot diagnosis
+
+**Validation gate:**
+
+- The analyzed policy has demonstrated useful steering/progress, so high speed
+  is not attributed to an untrained controller.
+- The report includes unsuccessful episodes and answers whether speed or
+  throttle decreases with curvature.
+- The trigger calculation is reproducible from retained artifacts.
+- The physics decision is recorded before an Experiment 1 measurement manifest
+  is generated.
+
+### 12. Specify the Conditional Lateral-Grip Model
+
+**Status:** Conditional; depends on Step 11 triggering grip work.
+
+**Objective:** Define the smallest physically motivated change that creates a
+real speed-versus-curvature constraint.
+
+**Work:**
+
+- Add the exact lateral-acceleration or equivalent constraint to `docs/MDP.md`.
+- Define infeasible-control behaviour, physics-substep ordering, collision
+  interaction and speed-bound interaction.
+- Source or derive every new constant independently of desired training reward.
+- Preserve an explicit selectable version-0 configuration.
+- Derive straight, low-speed, boundary and high-speed curved test cases.
+- Keep action, observation and reward definitions unchanged.
 
 **Expected files:**
 
 - `docs/MDP.md`
-- `PLAN.md` if implementation details need clarification
+- `EXPERIMENT.md`
 - `docs/DIARY.md`
 
 **Validation gate:**
 
-- The new model is mathematically complete and dimensionally consistent.
-- All constants and boundary cases are explicit.
-- The model predicts unchanged straight/low-speed cases and constrained
-  high-speed cornering in the specified analytical examples.
-- The specification receives confirmation before Step 10 begins.
+- The model is mathematically complete and dimensionally consistent.
+- Every constant and boundary case is explicit.
+- Analytical examples predict unchanged straight/low-speed motion and the
+  intended high-speed limitation.
+- The specification receives confirmation before implementation.
 
-### 10. Implement and Test the Grip-Limited Transition
+If Step 11 does not trigger grip work, record this step as not applicable and
+continue with version-0 physics; do not invent a dynamics change merely because
+it appeared in the roadmap.
 
-**Status:** Pending; depends on Step 9.
+### 13. Implement and Revalidate Conditional Grip
 
-**Objective:** Add only the approved grip behaviour while preserving all
-unrelated Phase-1 semantics.
+**Status:** Conditional; depends on Step 12.
+
+**Objective:** Implement only the approved constraint and freeze the physics
+version used by both experiments.
 
 **Work:**
 
-- Extend vehicle configuration and the kinematic transition with the approved
-  grip rule.
-- Preserve an explicit version-0 configuration for the before/after comparison
-  if required by the specification.
-- Surface the environment physics version and useful grip diagnostics in run
-  metadata or `info` as approved.
-- Update the MDP and README descriptions if implementation exposes a confirmed
-  clarification.
+- Extend vehicle configuration and transition kernel with the approved rule.
+- Keep version-0 replay selectable and deterministic.
+- Surface physics version and grip activation diagnostics in environment info
+  and run metadata.
+- Repeat focused analytical tests and the version-0 cornering pilot with the
+  same reward, observation and pilot protocol.
+- Confirm useful progress and a meaningful speed-versus-curvature response
+  before freezing the measurement environment.
 
 **Expected files:**
 
 - `src/configs/environment.py`
 - `src/envs/vehicle/kernel.py`
-- `src/envs/racing/environment.py` if diagnostics are exposed there
+- `src/envs/racing/environment.py`
 - `tests/configs/test_environment_config.py`
 - `tests/envs/test_dynamics.py`
+- `tests/envs/test_racing_env.py`
+- `experiments/diagnose_cornering.py`
+- `README.md`
+- `docs/DIARY.md`
+
+**Validation gate:**
+
+- Version-0 transition and replay tests still pass when version 0 is selected.
+- Straight and approved low-speed behaviour is unchanged.
+- High-speed curve cases obey the exact specified constraint.
+- Gymnasium conformance and the complete existing suite pass.
+- The repeated pilot meets the capability gate and reports the intended
+  physical effect without reward changes.
+
+### 14. Assemble and Smoke-Test Experiment 1
+
+**Status:** Pending; depends on Step 11 or, when triggered, Step 13.
+
+**Objective:** Prove that the frozen single-circuit 3-by-3 design can be launched
+and analyzed without manual intervention.
+
+**Work:**
+
+- Build the nine-cell manifest from three algorithms and three actor sizes.
+- Expand the manifest over the five paired measurement roots without launching
+  the full measurement budget.
+- Validate that critic size, environment, track, budget and evaluation protocol
+  remain invariant where required.
+- Run a reduced-budget smoke job for every unique algorithm/size cell under a
+  dedicated smoke seed.
+- Aggregate the smoke artifacts and generate every Experiment 1 table/plot with
+  explicit smoke watermarks.
+- Add commands for launching individual cells, the complete matrix and analysis.
+
+**Expected files:**
+
+- `src/configs/experiments.py`
+- `experiments/run_experiment.py`
+- `experiments/analyze_results.py`
+- `tests/experiments/test_experiment_1.py`
+- `README.md`
+- `docs/DIARY.md`
+- compact smoke artifacts only
+
+**Validation gate:**
+
+- The manifest contains exactly 45 unique measurement runs: nine cells by five
+  roots.
+- Actor size changes actor parameters but not critic architecture or unrelated
+  configuration.
+- Every smoke cell trains, evaluates, checkpoints and reloads successfully.
+- Analysis includes failed/non-converged cells instead of silently dropping
+  them.
+- No smoke artifact can be loaded as measurement data without an explicit
+  schema error.
+
+### 15. Implement LiDAR as an Interchangeable Observation
+
+**Status:** Pending; depends on Step 14.
+
+**Objective:** Add the second observation representation while preserving one
+shared dynamics and lifecycle core.
+
+**Work:**
+
+- Implement the 16-ray, 200-degree, normalized LiDAR observation specified in
+  `docs/MDP.md` and `docs/TRACK.md`.
+- Query all potentially intersecting boundary segments and return the nearest
+  valid hit or maximum range.
+- Expose `observation="frenet"|"lidar"` through an environment construction
+  boundary or Gymnasium observation wrapper.
+- Include speed and ranges in the exact specified order and dtype.
+- Keep reward, action, transition, collision, finish and progress logic shared.
+
+**Expected files:**
+
+- `src/configs/environment.py`
+- `src/envs/observations/lidar.py`
+- `src/envs/observations/__init__.py`
+- `src/envs/racing/environment.py` or a dedicated observation wrapper
+- `tests/envs/test_lidar.py`
 - `tests/envs/test_racing_env.py`
 - `README.md`
 - `docs/DIARY.md`
 
 **Validation gate:**
 
-- Existing version-0 transition tests still pass in the version-0 configuration.
-- Straight-line and approved low-speed results remain unchanged.
-- Analytical high-speed curved cases exhibit the exact specified limitation.
-- Same-seed same-version action replays remain deterministic.
-- Gymnasium conformance and the complete Phase-1 acceptance suite pass.
+- Analytical straight-wall, angled-wall, no-hit, maximum-range and nearest-hit
+  cases match geometry calculations.
+- Observation shape, ordering, normalization, dtype and declared space agree.
+- Same state and action sequence produces identical physical outcomes under
+  Frenet and LiDAR observation modes.
+- Both modes pass Gymnasium conformance and deterministic reset/replay.
 
-### 11. Repeat the Learned Comparison with Grip
+### 16. Add Deterministic Multi-Track Training and Held-Out Splits
 
-**Status:** Pending; depends on Step 10.
+**Status:** Pending; depends on Step 15.
 
-**Objective:** Isolate the behavioural effect of the physics change using the
-same learner and reward.
-
-**Work:**
-
-- Train from scratch using the approved version-0 configuration with only the
-  physics version changed to the grip-limited model.
-- Hold track, seed set, policy architecture, optimizer, reward, observation,
-  training budget and evaluation protocol fixed.
-- Report any forced deviation before running rather than after seeing results.
-- Repeat deterministic performance and curvature-conditioned behaviour
-  analysis.
-- Compare completion, crash rate, lap time, progress, throttle and speed against
-  the recorded version-0 baseline.
-
-**Expected files:**
-
-- `experiments/train_reinforce.py`
-- `experiments/evaluate_policy.py`
-- `experiments/analyze_policy.py`
-- focused tests for comparison orchestration
-- `README.md`
-- `docs/DIARY.md`
-- the approved small before/after result summaries
-
-**Validation gate:**
-
-- The comparison metadata proves that the physics configuration is the only
-  intended experimental change.
-- The grip-limited policy meets the predeclared learning criterion.
-- Evaluation establishes whether speed or throttle now decreases with relevant
-  curvature while retaining useful progress or lap completion.
-- If braking does not emerge, stop and diagnose dynamics, observation and
-  learning evidence. Do not compensate by changing the reward or adding PPO.
-
-### 12. Add and Measure a Learned Value Baseline
-
-**Status:** Pending; depends on Step 11.
-
-**Objective:** Add the first variance-reduction mechanism only after vanilla
-REINFORCE and the environment comparison are understood.
+**Objective:** Train from procedural circuit variation while protecting fixed
+validation and test circuits from leakage.
 
 **Work:**
 
-- Specify the value target, loss, optimizer relationship, update count and
-  advantage construction in `docs/LEARNING.md`.
-- Implement a value network using the shared MLP builder.
-- Preserve vanilla REINFORCE as a selectable, tested configuration.
-- Compare vanilla and baseline variants on one approved physics version with
-  paired seeds and the same training budget.
-- Report return variance and the predeclared sample-efficiency or reliability
-  measure; do not claim improvement from a single best seed.
+- Define disjoint seed namespaces for pilot, training, validation and test
+  tracks using the frozen generator configuration.
+- Select each training episode's circuit from a deterministic schedule derived
+  independently from policy and minibatch RNG.
+- Generate tracks lazily and cache prepared geometry without changing the
+  logical schedule.
+- Save enough scheduler and active-track state for exact checkpoint resume.
+- Evaluate on fixed validation/test seed lists without updating normalization.
+- Record generator config, track seed and split for every episode and evaluation.
 
 **Expected files:**
 
-- `docs/LEARNING.md`
-- `src/models/value.py`
-- `src/agents/reinforce.py`
-- `src/configs/training.py`
-- `tests/models/test_value.py`
-- `tests/agents/test_reinforce.py`
-- `experiments/train_reinforce.py`
-- `README.md`
+- `src/envs/racing/factory.py`
+- `src/configs/experiments.py`
+- `src/utils/training.py`
+- `src/utils/evaluation.py`
+- `tests/envs/test_environment_factory.py`
+- `tests/utils/test_multitrack_training.py`
+- `EXPERIMENT.md`
 - `docs/DIARY.md`
-- the approved small algorithm-comparison summaries
 
 **Validation gate:**
 
-- Hand-computed value targets, value loss and advantages match the approved
-  equations.
-- Disabling the baseline follows the already tested vanilla path.
-- The paired-seed comparison reports the approved variance and efficiency
-  criteria whether or not the baseline improves them.
-- A negative result is retained as evidence rather than hidden by advancing to
-  another algorithm.
+- Split seed sets are disjoint and reproducible.
+- Frenet/LiDAR pairs receive identical training-track schedules for a root seed.
+- Resume produces the same subsequent track sequence and training transitions.
+- Evaluation never mutates the training schedule or normalizer.
+- Every final test result identifies its track and no test track appears in a
+  training or calibration artifact.
 
-### 13. Run the Phase-2 Acceptance Pass
+### 17. Assemble and Smoke-Test Experiment 2
 
-**Status:** Pending; depends on Step 12.
+**Status:** Pending; depends on Step 16.
 
-**Objective:** Prove that the learning baseline, behavioural diagnosis and grip
-comparison are reproducible enough to support a later algorithm or network-size
-study.
+**Objective:** Prove the paired PPO Frenet-versus-LiDAR generalization study can
+run and be analyzed end to end.
+
+**Work:**
+
+- Apply the predeclared PPO actor-size selection rule to Experiment 1-shaped
+  fixture results, then verify it against actual results when they exist.
+- Build paired Frenet and LiDAR manifests with the same five roots, training
+  schedules, budget, PPO configuration and held-out circuits.
+- Run reduced-budget smoke training on multiple generated circuits in each
+  observation mode.
+- Evaluate both smoke policies on disjoint held-out tracks.
+- Generate paired task, learning, resource and generalization summaries with
+  smoke watermarks.
+
+**Expected files:**
+
+- `src/configs/experiments.py`
+- `experiments/run_experiment.py`
+- `experiments/analyze_results.py`
+- `tests/experiments/test_experiment_2.py`
+- `README.md`
+- `docs/DIARY.md`
+- compact smoke artifacts only
+
+**Validation gate:**
+
+- The measurement manifest contains exactly two observation conditions for
+  every root and no unintended configuration difference.
+- Track schedules and held-out evaluations pair correctly across observations.
+- Both smoke runs collect, update, checkpoint, resume and evaluate.
+- Analysis reports seed-level aggregates, track-level distributions and
+  train-to-test generalization gaps.
+- Test-track outcomes cannot influence network selection or normalization.
+
+### 18. Run the Phase-2 Acceptance and Freeze the Measurement Manifest
+
+**Status:** Pending; depends on Step 17.
+
+**Objective:** Demonstrate that the repository is ready for unattended,
+comparable measurement runs.
 
 **Work:**
 
 - Run dependency, formatting, linting, type, compilation, test and whitespace
   checks.
-- Run deterministic short training/replay checks suitable for routine
-  acceptance.
-- Verify the committed experiment summaries against their saved configurations.
-- Reproduce the version-0 behaviour diagnosis and grip-limited comparison using
-  the documented commands and retained artifacts.
-- Record dependency versions, hardware/software context, environment-step counts
-  and wall-clock durations.
-- Update the README and diary with commands, outcomes and remaining limitations.
+- Run deterministic same-seed training/resume/evaluation checks for all agents.
+- Execute reduced Experiment 1 and Experiment 2 matrices from a fresh result
+  directory.
+- Regenerate all tables and plots solely from the new raw artifacts.
+- Verify frozen manifests, dependency freeze, hardware/software metadata and
+  pilot/measurement separation.
+- Update README commands and diary results.
+- Mark the experiment protocol frozen with a dated revision and checksum.
 
 **Expected files:**
 
 - `experiments/phase2_acceptance.py`
 - `tests/experiments/test_phase2_acceptance.py`
+- `EXPERIMENT.md`
 - `README.md`
 - `docs/DIARY.md`
 - corrections only if acceptance exposes a defect
 
 **Validation gate:**
 
-```powershell
-.\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe -m pytest
+```bash
+./.venv/bin/python -m pip check
+./.venv/bin/python -m pytest
+./.venv/bin/python experiments/phase2_acceptance.py --seed 0
 ```
 
 - All automated and static checks pass.
 - Same-seed smoke training and evaluation reproduce on the supported machine.
-- The retained results support every Definition-of-Done claim without relying
-  on an undocumented local file.
-- The phase records both positive and negative experimental results honestly.
+- All 45 Experiment 1 run specifications and all paired Experiment 2 run
+  specifications can be enumerated before execution.
+- Required metrics and plots are produced even when fixture runs crash or never
+  converge.
+- No required decision remains only in local shell history, console output or an
+  uncommitted file.
 
-## Deferred Work
+## After Phase 2
 
-After Phase 2, create a new plan rather than extending this roadmap silently.
-Candidate later phases are:
+The next work is execution, not another implementation phase:
 
-1. A2C with GAE, followed by PPO as separate measured algorithm increments;
-2. the formal network-depth/width experiment after fixing all other choices;
-3. finite vehicle footprint and further vehicle-dynamics refinements;
-4. observation normalization or other training improvements justified by
-   recorded evidence;
-5. LiDAR observations;
-6. randomized starts and curricula; and
-7. multi-track training and held-out-track generalization.
+1. run the frozen Experiment 1 matrix;
+2. analyze and report policy-size effects and the secondary algorithm
+   comparison;
+3. apply the frozen PPO size-selection rule;
+4. run the paired Experiment 2 matrix;
+5. analyze observation and circuit-generalization effects; and
+6. write the final scientific report, retaining negative and inconclusive
+   findings.
+
+Any later addition such as recurrent LiDAR policies, randomized starts, a new
+reward, additional dynamics or another algorithm requires a new plan and must
+not be inserted into the frozen comparison retroactively.
