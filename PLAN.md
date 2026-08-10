@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build and validate every environment, learning, measurement and orchestration
+Build and validate every environment, learning, reporting and orchestration
 component needed to run the two studies specified in
 [`docs/EXPERIMENT.md`](docs/EXPERIMENT.md).
 At the end of Phase 2, the repository must be able to launch the complete
@@ -21,20 +21,21 @@ Phase 2 must:
   complete racing path runs end to end;
 - evaluate a capable policy on version-0 physics before deciding whether to add
   lateral grip;
-- add and validate the minimum grip constraint only if the recorded pilot
-  confirms unrealistic high-speed cornering;
+- add and validate the minimum grip constraint only if the pre-experiment
+  capability diagnosis confirms unrealistic high-speed cornering;
 - add LiDAR observations without duplicating the racing dynamics or lifecycle;
 - support deterministic training on procedurally generated circuits and
   evaluation on disjoint held-out circuits;
 - generate all raw records and derived summaries required by both experiments;
   and
-- smoke-test every Experiment 1 and Experiment 2 configuration before the
-  expensive measurement runs begin.
+- run reduced-budget end-to-end validation on every Experiment 1 and Experiment
+  2 configuration before the expensive reported experiment runs begin.
 
-The full multi-seed measurement runs are not Phase-2 acceptance tests. They
+The full multi-seed reported experiment runs are not Phase-2 acceptance tests. They
 begin only after this roadmap is complete and the experiment manifest has been
-frozen. Pilot, tuning and smoke-test results must use seed namespaces and result
-directories that cannot be mistaken for measurement results.
+frozen. Pre-experiment configuration and reduced-budget validation results must
+use seed namespaces and result directories that cannot be mistaken for reported
+experiment results.
 
 ## Scientific Boundary
 
@@ -44,16 +45,16 @@ The distinction is important:
 
 - **Phase-2 validation** asks whether implementations are correct,
   deterministic and connected properly.
-- **Pilots** choose or verify predeclared experimental settings without being
-  reported as final evidence.
-- **Measurement runs** estimate the effects of policy-network size, learning
-  algorithm and observation representation using the frozen protocol.
+- **Pre-experiment configuration work** chooses or verifies predeclared settings
+  without being reported as final evidence.
+- **Reported experiment runs** estimate the effects of policy-network size,
+  learning algorithm and observation representation using the frozen protocol.
 
-Pilot results may change a setting only through an explicit update to
-`docs/EXPERIMENT.md` made before measurement starts. Once the measurement manifest is
-frozen, failed or surprising runs are retained; they are not repaired by
-changing budgets, metrics, reward, tracks or hyperparameters for selected
-configurations.
+Pre-experiment results may change a setting only through an explicit update to
+`docs/EXPERIMENT.md` made before reported runs start. Once the reported-run
+manifest is frozen, failed or surprising runs are retained; they are not
+repaired by changing budgets, metrics, reward, tracks or hyperparameters for
+selected configurations.
 
 ## Authoritative Specifications
 
@@ -97,15 +98,15 @@ configuration:
    version and five paired root seeds.
 4. Algorithm-specific hyperparameters may differ because the algorithms have
    different update rules. They are calibrated only with the medium actor and
-   pilot seeds, then frozen before the size sweep.
+   dedicated pre-experiment roots, then frozen before the size sweep.
 5. Experiment 2 uses PPO and selects one actor size by the predeclared rule in
    `docs/EXPERIMENT.md`; it does not choose the most flattering network after looking
    at held-out circuits.
 6. Frenet and LiDAR runs use paired root seeds, training-track schedules,
    budgets, PPO settings and held-out circuits. Neither actor nor critic receives
    privileged observations in the LiDAR condition.
-7. Training interactions, evaluation interactions and pilot interactions are
-   counted and stored separately.
+7. Training, evaluation and pre-experiment interactions are counted and stored
+   separately.
 8. Deterministic evaluation never updates model parameters, optimizer state,
    normalization statistics or random streams used for training.
 9. A completed lap and a crash are environment outcomes, not inferred from a
@@ -117,19 +118,21 @@ configuration:
 ## Scope Boundaries
 
 Phase 2 includes the complete software and validation path for both experiments,
-including short pilots and smoke runs. It excludes:
+including short pre-experiment configuration runs and reduced-budget end-to-end
+validation runs. It excludes:
 
-- the full 45-run Experiment 1 measurement matrix;
-- the full paired Experiment 2 measurement matrix;
+- the full 45-run Experiment 1 reported-run matrix;
+- the full paired Experiment 2 reported-run matrix;
 - final hypothesis tests or scientific conclusions from those runs;
-- changing the reward after individual measurement results are observed;
+- changing the reward after individual reported results are observed;
 - recurrent policies or frame stacking for the LiDAR condition;
 - finite vehicle footprint, tire slip, aerodynamic drag, load transfer and
   steering-rate limits;
 - broad or per-network hyperparameter searches;
 - selecting tracks or checkpoints using held-out test performance;
 - comparing additional algorithms or observation types; and
-- treating pilot, tuning or smoke-test results as measurement data.
+- treating pre-experiment configuration or reduced-budget validation results as
+  reported experiment data.
 
 Randomized start states, reward scaling, entropy bonuses, gradient clipping and
 other training mechanisms are not assumed silently. If the approved learning
@@ -143,7 +146,7 @@ Phase 2 is complete only when all of the following are true:
 - `docs/LEARNING.md` contains every equation and boundary convention needed to
   implement REINFORCE, A2C+GAE and PPO for bounded, vector-valued actions.
 - The experiment document contains no unresolved choice that can alter a
-  measurement result: budgets, evaluation cadence, convergence threshold,
+  reported result: budgets, evaluation cadence, convergence threshold,
   algorithm settings, fixed circuit, seed sets, track splits and selection
   rules are frozen in a machine-readable manifest.
 - One root seed deterministically derives independent streams for parameter
@@ -171,9 +174,9 @@ Phase 2 is complete only when all of the following are true:
   behavioural validation passes without changing the reward.
 - Both Frenet and LiDAR environments pass Gymnasium conformance and deterministic
   observation tests while sharing the same dynamics and lifecycle.
-- A deterministic multi-track scheduler produces disjoint pilot, training,
-  validation and test track streams without regenerating a different circuit
-  after resume.
+- A deterministic multi-track scheduler produces disjoint development,
+  training, validation and test track streams without regenerating a different
+  circuit after resume.
 - A reduced Experiment 1 matrix executes every algorithm/actor-size cell and
   produces the expected artifacts.
 - A reduced Experiment 2 matrix trains and evaluates paired Frenet and LiDAR
@@ -181,13 +184,13 @@ Phase 2 is complete only when all of the following are true:
 - The analysis command regenerates tables and plots from raw artifacts and does
   not depend on manually copied values.
 - The final acceptance runner passes dependency, formatting, linting, type,
-  compilation, test, whitespace, deterministic replay and experiment smoke
-  checks.
+  compilation, test, whitespace, deterministic replay and reduced-budget
+  end-to-end checks.
 
 ## Decisions That Must Be Frozen
 
 The following decisions may be calibrated during Phase 2, but none may remain
-implicit when measurement starts:
+implicit when reported experiment runs start:
 
 1. The squashed or otherwise bounded Gaussian distribution, numerical epsilon,
    standard-deviation parameterization and exact log-probability.
@@ -199,9 +202,10 @@ implicit when measurement starts:
 5. Training interaction budget, evaluation cadence, checkpoint cadence and
    logging cadence.
 6. The fixed Experiment 1 track and its geometry-only selection procedure.
-7. Pilot, measurement and evaluation seed identities.
+7. Pre-experiment configuration, reported experiment and evaluation seed
+   identities.
 8. The scripted reference controller and the convergence threshold derived
-   without consulting measurement outcomes.
+   without consulting reported experiment outcomes.
 9. The exact PPO actor-size selection rule applied after Experiment 1.
 10. Training, validation and test track-pool sizes and deterministic seed
     namespaces for Experiment 2.
@@ -212,9 +216,9 @@ implicit when measurement starts:
 13. Result paths, run identifiers, schemas, retained checkpoints and trajectory
     sampling cadence.
 
-`docs/EXPERIMENT.md` distinguishes decisions already approved from decisions to be
-locked by the preparatory pilots. Changing a frozen decision requires a dated
-amendment applied uniformly to every affected measurement cell.
+`docs/EXPERIMENT.md` distinguishes decisions already approved from decisions to
+be locked by the preparatory configuration work. Changing a frozen decision
+requires a dated amendment applied uniformly to every affected reported cell.
 
 ## Execution Rules
 
@@ -229,10 +233,10 @@ step:
 6. update `docs/DIARY.md`; and
 7. commit to `main` using the project commit convention.
 
-All RNG-dependent entry points accept `--seed`. Training and pilot commands
-also record the seed-derived stream identities they actually use. A failed
-validation gate is evidence about the current layer and must be diagnosed before
-advancing to a more complex algorithm.
+All RNG-dependent entry points accept `--seed`. Training and pre-experiment
+commands also record the seed-derived stream identities they actually use. A
+failed validation gate is evidence about the current layer and must be diagnosed
+before advancing to a more complex algorithm.
 
 ## Practical Execution Steps
 
@@ -254,7 +258,7 @@ project-specific equations and an auditable decision registry.
   conventions.
 - Fill the algorithm, budget, cadence, seed, fixed-track, convergence and
   multi-track split fields marked for Phase-2 locking in `docs/EXPERIMENT.md`.
-- Define pilot-only settings separately from measurement settings.
+- Define pre-experiment settings separately from reported experiment settings.
 - Correct README guidance where it conflicts with the approved contract.
 
 **Expected files:**
@@ -268,9 +272,10 @@ project-specific equations and an auditable decision registry.
 
 - Every implemented loss and target can be derived solely from the written
   equations.
-- Every result-affecting choice has a value or an explicitly bounded pilot
-  selection procedure.
-- Measurement, pilot and smoke seed namespaces cannot overlap accidentally.
+- Every result-affecting choice has a value or an explicitly bounded
+  pre-experiment selection procedure.
+- Reported-experiment, pre-experiment and reduced-budget validation seed
+  namespaces cannot overlap accidentally.
 - The specification receives confirmation before Step 1 begins.
 
 ### 1. Add Training Configuration, Dependencies and Seed Streams
@@ -351,7 +356,8 @@ learned policy.
 
 - Synthetic episodes distinguish completion, crash and time-limit truncation.
 - Same-seed reference evaluations produce identical actions and summaries.
-- Training, evaluation and pilot counters cannot be aggregated accidentally.
+- Training, evaluation and pre-experiment counters cannot be aggregated
+  accidentally.
 - An interrupted artifact write is either complete or detected as incomplete.
 - The scripted controller makes meaningful forward progress; otherwise the
   environment/control boundary is diagnosed before learning work begins.
@@ -622,12 +628,12 @@ machine-readable run artifacts.
 - Re-running analysis yields byte-stable data tables and semantically identical
   plots.
 
-### 10. Select the Fixed Circuit and Calibrate Pilot Settings
+### 10. Select the Fixed Circuit and Configure Learning Settings
 
 **Status:** Pending; depends on Step 9.
 
-**Objective:** Choose measurement settings without using measurement seeds or
-held-out outcomes.
+**Objective:** Choose reported experiment settings without using reported roots
+or held-out outcomes.
 
 **Work:**
 
@@ -636,12 +642,13 @@ held-out outcomes.
 - Save the selected circuit as versioned data and record its generator config
   and seed.
 - Evaluate the reference policies and define the fixed convergence threshold
-  from reference and pilot evidence.
-- Calibrate algorithm-specific settings with the medium actor only, equal pilot
-  interaction allowances and pilot seed namespace.
+  from reference and pre-experiment evidence.
+- Configure algorithm-specific settings with the medium actor only, equal
+  interaction allowances and a dedicated pre-experiment seed namespace.
 - Freeze budgets, cadences, controller settings, algorithm configurations and
   the computational-cost execution environment.
-- Retain every calibration run, including failures, under pilot-only paths.
+- Retain every configuration run, including failures, under explicitly named
+  pre-experiment paths.
 
 **Expected files:**
 
@@ -652,14 +659,14 @@ held-out outcomes.
 - focused orchestration tests
 - `README.md`
 - `docs/DIARY.md`
-- small pilot summaries, not measurement results
+- small pre-experiment summaries, not reported results
 
 **Validation gate:**
 
 - Circuit selection can be reproduced without loading any policy result.
 - Every algorithm has one frozen configuration applied to all three actor
   sizes.
-- Pilot and measurement roots are disjoint and visibly labeled.
+- Pre-experiment and reported roots are disjoint and visibly labeled.
 - The frozen convergence rule can be evaluated from logged checkpoints alone.
 - No held-out Experiment 2 track participates in this step.
 
@@ -672,7 +679,7 @@ make unrealistic full-speed cornering relevant to the study.
 
 **Work:**
 
-- Train the designated pilot PPO configuration on version-0 physics.
+- Train the designated pre-experiment PPO configuration on version-0 physics.
 - Require the policy to pass the capability gate before interpreting its speed
   choice.
 - Replay deterministic policies and align current/preview curvature with speed,
@@ -688,7 +695,7 @@ make unrealistic full-speed cornering relevant to the study.
 - focused analysis tests
 - `docs/EXPERIMENT.md`
 - `docs/DIARY.md`
-- the approved compact pilot diagnosis
+- the approved compact pre-experiment diagnosis
 
 **Validation gate:**
 
@@ -697,7 +704,7 @@ make unrealistic full-speed cornering relevant to the study.
 - The report includes unsuccessful episodes and answers whether speed or
   throttle decreases with curvature.
 - The trigger calculation is reproducible from retained artifacts.
-- The physics decision is recorded before an Experiment 1 measurement manifest
+- The physics decision is recorded before an Experiment 1 reported-run manifest
   is generated.
 
 ### 12. Specify the Conditional Lateral-Grip Model
@@ -748,10 +755,10 @@ version used by both experiments.
 - Keep version-0 replay selectable and deterministic.
 - Surface physics version and grip activation diagnostics in environment info
   and run metadata.
-- Repeat focused analytical tests and the version-0 cornering pilot with the
-  same reward, observation and pilot protocol.
+- Repeat focused analytical tests and the version-0 cornering diagnosis with the
+  same reward, observation and pre-experiment protocol.
 - Confirm useful progress and a meaningful speed-versus-curvature response
-  before freezing the measurement environment.
+  before freezing the reported experiment environment.
 
 **Expected files:**
 
@@ -771,10 +778,10 @@ version used by both experiments.
 - Straight and approved low-speed behaviour is unchanged.
 - High-speed curve cases obey the exact specified constraint.
 - Gymnasium conformance and the complete existing suite pass.
-- The repeated pilot meets the capability gate and reports the intended
-  physical effect without reward changes.
+- The repeated pre-experiment diagnosis meets the capability gate and reports
+  the intended physical effect without reward changes.
 
-### 14. Assemble and Smoke-Test Experiment 1
+### 14. Assemble and Validate Experiment 1 End to End
 
 **Status:** Pending; depends on Step 11 or, when triggered, Step 13.
 
@@ -784,14 +791,14 @@ and analyzed without manual intervention.
 **Work:**
 
 - Build the nine-cell manifest from three algorithms and three actor sizes.
-- Expand the manifest over the five paired measurement roots without launching
-  the full measurement budget.
+- Expand the manifest over the five paired reported roots without launching the
+  full reported-run budget.
 - Validate that critic size, environment, track, budget and evaluation protocol
   remain invariant where required.
-- Run a reduced-budget smoke job for every unique algorithm/size cell under a
-  dedicated smoke seed.
-- Aggregate the smoke artifacts and generate every Experiment 1 table/plot with
-  explicit smoke watermarks.
+- Run a reduced-budget end-to-end validation job for every unique
+  algorithm/size cell under a dedicated validation root.
+- Aggregate the validation artifacts and generate every Experiment 1 table/plot
+  with explicit reduced-budget watermarks.
 - Add commands for launching individual cells, the complete matrix and analysis.
 
 **Expected files:**
@@ -802,19 +809,20 @@ and analyzed without manual intervention.
 - `tests/experiments/test_experiment_1.py`
 - `README.md`
 - `docs/DIARY.md`
-- compact smoke artifacts only
+- compact reduced-budget validation artifacts only
 
 **Validation gate:**
 
-- The manifest contains exactly 45 unique measurement runs: nine cells by five
+- The manifest contains exactly 45 unique reported runs: nine cells by five
   roots.
 - Actor size changes actor parameters but not critic architecture or unrelated
   configuration.
-- Every smoke cell trains, evaluates, checkpoints and reloads successfully.
+- Every reduced-budget cell trains, evaluates, checkpoints and reloads
+  successfully.
 - Analysis includes failed/non-converged cells instead of silently dropping
   them.
-- No smoke artifact can be loaded as measurement data without an explicit
-  schema error.
+- No reduced-budget validation artifact can be loaded as reported experiment
+  data without an explicit schema error.
 
 ### 15. Implement LiDAR as an Interchangeable Observation
 
@@ -863,8 +871,8 @@ validation and test circuits from leakage.
 
 **Work:**
 
-- Define disjoint seed namespaces for pilot, training, validation and test
-  tracks using the frozen generator configuration.
+- Define disjoint seed namespaces for development, training, validation and
+  test tracks using the frozen generator configuration.
 - Select each training episode's circuit from a deterministic schedule derived
   independently from policy and minibatch RNG.
 - Generate tracks lazily and cache prepared geometry without changing the
@@ -893,7 +901,7 @@ validation and test circuits from leakage.
 - Every final test result identifies its track and no test track appears in a
   training or calibration artifact.
 
-### 17. Assemble and Smoke-Test Experiment 2
+### 17. Assemble and Validate Experiment 2 End to End
 
 **Status:** Pending; depends on Step 16.
 
@@ -906,11 +914,11 @@ run and be analyzed end to end.
   fixture results, then verify it against actual results when they exist.
 - Build paired Frenet and LiDAR manifests with the same five roots, training
   schedules, budget, PPO configuration and held-out circuits.
-- Run reduced-budget smoke training on multiple generated circuits in each
-  observation mode.
-- Evaluate both smoke policies on disjoint held-out tracks.
+- Run reduced-budget end-to-end validation training on multiple generated
+  circuits in each observation mode.
+- Evaluate both validation policies on disjoint held-out tracks.
 - Generate paired task, learning, resource and generalization summaries with
-  smoke watermarks.
+  reduced-budget watermarks.
 
 **Expected files:**
 
@@ -920,24 +928,24 @@ run and be analyzed end to end.
 - `tests/experiments/test_experiment_2.py`
 - `README.md`
 - `docs/DIARY.md`
-- compact smoke artifacts only
+- compact reduced-budget validation artifacts only
 
 **Validation gate:**
 
-- The measurement manifest contains exactly two observation conditions for
+- The reported-run manifest contains exactly two observation conditions for
   every root and no unintended configuration difference.
 - Track schedules and held-out evaluations pair correctly across observations.
-- Both smoke runs collect, update, checkpoint, resume and evaluate.
+- Both reduced-budget runs collect, update, checkpoint, resume and evaluate.
 - Analysis reports seed-level aggregates, track-level distributions and
   train-to-test generalization gaps.
 - Test-track outcomes cannot influence network selection or normalization.
 
-### 18. Run the Phase-2 Acceptance and Freeze the Measurement Manifest
+### 18. Run Phase-2 Acceptance and Freeze the Reported-Run Manifest
 
 **Status:** Pending; depends on Step 17.
 
 **Objective:** Demonstrate that the repository is ready for unattended,
-comparable measurement runs.
+comparable reported experiment runs.
 
 **Work:**
 
@@ -948,7 +956,7 @@ comparable measurement runs.
   directory.
 - Regenerate all tables and plots solely from the new raw artifacts.
 - Verify frozen manifests, dependency freeze, hardware/software metadata and
-  pilot/measurement separation.
+  separation between pre-experiment and reported results.
 - Update README commands and diary results.
 - Mark the experiment protocol frozen with a dated revision and checksum.
 
@@ -970,7 +978,8 @@ comparable measurement runs.
 ```
 
 - All automated and static checks pass.
-- Same-seed smoke training and evaluation reproduce on the supported machine.
+- Same-seed reduced-budget training and evaluation reproduce on the supported
+  machine.
 - All 45 Experiment 1 run specifications and all paired Experiment 2 run
   specifications can be enumerated before execution.
 - Required metrics and plots are produced even when fixture runs crash or never

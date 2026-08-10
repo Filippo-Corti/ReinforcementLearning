@@ -494,3 +494,38 @@ advisory warnings for unbounded observation limits and direct construction.
 `docs/DIARY.md`.
 
 **Commit**: `docs: specify learning contract and freeze protocol [ai]`
+
+## 2026-08-10 — Explain and reorganize the learning protocol
+
+**Task**: Resolve the author's inline review notes on the learning and experiment
+references without discarding the scientific controls introduced in Step 0.
+
+**Result**: Rewrote `LEARNING.md` to explain why the bounded Gaussian policy is
+needed, how its transformed log-probability works, and exactly how the actor and
+critic are constructed. Replaced numeric episode masks with piecewise boolean
+cases, explained observation normalization and gradient clipping, introduced
+each algorithm in relation to the previous one, and expanded all three
+pseudocode blocks into complete collection/target/update procedures. Added a
+provenance table that distinguishes course equations, MDP timescale choices,
+original-paper configurations and project engineering safeguards.
+
+Reorganized `EXPERIMENT.md` so pre-experiment configuration is clearly separate
+from scientific evidence, Experiment 1 is presented completely before Experiment
+2, and each experiment lists its recorded data and reported outcomes directly.
+Explained seed streams with a concrete example, replaced abbreviated run-purpose
+labels with descriptive names, documented the rationale for hand-chosen
+constants, and changed the supported reported execution device to the available
+NVIDIA GeForce RTX 2060 while retaining CPU environment simulation. Aligned the
+roadmap, README and MDP discount wording with the revised contract.
+
+**Validation**: All inline TODO notes were removed after resolution. All scoped
+Markdown links resolved, display-math delimiters were paired and
+`git diff --check` passed. `python experiments/phase1_acceptance.py --seed 0`
+passed dependency, Black, Ruff, Pyright, compilation, whitespace, deterministic
+replay, rendering, Gymnasium conformance and all 86 tests. Gymnasium retained
+only its existing advisory warnings.
+
+**Files**: `docs/LEARNING.md`, `docs/EXPERIMENT.md`, `docs/MDP.md`, `PLAN.md`,
+`README.md`, `docs/DIARY.md`.
+
+**Commit**: `docs: clarify learning and experiment contracts [ai]`

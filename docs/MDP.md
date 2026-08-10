@@ -178,8 +178,8 @@ implemented.
 
 ## Discounted Horizon Parameter
 
-The provisional training value is $\gamma=0.9995$. This is chosen from the task
-timescale:
+The learning contract fixes $\gamma=0.9995$ for all three algorithms. This value
+is chosen from the task timescale:
 
 * Its effective geometric horizon is $1/(1-\gamma)=2000$ agent steps, or $80s$.
 * A reward received after a $90s$ lap is weighted by
@@ -187,7 +187,8 @@ timescale:
 * At the $5000$-step time limit, the discount weight is still approximately
   $0.082$.
 
-This remains a provisional hyperparameter. Since the underlying objective is a
-finite-horizon shortest-time problem, $\gamma=1$ is a meaningful comparison.
-The final value must be selected through an explicit, documented validation
-before the network-size experiment and then held fixed across that experiment.
+Since the underlying objective is a finite-horizon shortest-time problem,
+$\gamma=1$ would be a meaningful subject for a separate comparison. It is not a
+factor in the approved experiments: changing $\gamma$ by algorithm or actor size
+would confound the intended comparisons. Exact target and boundary semantics are
+specified in [`LEARNING.md`](LEARNING.md).

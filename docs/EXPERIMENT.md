@@ -1,850 +1,693 @@
 # Experimental Protocol
 
-## Purpose and Status
+## Purpose and status
 
-This file specifies the scientific experiments for the racing project. 
-It defines what will be compared, what will remain fixed, what will be measured and how conclusions will be drawn.
+This document specifies two reported experiments:
 
-**Protocol revision:** 2026-08-10 learning-contract baseline.
+1. the effect of actor-network size on one fixed circuit; and
+2. PPO generalization across circuits with Frenet versus LiDAR observations.
 
-Three kinds of run must remain visibly distinct:
+Each experiment is presented in full, including its conditions, random roots,
+training procedure, recorded data, outcomes and analysis. Repeated details are
+intentional: understanding one experiment should not require jumping between
+several common-protocol sections.
 
-- **pilot runs** select or validate settings using pilot-only roots;
-- **smoke runs** prove that configurations execute at deliberately small
-  budgets; and
-- **measurement runs** are the only runs used for the reported experimental
-  conclusions.
+Work performed before these experiments may select usable learning rates,
+validate the software path, choose the fixed circuit and decide whether the
+version-0 physics needs a grip constraint. Those runs are development evidence,
+not observations in either reported experiment, and their results are never
+pooled with the reported results.
 
-Pilot and smoke results are retained, but never pooled with measurement results.
-The protocol revision and frozen manifest checksum used by every measurement
-run must be stored in its metadata.
+**Protocol revision:** 2026-08-10 explanatory learning-contract revision.
 
-## Research Questions
+## Before either experiment
 
-### Experiment 1 — Policy Size on One Circuit
+This section contains configuration and validation rules that must be completed
+before the reported experiment manifests are frozen. They are guardrails for
+obtaining executable settings, not a third scientific experiment.
 
-The primary research question is:
+### Learning configuration check
 
-> How does the capacity of the policy network affect final driving performance,
-> sample efficiency, convergence reliability and computational cost when
-> learning one fixed circuit?
+The exact policy, model, target and loss definitions are in
+[`LEARNING.md`](LEARNING.md). The actor-size factor is already fixed, but the
+course equations do not determine learning rates. Short pre-experiment runs
+therefore compare only the following finite candidates with the medium
+`(64, 64)` actor:
 
-The policy-size comparison is repeated independently for three progressively
-more sophisticated policy-gradient algorithms:
+- REINFORCE actor rate:
+  $\{10^{-4},3\cdot10^{-4},10^{-3}\}$;
+- A2C actor/critic rates:
+  $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3})\}$;
+- PPO actor/critic rates:
+  $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3})\}$.
 
-1. REINFORCE;
-2. A2C with Generalized Advantage Estimation; and
-3. Proximal Policy Optimization.
+These candidates are engineering scales around Adam's $10^{-3}$ suggested
+default, reduced where the noisy policy-gradient objective benefits from
+smaller steps. They do not come from the policy-gradient theorem.
 
-The algorithm comparison is secondary. It checks whether variance reduction,
-bootstrapping and controlled sample reuse produce the expected practical gains,
-but a negative or non-monotonic result is valid evidence. “More complex” is not
-treated as a guarantee that an algorithm must win.
+Each candidate receives 250,000 interactions on each of three dedicated roots.
+This allowance is long enough to reveal immediate divergence and early progress
+without pretending to establish final performance. Every candidate consumes the
+same allowance and none stops early. Select lexicographically by:
 
-#### Hypotheses
-
-- **H1 — Capacity:** policy size affects final task performance. Increasing
-  capacity may help up to a point, but diminishing or negative returns are
-  possible.
-- **H2 — Efficiency trade-off:** larger policies require more computation per
-  update and may require a different number of environment interactions to
-  reach the same task threshold.
-- **H3 — Reliability:** policy size affects the between-seed probability of
-  learning a stable lap-completing policy.
-- **H4 — Algorithm:** A2C+GAE and PPO are expected to be more sample-efficient
-  or reliable than actor-only REINFORCE, with PPO expected to benefit from
-  bounded sample reuse. This is a secondary descriptive comparison rather than
-  the main policy-space question.
-
-### Experiment 2 — Circuit Generalization and Observation Choice
-
-The second research question is:
-
-> How well does the selected PPO policy generalize from procedurally generated
-> training circuits to unseen circuits, and how does that behaviour differ
-> between Frenet and LiDAR observations?
-
-Experiment 2 compares two observation conditions while keeping the algorithm,
-policy architecture, training-track schedule, interaction budget and held-out
-tracks paired.
-
-#### Hypotheses
-
-- **H5 — Generalization:** PPO trained on a distribution of generated circuits
-  will retain useful performance on circuit seeds not used for training or
-  calibration.
-- **H6 — Observation information:** Frenet observations are expected to learn
-  faster because they expose compact track-relative geometry and preview
-  curvature. LiDAR exposes lower-level local geometry and may therefore have a
-  larger sample-efficiency or final-performance gap.
-- **H7 — Track variation:** both observation conditions will exhibit
-  track-dependent variability; differences must therefore be reported across
-  held-out tracks as well as across training seeds.
-
-## Decisions Already Fixed
-
-The following decisions are part of the approved design:
-
-| Concern | Decision |
-|---|---|
-| Experiment 1 algorithms | REINFORCE, A2C+GAE and PPO |
-| Policy-size factor | Small `(32, 32)`, medium `(64, 64)`, large `(256, 256)` hidden layers |
-| Meaning of size | Actor/policy MLP only; report exact actor parameter count |
-| Critic capacity | One fixed architecture across all actor sizes within A2C and PPO |
-| Experiment 1 circuit | One saved procedurally generated circuit |
-| Experiment 1 observation | Frenet |
-| Measurement roots | Five paired root-seed identities per condition |
-| Budget fairness | Equal training-environment interactions within a comparison |
-| Evaluation policy | Deterministic transformed mean action |
-| Experiment 2 algorithm | PPO |
-| Experiment 2 size | Selected from Experiment 1 by the rule below |
-| Experiment 2 circuits | Procedurally generated training circuits and disjoint fixed held-out circuits |
-| Experiment 2 observations | Frenet versus 16-ray LiDAR |
-| Observation fairness | Actor and critic receive the same condition-specific observation; no privileged critic |
-| Physics order | First diagnose version 0; add grip before measurement only if the pilot trigger is met |
-| Reward | Hold fixed across policy sizes, algorithms, observations and the before/after grip pilot |
-
-The five measurement roots will have stable identities `0` through `4` within a
-dedicated measurement namespace. Pilot, smoke, track and evaluation streams use
-different namespace identifiers even if their local integer labels match.
-
-## Phase-2 Decision Registry
-
-The learning equations and fixed implementation constants are defined in
-[`LEARNING.md`](LEARNING.md). The remaining protocol fields are fixed below.
-Only the learning-rate rows marked **pilot-selected** may choose among multiple
-values, and only by the stated procedure. A change after this revision requires
-a dated amendment before measurement begins.
-
-| Concern | Decision |
-|---|---|
-| Policy and numerical contract | Tanh-squashed diagonal Gaussian, models, normalization, targets and losses in `LEARNING.md` |
-| Discount and GAE | $\gamma=0.9995$ for every agent; $\lambda=0.95$ for A2C and PPO |
-| Critic capacity | `(64, 64)` with the initialization in `LEARNING.md` |
-| REINFORCE update | 8 complete episodes; pilot-select actor learning rate from $\{10^{-4},3\cdot10^{-4},10^{-3}\}$ |
-| A2C update | 2048 transitions and one full-batch update; pilot-select actor/critic rates from $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3})\}$ |
-| PPO update | 2048 transitions, minibatches of 256, 10 epochs, clip $0.2$; pilot-select the same two actor/critic rate pairs as A2C |
-| Calibration | Medium actor, pilot roots `0..2`, 250,000 interactions per candidate and no early stopping |
-| Measurement budget | 2,000,000 training interactions per run in both experiments |
-| Smoke budget | 40,000 training interactions per cell |
-| Cadences | Deterministic evaluation every 50,000 interactions; checkpoint and retained trajectory every 250,000 interactions and at the final budget; update and episode records are never downsampled |
-| Experiment 1 convergence | First of 3 consecutive evaluations that complete the lap in at most $100\,\mathrm{s}$ |
-| Experiment 2 convergence | First of 3 consecutive validation evaluations with completion rate at least $0.75$ and median normalized progress at least $0.95$ |
-| Experiment 2 splits | 16 validation and 32 test tracks; logical identities `0..15` and `0..31` in their separate namespaces |
-| Execution | CPU, PyTorch `float32`, one environment worker, one intra-op and one inter-op thread, deterministic algorithms enabled |
-| Result root | `results/<run-kind>/<experiment>/<run-id>/` using the artifact layout below |
-| Timing | Collection, optimization, evaluation and persistence timers do not overlap; end-to-end time runs from accepted manifest to `completion.json` |
-
-### Seed namespaces
-
-Every logical identity is derived from `numpy.random.SeedSequence` entropy
-
-$$
-[20260810,\;N,\;i],
-$$
-
-where $N$ is the namespace code and $i$ is the local identity. This makes equal
-local labels in different run kinds distinct without relying on Python string
-hashes. A track identity uses the first generated `uint32` as its track-generator
-seed. Training circuit $e$ for measurement root $i$ analogously uses entropy
-`[20260810, 51, i, e]`, so its schedule is independent of episode length in
-other runs.
-
-| Namespace | Code $N$ | Local identities |
-|---|---:|---|
-| Measurement roots | 10 | `0..4` |
-| Algorithm-calibration roots | 20 | `0..2` |
-| Capability/grip pilot roots | 21 | `0..2` |
-| Smoke roots | 30 | `0` |
-| Learning-validation roots | 31 | `0..4` |
-| Experiment 1 track candidates | 40 | `0..99` |
-| Multi-track pilot | 50 | `0..7` |
-| Multi-track training schedule | 51 | unbounded episode index within each measurement root |
-| Multi-track validation | 52 | `0..15` |
-| Multi-track test | 53 | `0..31` |
-| Blocked run-order schedule | 60 | one identity per experiment |
-
-Within a training root, child stream indices are fixed as actor initialization
-`0`, critic initialization `1`, policy sampling `2`, environment reset `3`,
-training-track schedule `4`, minibatch order `5` and evaluation/reference `6`.
-Step 1 will serialize both the logical identity and generated integer state of
-every stream.
-
-### Pilot selection rules
-
-Learning-rate candidates are compared only after every candidate has consumed
-its full allowance on all three calibration roots. Select lexicographically by:
-
-1. final deterministic lap-completion count;
+1. number of final deterministic policies that complete the lap;
 2. mean final maximum normalized progress;
 3. mean final deterministic return; and
-4. the smaller actor learning rate, then smaller critic learning rate.
+4. smaller actor rate, then smaller critic rate.
 
-Non-finite losses or parameters make a learning candidate ineligible, but a
-poor valid policy remains evidence. The chosen configuration is applied to all
-three actor sizes.
+This is a pragmatic rule of thumb for avoiding a clearly unusable optimizer
+scale. It does not support claims that one candidate is scientifically superior.
+The chosen rate for an algorithm is then used for all three actor sizes. If this
+rule changes, the change must be documented before any reported experiment run.
 
-The scripted reference controller is fixed as
+### Deterministic reference controller
+
+The reference controller is a debugging aid for checking that the environment
+can be driven without learning:
 
 $$
-a_t^{\mathrm{steer}}=
+A_t^{\mathrm{steer}}=
 \operatorname{clip}(-0.15d_t-0.8\phi_{e,t}+50\bar\kappa_t,-1,1),
 $$
 
 $$
-v_t^\star=\min\left\{50,
+v_t^\star=min\left\{50,
 \sqrt{20/\max(|\bar\kappa_t|,10^{-4})}\right\},
 \qquad
-a_t^{\mathrm{throttle}}=
+A_t^{\mathrm{throttle}}=
 \operatorname{clip}((v_t^\star-v_t)/10,-1,1).
 $$
 
-It is a deterministic diagnostic, not an expert demonstrator and not a source
-of training data.
+These constants are hand-designed project values, not results from the course
+theory:
 
-### Fixed-track and grip decisions
+- `0.15` makes a one-metre lateral error contribute `0.15` steering;
+- `0.8` gives a heading error in radians a stronger corrective effect;
+- `50` makes curvature $0.01\,\mathrm{m^{-1}}$ contribute `0.5` steering;
+- $20\,\mathrm{m\,s^{-2}}$ defines a conservative curvature-dependent target
+  through $v^2|\kappa|$;
+- $50\,\mathrm{m\,s^{-1}}$ keeps the reference below the environment maximum;
+  and
+- division by `10` turns a $10\,\mathrm{m\,s^{-1}}$ speed error into saturated
+  throttle or braking.
 
-Generate the 100 Experiment 1 candidate identities with the frozen generator.
-A candidate is eligible when at least 15% of its arc-length samples have
-$|\kappa|\le0.002$ and at least 5% have $|\kappa|\ge0.01$. Among eligible
-candidates, center track length, median $|\kappa|$ and the 90th percentile of
-$|\kappa|$ on their eligible-set medians and divide each by its eligible-set
-interquartile range. Omit a component only if its interquartile range is zero;
-select the candidate with the smallest Euclidean norm of the resulting vector,
-breaking an exact tie by lower local identity. Save the selected data as
-`tracks/experiment_1.json`.
+The controller is neither an expert demonstrator nor training data. Its purpose
+is to expose a broken observation, reward or control convention before neural
+learning is blamed.
 
-The version-0 PPO diagnosis is interpretable only when at least two of the
-three capability roots meet the Experiment 1 convergence rule. Grip work is
-triggered when, over their final deterministic trajectories:
+### Fixed circuit for Experiment 1
 
-- quartile boundaries come from all arc-length samples of the fixed track;
-- the highest-curvature quartile contains at least 100 visited samples;
-- at least 5% of those samples have $v^2|\kappa|>4g$, with
-  $g=9.81\,\mathrm{m\,s^{-2}}$; and
-- relative to the lowest-curvature quartile, neither median speed falls by 10%
-  nor median throttle falls by 0.1.
+Generate 100 candidate circuits from dedicated deterministic identities. A
+candidate is eligible when:
 
-The $4g$ value is a conservative diagnostic proxy, not a claim that this point-
-car model reproduces a specific Formula 1 tire. If the capability gate fails,
-the physics decision is not made and measurement cannot begin. Once the gate
-passes, version 0 is retained if any trigger condition is false. If all are
-true, Steps 12 and 13 specify and validate the minimum grip model before its
-constants and final physics version are frozen. This conditional constant
-cannot be selected from measurement results.
+- at least 15% of its arc-length samples have
+  $|\kappa|\le0.002\,\mathrm{m^{-1}}$, representing approximately straight
+  sections with radius at least $500\,\mathrm m$; and
+- at least 5% have $|\kappa|\ge0.01\,\mathrm{m^{-1}}$, representing materially
+  curved sections with radius at most $100\,\mathrm m$.
 
-## Common Experimental Protocol
+These thresholds ensure the selected circuit contains both behaviours needed
+for the racing question. A dry run found 85 eligible candidates out of 100, so
+the rule is selective without being fragile.
 
-### Experimental Units and Pairing
+For every eligible circuit, compute track length, median $|\kappa|$ and the 90th
+percentile of $|\kappa|$. Center each feature on its eligible-set median and
+divide it by its eligible-set interquartile range. Omit a feature only if that
+range is zero. Select the circuit with the smallest Euclidean norm of the
+resulting vector, breaking an exact tie by lower logical identity. Save the
+complete circuit as `tracks/experiment_1.json`.
 
-For Experiment 1, the independent experimental unit is one complete training
-run identified by:
+No learned return, completion or lap time can influence this selection.
 
-$$
-(\text{algorithm},\ \text{actor size},\ \text{root seed}).
-$$
+### Version-0 physics decision
 
-There are $3\times3\times5=45$ measurement runs. Because the fixed-circuit
-environment and deterministic evaluation policy have no evaluation-time noise,
-repeating the same checkpoint evaluation from the same start state would return
-the same trajectory. Repeated evaluation episodes are therefore not treated as
-independent evidence. Variation is estimated across the five training roots.
+Before Experiment 1, train the selected medium PPO configuration on version-0
+physics using three dedicated roots. Cornering is interpreted only if at least
+two roots satisfy the Experiment 1 convergence definition below. If this
+capability gate fails, diagnose learning and do not begin the reported runs.
 
-For Experiment 2, the independent training unit is:
+For capable policies, derive curvature quartiles from every arc-length sample of
+the fixed circuit and retain final deterministic trajectories. Add the minimum
+grip model only if all of the following are true:
 
-$$
-(\text{observation type},\ \text{root seed}).
-$$
+- the trajectory visits at least 100 samples in the highest-curvature quartile;
+- at least 5% of those visits have $v^2|\kappa|>4g$, where
+  $g=9.81\,\mathrm{m\,s^{-2}}$;
+- median speed falls by less than 10% from the lowest- to highest-curvature
+  quartile; and
+- median throttle falls by less than `0.1` between those quartiles.
 
-Frenet and LiDAR runs are paired by root seed and receive the same logical
-training-track schedule. Held-out tracks are repeated evaluation cases nested
-within a training run. Track episodes are reported individually, but inference
-about observation choice first aggregates held-out performance within each root
-and then compares the five paired root-level summaries. This avoids pretending
-that many tracks generated by one learned policy are many independently trained
-policies.
+The $4g$ bound is a deliberately generous diagnostic proxy, not a claim that the
+point-car model reproduces Formula 1 tires. The count and percentage require the
+effect to be repeated rather than a single numerical spike. The speed and
+throttle tolerances define a visible behavioural reduction. All are explicit
+project thresholds because the current MDP contains no tire model from which to
+derive them.
 
-### Reproducible Randomness
+If the trigger is false, retain version 0. If it is true, specify the smallest
+grip constraint in `MDP.md`, keep version 0 selectable, repeat the same capability
+check and freeze the validated physics version before either experiment begins.
+The reward is unchanged throughout.
 
-One explicit root produces independent named streams for:
+### Reduced-budget end-to-end validation
+
+Before expensive runs, every unique algorithm/actor-size path and both
+observation paths execute with a separate root and a budget of 40,000
+interactions. This budget is not used to judge learning. It is large enough for
+eight maximum-length REINFORCE episodes, so even the slowest collection boundary
+can perform an update.
+
+The purpose is only to prove that training, evaluation, checkpointing, resume,
+artifact validation and analysis execute. Outputs are written under
+`results/reduced_budget_end_to_end_validation/` and cannot be loaded as reported
+experiment data.
+
+## How reproducible randomness works
+
+One integer written on a run specification is called its **root identity**. It
+must control the whole run reproducibly, but using one mutable random generator
+for everything would create accidental coupling. For example, adding an
+evaluation could consume random numbers and change every later training action.
+
+The solution is to derive independent child generators for distinct jobs:
 
 - actor initialization;
 - critic initialization;
-- policy action sampling;
+- stochastic policy actions;
 - environment reset;
-- procedural training-track selection;
-- minibatch permutation; and
-- evaluation or reference-policy sampling where applicable.
+- training-circuit schedule;
+- PPO minibatch order; and
+- evaluation or reference sampling where sampling exists.
 
-Changing evaluation cadence must not change the training trajectory. Frenet and
-LiDAR pairs in Experiment 2 share track identities and scheduling but do not
-share mutable RNG objects. Checkpoints retain all stream states required for an
-exact resume on the supported machine.
+For a concrete example, reported Experiment 1 root `0` always derives the same
+actor-initialization child and the same policy-sampling child. Evaluating that
+actor more often consumes neither child, so the training trajectory does not
+change. Root `0` used during pre-experiment configuration is different because
+it belongs to a different namespace.
 
-### Environment Interactions
+`numpy.random.SeedSequence` implements this hierarchy. The stable protocol key
+`20260810`, namespace code and local identity are data—not secret randomness:
 
-One environment interaction is one agent action passed to `RacingEnv.step`,
-regardless of the four internal physics substeps. Training, pilot, smoke and
-evaluation interactions are counted separately.
+$$
+\text{SeedSequence input}=[20260810,\text{namespace code},\text{local identity}].
+$$
 
-The training budget and convergence x-axis use training interactions, not
-updates or episodes. Episode counts are retained as a secondary description
-because crashes and lap times change episode length. Evaluation interactions do
-not count toward sample efficiency.
+| Purpose | Namespace code | Local identities |
+|---|---:|---|
+| Experiment 1 reported roots | 10 | `0..4` |
+| Experiment 2 reported roots | 11 | `0..4` |
+| Learning-rate configuration | 20 | `0..2` |
+| Capability and grip diagnosis | 21 | `0..2` |
+| Reduced-budget end-to-end validation | 30 | `0` |
+| Controlled-problem algorithm validation | 31 | `0..4` |
+| Experiment 1 circuit candidates | 40 | `0..99` |
+| Multi-circuit development checks | 50 | `0..7` |
+| Experiment 2 training-circuit schedule | 51 | unbounded episode index within each root |
+| Experiment 2 validation circuits | 52 | `0..15` |
+| Experiment 2 test circuits | 53 | `0..31` |
+| Randomized execution order | 60 | one identity per experiment |
 
-### Evaluation
+Within a run, child indices `0..6` correspond in order to the seven jobs listed
+above. A saved circuit identity uses the first generated `uint32` as the track
+generator seed. Training circuit $e$ for Experiment 2 root $i$ uses
+`[20260810, 51, i, e]`. Consequently, Frenet and LiDAR root `i` receive the same
+ordered circuit identities even when their mutable RNG objects are separate.
 
-Evaluation uses the deterministic action defined in `docs/LEARNING.md`, with no
-policy sampling. It must not:
+Every artifact stores both human-readable logical identities and generated
+integer states. Checkpoints retain all mutable generator states required for an
+exact resume on the supported hardware and software stack.
 
-- update actor, critic or optimizer state;
-- update observation-normalization statistics;
-- consume a training RNG stream; or
-- select a checkpoint using held-out test results.
+## Execution hardware and timing
 
-The primary final result is the policy at the fixed end of the training budget,
-not the best checkpoint discovered after the fact. Best-seen performance may be
-reported as a clearly marked diagnostic, never as the primary final score.
+Neural-network training and evaluation use the available NVIDIA GeForce RTX
+2060 with CUDA and PyTorch `float32`. The racing environment and its geometry
+queries execute on CPU with one environment worker. PyTorch uses one intra-op
+thread and one inter-op thread so thread scheduling is fixed. CPU-only execution
+remains valid for unit tests and reduced development checks, but it is not
+comparable reported timing data.
 
-Experiment 1 evaluates on its one canonical fixed-track start. Experiment 2
-evaluates the final policy on fixed training-reference, validation and test
-track lists. Each deterministic policy/track pair needs one episode unless a
-future protocol amendment adds evaluation-time randomness.
+All reported runs use the same physical GPU, CUDA/PyTorch build, driver, worker
+count and thread configuration. PyTorch deterministic algorithms are enabled
+with errors rather than warnings, and cuDNN benchmarking is disabled. PyTorch
+does not guarantee identical results across releases, platforms or CPU/GPU
+execution, which is why the exact stack is retained with every run. See the
+[official reproducibility guidance](https://docs.pytorch.org/docs/stable/notes/randomness.html).
 
-### Common Controls
+Timing categories do not overlap:
 
-Within each comparison, the following remain fixed unless explicitly named as a
-factor:
+- environment collection time;
+- actor/critic optimization time;
+- deterministic evaluation time;
+- checkpoint and metric-persistence time; and
+- end-to-end time from accepted manifest to `completion.json`.
 
-- environment action and reward;
-- episode limit and initial-state rule;
-- physics version;
-- track generator configuration;
-- training interaction budget;
-- evaluation cadence and deterministic action rule;
-- observation normalization method;
-- logging instrumentation;
-- machine, device, worker and thread settings; and
-- software dependency versions.
+Training-only time is collection plus optimization. End-to-end time is also
+reported so evaluation and persistence overhead remain visible. Reported runs
+execute one at a time; no other training process competes for the GPU.
 
-Run order should be blocked by root and randomized within each block using a
-recorded scheduling seed. This reduces systematic timing bias from machine load,
-thermal state or run order. No two timed measurement runs should compete for the
-same CPU or accelerator unless concurrency itself is fixed as part of the
-protocol.
+## Experiment 1 — Actor size on one circuit
 
-## Preparatory Pilots and Freezing Procedure
+### Question and hypotheses
 
-Pilots exist to make the experiment executable, not to provide extra favourable
-observations.
+> How does actor-network capacity affect final driving performance, interaction
+> efficiency, convergence reliability and computational cost on one fixed
+> circuit?
 
-### Fixed-Circuit Selection
+The actor-size comparison is repeated for REINFORCE, A2C+GAE and PPO. The
+algorithm comparison is secondary: it describes the practical effect of adding
+a critic, GAE and bounded sample reuse, but it does not assume the more elaborate
+algorithm must win.
 
-The Experiment 1 circuit is chosen before policy measurement by a geometry-only
-procedure:
+- **Capacity:** actor size can change final task performance; larger is not
+  assumed to be better.
+- **Efficiency:** actor size can change interactions and computation required to
+  reach the task threshold.
+- **Reliability:** actor size can change the fraction of roots that learn a
+  stable lap-completing policy.
+- **Algorithm:** A2C+GAE and PPO are expected to reduce variance or improve
+  sample use relative to REINFORCE, but contrary evidence remains valid.
 
-1. generate a finite, predeclared set of candidate seeds with the approved track
-   generator configuration;
-2. reject only candidates that fail the existing geometric validator;
-3. summarize length and the distribution of absolute curvature;
-4. choose a circuit with both straights and materially curved sections using
-   the thresholds in the decision registry; and
-5. save the exact JSON circuit as `tracks/experiment_1.json`.
+### Experimental units and design matrix
 
-No learned return, completion or lap time may influence circuit selection.
+One independent unit is a complete training run identified by
 
-### Algorithm Calibration
+$$
+(\text{algorithm},\text{actor size},\text{root identity}).
+$$
 
-Each algorithm may use settings appropriate to its update rule. Calibration:
-
-- uses only the medium `(64, 64)` actor;
-- uses pilot roots disjoint from measurement roots;
-- gives candidate settings the same pilot interaction allowance within an
-  algorithm;
-- evaluates against the same fixed track and pilot protocol;
-- chooses settings using a predeclared task score and stability diagnostics;
-  and
-- freezes one algorithm configuration for all three actor sizes.
-
-This prevents a separate hyperparameter search from making each network size a
-different treatment. The secondary algorithm comparison is interpreted with
-the caveat that algorithms necessarily have different update structures and may
-use different calibrated optimizer settings.
-
-### Version-0 Physics and Grip Decision
-
-Before the Experiment 1 measurement matrix, a designated PPO pilot is trained on
-version-0 physics. Cornering is interpreted only if it passes the capable-policy
-gate defined in the decision registry.
-
-The analysis uses bins derived from the fixed track's absolute curvature, not
-from whichever portions the policy happens to visit. For every bin it reports:
-
-- visitation count and fraction;
-- speed and maximum speed;
-- throttle/brake and steering;
-- crash and incomplete-episode contribution; and
-- the lateral-acceleration proxy $v^2|\kappa|$.
-
-The grip trigger must combine a documented physical limit with predeclared
-behavioural evidence. In outline, grip is triggered only when a capable policy
-repeatedly exceeds the physical cornering limit in materially curved sections
-and does not produce the predeclared reduction in throttle or speed from low- to
-high-curvature bins. The decision registry fixes the proxy bound, required count
-and reduction tolerance.
-
-If the trigger is not met, version 0 is retained and the negative decision is
-recorded. If it is met:
-
-1. specify the minimum grip model and constants in `docs/MDP.md`;
-2. implement it while keeping version 0 selectable;
-3. repeat the same pilot with the same reward and observation; and
-4. freeze the grip-limited version only after the policy remains capable and the
-   intended speed-versus-curvature constraint is observable.
-
-The full 45-run matrix is run once, on the frozen physics version. The no-grip
-pilot is not expanded into a second full matrix unless a later, separately
-approved experiment asks a scientific question about dynamics versions.
-
-## Experiment 1
-
-### Design Matrix
-
-| Algorithm | Small actor | Medium actor | Large actor |
+| Algorithm | `(32, 32)` actor | `(64, 64)` actor | `(256, 256)` actor |
 |---|---:|---:|---:|
 | REINFORCE | 5 roots | 5 roots | 5 roots |
 | A2C+GAE | 5 roots | 5 roots | 5 roots |
 | PPO | 5 roots | 5 roots | 5 roots |
 
-The hidden sizes are:
+The complete experiment has $3\times3\times5=45$ runs. Root identities `0..4`
+come from the Experiment 1 reported-results namespace and are paired across
+actor sizes and algorithms.
 
-- small: `(32, 32)`;
-- medium: `(64, 64)`; and
-- large: `(256, 256)`.
+### Fixed conditions and training
 
-Only the actor hidden sizes change across the columns. For A2C and PPO, the
-critic hidden sizes remain fixed. The input/output layers and exact actor
-parameter count depend on the Frenet observation and two-dimensional action and
-must be logged.
+Every run uses:
 
-### Fixed Conditions
+- the saved `tracks/experiment_1.json` circuit and canonical start;
+- Frenet observation $(d_t,\phi_{e,t},v_t,\bar\kappa_t)$;
+- the same action mapping, reward, episode limit and frozen physics version;
+- the bounded Gaussian policy and optimizer contract in `LEARNING.md`;
+- one fixed `(64, 64)` critic for A2C and PPO;
+- the learning rate selected before the experiment for its algorithm;
+- 2,000,000 training interactions;
+- deterministic evaluation every 50,000 training interactions; and
+- checkpoints every 250,000 interactions and at the final budget.
 
-- one saved circuit selected by the geometry-only procedure;
-- Frenet observations;
-- canonical starting state;
-- one frozen reward and physics version;
-- one common training-interaction budget;
-- one evaluation/checkpoint schedule;
-- five paired root identities;
-- one fixed critic architecture for A2C and PPO; and
-- algorithm-specific settings frozen with the medium actor before measurement.
+The 2,000,000-interaction budget is a project planning value. It provides 40
+evaluation positions and corresponds to at most 400 full-length episodes. It is
+not derived from theory; changing it requires a dated amendment based only on
+pre-experiment runtime or capability evidence and must affect every one of the
+45 run specifications.
 
-### Primary Outcomes
+One interaction is one call to `RacingEnv.step`, regardless of four internal
+physics substeps. Evaluation interactions are counted separately and never
+enter the training budget. The final policy at exactly the common budget is the
+primary result; a best-seen checkpoint is only a diagnostic.
 
-Policy-size conclusions use task outcomes in this order:
+### Deterministic evaluation and convergence
 
-1. **lap-completion reliability:** number and fraction of training roots whose
-   final deterministic policy completes the circuit;
-2. **lap time:** final deterministic lap time, always accompanied by its
-   completion denominator;
-3. **final return and normalized progress:** defined for completed, crashed and
-   truncated episodes; and
-4. **crash probability:** number and fraction of final policies ending off
-   track.
+Evaluation uses
+$A_t^{\mathrm{eval}}=\tanh(\boldsymbol\mu_{\mathbf\theta}(O_t))$ from the
+canonical start. It does not change model parameters, optimizers, observation
+statistics, training RNGs or checkpoint selection.
 
-Lap time must never be averaged after silently discarding non-completing roots.
-When few policies complete, return and progress describe failures, while the
-completion count remains the main task statement.
+Stable convergence is the first of three consecutive evaluations that complete
+the lap in at most $100$ simulated seconds. The MDP identifies $90$ seconds as
+the target lap, so the additional 10 seconds provide an explicit tolerance. A
+run that never meets the rule is right-censored at 2,000,000 interactions and
+remains in every success-rate and learning-curve summary.
 
-### Learning and Convergence Outcomes
+### Data recorded for every run
 
-- training and deterministic-evaluation learning curves against environment
-  interactions;
-- area under the evaluation learning curve over the common interaction budget;
-- first interaction count at stable convergence;
-- episodes and wall-clock time at the same convergence point;
-- convergence success fraction within budget; and
-- final-window instability or regression as a diagnostic.
+The following are the actual tracked quantities for Experiment 1.
 
-Stable convergence is the first checkpoint satisfying the applicable decision-
-registry threshold for three consecutive evaluations. Runs that never converge
-are right-censored at the common budget; they remain in success-rate and curve
-summaries.
+**Identity and reproducibility**
 
-For comparable scalar summaries, define restricted time to convergence as the
-observed convergence time for a successful run and the full budget for a
-right-censored run. Report it with the convergence-success fraction and censor
-markers; it is a lower bound on the unknown time a failed run would actually
-need. Successful-only convergence summaries may also be shown, but must state
-their denominator.
+- algorithm, actor widths and exact actor parameter count;
+- critic widths and parameter count where applicable;
+- root identity and every derived seed state;
+- complete environment, model, optimizer and evaluation configuration;
+- protocol revision, manifest checksum, git commit and dirty state;
+- Python and dependency freeze, OS, CPU, GPU, driver, CUDA and PyTorch versions;
+  and
+- start/end timestamps and run completion state.
 
-Area under the learning curve is reported as a threshold-independent sample
-efficiency measure so a fragile threshold does not carry the entire conclusion.
+**Every training and evaluation episode**
 
-### PPO Size Selection for Experiment 2
-
-The selected PPO actor is determined only from Experiment 1 measurement results:
-
-1. identify the PPO size with the highest mean final deterministic return;
-2. for every other size, compute the five paired root-level differences from
-   that best size and their standard error; admit a size when its mean deficit
-   is no greater than one standard error and its completion count is no more
-   than one root below the best completion count;
-3. choose the smallest actor by parameter count from that set; and
-4. if a required value is missing because a run failed operationally, repair
-   and rerun that same specification before selection rather than changing the
-   rule.
-
-This is a smallest-adequate-network rule. It prevents Experiment 2 from always
-inheriting the largest policy when its improvement is small relative to
-between-seed uncertainty. The selected size and calculation are recorded before
-any Experiment 2 test-track result is examined.
-
-## Experiment 2
-
-### Design Matrix
-
-| Algorithm | Selected actor | Observation | Measurement roots |
-|---|---|---|---:|
-| PPO | Experiment 1 rule | Frenet | 5 |
-| PPO | Experiment 1 rule | LiDAR | 5 |
-
-The complete matrix contains ten training runs. Each Frenet/LiDAR pair shares:
-
-- the same root identity;
-- the same logical sequence of training circuit seeds;
-- the same PPO and critic settings;
-- the same training interaction budget and evaluation cadence;
-- the same generator configuration; and
-- the same validation and test circuits.
-
-The observation input dimension changes the number of input-layer parameters.
-Hidden sizes remain identical, and exact actor/critic parameter counts are
-reported so the small unavoidable parameter-count difference is visible.
-
-### Track Splits
-
-All splits use the same frozen generator configuration but disjoint seed
-namespaces:
-
-- **pilot tracks:** used only while validating multi-track orchestration or
-  locking shared PPO settings;
-- **training tracks:** selected dynamically per episode from a deterministic
-  schedule;
-- **validation tracks:** fixed circuits used for protocol checks and learning
-  curves, never for gradient updates; and
-- **test tracks:** fixed unseen circuits used only for final reported
-  generalization.
-
-The decision registry fixes the validation and test counts and logical seed
-identities.
-The training schedule may be logically unbounded; the run records every circuit
-actually used. Procedural generation and geometry caching must not change the
-logical seed schedule.
-
-No test circuit can be used for:
-
-- PPO or normalization updates;
-- hyperparameter calibration;
-- actor-size selection;
-- convergence-threshold selection; or
-- deciding when to stop a run.
-
-### Observation Conditions
-
-The Frenet condition observes the four values specified in `docs/MDP.md`:
-
-$$
-(d_t,\phi_{e,t},v_t,\bar\kappa_t).
-$$
-
-The LiDAR condition observes speed and 16 normalized ranges:
-
-$$
-(v_t,\tilde r_t^{(1)},\ldots,\tilde r_t^{(16)}).
-$$
-
-Each condition fits its own running normalization statistics from its training
-stream and freezes them for evaluation. This is required because the raw
-features differ. The normalization algorithm and update rule remain the same.
-The LiDAR policy is feed-forward; recurrence and frame stacking are outside the
-experiment and must be acknowledged when interpreting its partial observability.
-
-### Primary Outcomes
-
-Final held-out test performance includes:
-
-- completion rate across test circuits;
-- crash rate across test circuits;
-- normalized progress for every test circuit;
-- deterministic return for every test circuit;
-- lap time with completion denominator; and
-- distribution of outcomes across track seeds.
-
-For each root, metrics are first aggregated over test circuits. Frenet-minus-
-LiDAR paired differences are then computed across the five roots. Per-track
-paired differences are also plotted to reveal circuits on which an observation
-helps or fails, but they are not substituted for independent training seeds.
-
-### Generalization Outcomes
-
-- training-reference, validation and test performance under the final policy;
-- validation-to-test and training-reference-to-test gaps;
-- completion and crash variation across circuit geometry;
-- performance stratified by track length and curvature summaries fixed before
-  test analysis; and
-- learning curves on the fixed validation set versus training interactions.
-
-Experiment 2 convergence uses the aggregate validation threshold in the
-decision registry and the same consecutive-checkpoint principle as Experiment
-1. Test circuits never participate in convergence detection.
-
-The generalization gap is always reported alongside absolute test performance.
-A small gap caused by uniformly poor driving is not evidence of successful
-generalization.
-
-## Measures and Logging
-
-The project will collect broad diagnostics, but distinguish scientific outcomes
-from debugging signals.
-
-### Run Identity and Provenance
-
-Every run stores:
-
-- experiment, run-kind and protocol revision;
-- algorithm, actor size, observation and physics version;
-- root and all derived seed identities;
-- complete environment, model, algorithm and evaluation configurations;
-- fixed track or track-split manifest;
-- git commit and dirty status;
-- dependency freeze and Python version;
-- operating system, processor, accelerator and memory description;
-- device, numerical dtype, worker count and thread settings; and
-- start/end timestamps and completion status.
-
-### Episode Metrics
-
-For every training and evaluation episode:
-
-- return;
-- episode agent steps and elapsed simulated time;
-- terminated/truncated outcome;
-- lap completion, crash and timeout indicators;
+- discounted training target totals where relevant and raw undiscounted return;
+- agent steps and elapsed simulated time;
+- explicit finish, crash or time-limit outcome;
 - final and maximum normalized progress;
 - lap time when completed;
-- track seed and split;
-- mean, standard deviation, extrema and selected quantiles of speed;
-- mean and extrema of throttle/brake and absolute steering;
-- fraction of positive throttle, braking and near-saturated steering; and
-- grip activations or lateral-acceleration proxy when applicable.
+- mean, standard deviation, extrema and selected speed quantiles;
+- mean and extrema of throttle/brake and absolute steering; and
+- fractions of positive throttle, braking and near-saturated steering.
 
-### Update Metrics
+**Every optimizer update**
 
-Shared optimization diagnostics include:
+- actor loss, learning rate, entropy proxy and learned log-standard-deviation;
+- actor gradient norm before clipping, weight norm and update norm;
+- critic loss, gradient norm, weight norm, predictions, targets, advantages and
+  explained variance for A2C and PPO;
+- importance-ratio distribution, clip fraction and approximate KL for PPO; and
+- interaction count and optimization duration.
 
-- actor loss;
-- learning rate;
-- policy entropy or the approved transformed-distribution proxy;
-- learned log-standard-deviation statistics;
-- actor gradient norm before any clipping;
-- actor weight norm;
-- actor parameter-update norm; and
-- update duration and cumulative training interactions.
+**Computational cost**
 
-A2C and PPO also record:
-
-- critic loss;
-- critic gradient and weight norms;
-- value prediction and target statistics;
-- advantage statistics; and
-- explained variance.
-
-PPO additionally records:
-
-- approximate KL divergence;
-- clip fraction;
-- importance-ratio mean, standard deviation and extrema;
-- entropy term and value term contributions; and
-- actual number of completed epochs if a KL stop is enabled.
-
-Weight norms are optimization diagnostics, not task-performance measures. A
-larger norm is neither success nor failure by itself.
-
-### Interaction and Computational Cost
-
-Every run records:
-
-- total training, pilot and evaluation interactions separately;
-- completed training episodes and optimizer updates;
-- environment collection time;
-- optimization time;
-- checkpoint/logging time;
-- deterministic evaluation time;
-- total end-to-end wall time;
-- environment interactions per collection second;
-- updates and interactions per total training second;
-- wall time and interactions at convergence;
+- collection, optimization, evaluation, persistence and end-to-end times;
+- completed episodes and optimizer updates;
+- interactions per collection second and per training second;
 - actor, critic and total parameter counts; and
-- peak process memory and peak accelerator memory when available.
+- peak process and GPU memory where available.
 
-Timing instrumentation and logging cadence remain identical across compared
-conditions. Both training-only time and end-to-end time are reported so frequent
-evaluation or checkpoint I/O is not confused with algorithm computation.
+Selected deterministic trajectories at every 250,000 interactions and at the
+final budget retain progress, pose, current/preview curvature, speed, controls,
+reward, outcome and $v^2|\kappa|$. Step-level training trajectories are not
+stored because their I/O would distort timing.
 
-### Cornering Diagnostics
+### Outcomes and analysis
 
-Selected evaluation trajectories retain step-level:
+Final actor-size conclusions use outcomes in this order:
 
-- wrapped and unwrapped progress;
-- position and heading;
-- current and preview curvature;
-- speed;
-- throttle/brake and steering;
-- reward and lifecycle outcome; and
-- grip activation or $v^2|\kappa|$.
+1. number and fraction of roots whose final policy completes the lap;
+2. completed lap time, always with its completion denominator;
+3. final return and normalized progress for every root; and
+4. number and fraction of final policies that crash.
 
-Step-level training trajectories are not retained wholesale because their I/O
-volume would alter runtime. The trajectory sampling cadence is frozen and equal
-across conditions.
+Learning and resource outcomes are:
 
-## Aggregation and Uncertainty
+- evaluation return and progress curves against training interactions;
+- normalized area under each evaluation curve;
+- interactions, episodes and wall time to stable convergence;
+- convergence fraction and censoring state;
+- final-window regression or instability;
+- collection throughput, optimization time, end-to-end time and peak memory;
+  and
+- optimization diagnostics listed above.
 
-Raw seed-level values are always shown or made available. For each cell report:
+For each algorithm/size cell, report all five root values, mean and sample
+standard deviation, median and interquartile range, minimum/maximum, and a 95%
+bootstrap interval resampling roots. Actor-size and secondary algorithm
+comparisons use paired within-root differences. With only five roots, intervals
+are descriptive; conclusions emphasize magnitudes and raw outcomes.
 
-- mean and sample standard deviation;
-- median and interquartile range;
-- minimum and maximum or individual seed points; and
-- a 95% bootstrap confidence interval using the training root as the resampling
-  unit.
+Non-converged runs receive the full budget only in the explicitly named
+restricted-time summary and remain marked as censored. Lap time is never
+averaged after silently removing failures.
 
-With five roots, confidence intervals are descriptive and may be wide. Claims
-must emphasize effect magnitude, consistency and raw outcomes rather than use a
-binary significance label as proof.
+Required Experiment 1 outputs are:
 
-Paired comparisons use within-root differences wherever roots are shared:
+- complete configuration and parameter-count table;
+- final task metrics and raw root points for all nine cells;
+- completion/crash counts;
+- evaluation learning curves and normalized curve areas;
+- convergence interactions/time with censoring;
+- performance and cost versus actor parameter count;
+- throughput, memory and end-to-end runtime;
+- optimization diagnostic panels; and
+- curvature-conditioned speed, throttle and steering for representative final
+  policies selected by a predeclared rule.
 
-- actor sizes within an algorithm;
-- algorithms at a given actor size; and
-- Frenet versus LiDAR in Experiment 2.
+### PPO actor selection for Experiment 2
 
-Confidence intervals for paired effects resample root-level differences, not
-individual episodes or checkpoints. Experiment 2 also reports the distribution
-across test tracks, but the primary observation effect is the paired difference
-between each root's track-aggregated score.
+Only Experiment 1 PPO results choose the Experiment 2 actor:
 
-Learning curves are aligned on training interactions. Curves report a central
-estimate with a seed-variation band and retain individual seed traces in a
-supplementary plot. Smoothing, if used for presentation, never changes the raw
-values used for convergence or area calculations and its window is stated.
+1. find the size with highest mean final deterministic return;
+2. compute paired root-level return deficits for every other size;
+3. admit a size whose mean deficit is no greater than one standard error and
+   whose completion count is no more than one root below the best size; and
+4. choose the admitted actor with the fewest parameters.
 
-Operational failures are distinguished from learning failures:
+An operationally corrupted run is repaired and rerun under its original
+specification. A valid poor run is never replaced. Record the calculation before
+examining any Experiment 2 test circuit.
 
-- an invalid artifact, exception or hardware interruption is repaired and the
-  same run specification is rerun;
-- a valid run that crashes, performs poorly or never converges is a scientific
-  outcome and remains in the analysis; and
-- convergence times are not averaged only over successful runs without also
-  reporting success fraction and censoring.
+### Experiment 1 limitations
 
-## Required Tables and Figures
+- Five roots give only a modest estimate of training variation.
+- One circuit makes conclusions circuit-specific.
+- Width changes at fixed two-layer depth do not cover every notion of network
+  complexity.
+- The fixed critic isolates actor width but may constrain the largest actor.
+- Algorithm differences cannot be attributed only to abstract complexity
+  because their estimators and update schedules differ.
 
-### Experiment 1
+## Experiment 2 — Circuit generalization and observation choice
 
-- configuration and actor/critic parameter-count table;
-- final task metrics for all nine cells with raw seed points;
-- completion/crash counts by algorithm and actor size;
-- evaluation return and progress learning curves against interactions;
-- interactions and wall time to convergence with censored runs marked;
-- normalized learning-curve area by actor size and algorithm;
-- final performance versus actor parameter count;
-- throughput, peak memory and end-to-end runtime versus actor size;
-- between-seed variability by cell;
-- optimization diagnostic panels for each algorithm; and
-- curvature-conditioned speed/throttle plot for representative final policies.
+### Question and hypotheses
 
-### Experiment 2
+> How well does the selected PPO actor generalize from procedurally generated
+> training circuits to unseen circuits, and how does Frenet observation compare
+> with local LiDAR sensing?
 
-- selected PPO-size calculation;
-- split manifest and track-geometry summary;
-- held-out completion, crash, progress, return and lap-time comparison;
+- **Generalization:** PPO trained over generated circuits is expected to retain
+  useful performance on unseen generator seeds.
+- **Observation information:** Frenet is expected to learn faster because it
+  directly exposes track-relative geometry and preview curvature; LiDAR may have
+  a larger efficiency or final-performance gap.
+- **Track variation:** both conditions can vary substantially across held-out
+  circuit geometry, so per-circuit outcomes accompany root-level summaries.
+
+### Experimental units and design matrix
+
+One independent training unit is
+
+$$
+(\text{observation type},\text{root identity}).
+$$
+
+| Algorithm | Actor | Observation | Roots |
+|---|---|---|---:|
+| PPO | Selected by Experiment 1 rule | Frenet | 5 |
+| PPO | Same hidden widths | LiDAR | 5 |
+
+The complete experiment contains ten training runs. Experiment 2 reported root
+identities are `0..4`. Within each root, the Frenet and LiDAR runs are paired by
+training-circuit schedule, budget, PPO settings, validation circuits and test
+circuits. Their mutable RNG objects remain separate.
+
+### Circuit splits and observations
+
+All circuits use the same frozen generator but disjoint deterministic
+namespaces:
+
+- eight development circuits used only before the reported experiment;
+- an unbounded training schedule indexed by root and episode;
+- 16 fixed validation circuits with logical identities `0..15`; and
+- 32 fixed test circuits with logical identities `0..31`.
+
+Sixteen validation circuits balance evaluation cost with varied geometry at 40
+learning-curve positions. Thirty-two test circuits provide a broader final
+distribution. These counts are explicit project resource choices, not a formal
+power calculation. Every generated integer seed and geometry summary is stored.
+
+The Frenet actor and critic receive
+
+$$
+O_t^{\mathrm{Frenet}}=(d_t,\phi_{e,t},v_t,\bar\kappa_t).
+$$
+
+The LiDAR actor and critic receive
+
+$$
+O_t^{\mathrm{LiDAR}}=(v_t,\widetilde r_t^{(1)},\ldots,
+\widetilde r_t^{(16)}).
+$$
+
+Neither critic receives privileged information. Each condition learns its own
+observation-normalization statistics from training only and freezes them during
+evaluation. LiDAR remains feed-forward without frame stacking, so its partial
+observability is part of the interpretation.
+
+### Fixed conditions and training
+
+Every run uses:
+
+- PPO and the actor widths selected before any Experiment 2 test result;
+- identical hidden widths and fixed `(64, 64)` critic widths;
+- the same PPO optimizer, GAE and clipped-loss configuration;
+- the same action mapping, reward, episode limit and frozen physics version;
+- the canonical start on every circuit;
+- the same logical sequence of training circuits for a paired root;
+- 2,000,000 training interactions;
+- deterministic validation every 50,000 interactions; and
+- checkpoints every 250,000 interactions and at the final budget.
+
+Circuits change only at episode reset. Different observation policies can have
+different episode lengths and therefore encounter different numbers of circuits
+within the common interaction budget, but episode index $e$ always maps to the
+same circuit identity for paired root $i$. Circuit exposure is recorded rather
+than silently treated as identical.
+
+Validation and test interactions do not enter the training budget. Validation
+does not update networks, optimizers, normalizers, training-circuit schedules or
+training RNGs. Test circuits cannot influence training, learning-rate choice,
+actor-size selection, convergence or checkpoint selection.
+
+### Deterministic evaluation and convergence
+
+Every validation checkpoint evaluates the deterministic policy once on each of
+the 16 validation circuits. Stable convergence is the first of three consecutive
+checkpoints with:
+
+- validation completion rate at least `0.75`; and
+- median validation normalized progress at least `0.95`.
+
+These thresholds require completion on at least 12 of 16 circuits while keeping
+typical progress near a full lap. They are project definitions, not values from
+the PPO theory. Runs that never meet them are censored at the common budget.
+
+The final policy is evaluated once on fixed training-reference circuits, all 16
+validation circuits and all 32 unseen test circuits. The test set is opened only
+after training and selection are complete.
+
+### Data recorded for every run
+
+Experiment 2 records the same identity, optimizer and computational diagnostics
+listed for Experiment 1, with the following circuit-specific fields made
+mandatory.
+
+**Every training episode**
+
+- observation condition, root identity and training episode index;
+- circuit logical identity, generated seed and split;
+- return, steps, simulated time and finish/crash/time-limit outcome;
+- final and maximum progress, lap time when completed;
+- speed and control summaries; and
+- current training interaction count.
+
+**Every validation or final evaluation circuit**
+
+- checkpoint interaction count and circuit identity;
+- circuit length, curvature quantiles and other frozen geometry summaries;
+- return, completion, crash, progress and conditional lap time;
+- observation-normalizer state checksum; and
+- selected step-level trajectory fields for geometric diagnosis.
+
+**Every PPO update and computational interval**
+
+- actor/critic losses, targets, advantages and explained variance;
+- entropy proxy, learned dispersion, approximate KL, clip fraction and
+  importance-ratio distribution;
+- gradient, weight and update norms;
+- collection/optimization/evaluation/persistence durations;
+- throughput, parameter counts and peak CPU/GPU memory; and
+- number and identities of training circuits encountered so far.
+
+### Outcomes and analysis
+
+For each root, first aggregate final test performance across its 32 test
+circuits. The primary Frenet-minus-LiDAR comparison then uses five paired
+root-level differences. Individual circuits reveal where a representation helps
+or fails but are not treated as 32 independently trained policies.
+
+Primary final outcomes are:
+
+1. completion rate across test circuits;
+2. crash rate across test circuits;
+3. normalized progress and deterministic return for every test circuit;
+4. completed lap time with its completion denominator; and
+5. the distribution of these outcomes across circuit geometry.
+
+Generalization and efficiency outcomes are:
+
+- training-reference, validation and test performance;
+- validation-to-test and training-reference-to-test gaps;
+- validation learning curves against training interactions;
+- interactions and time to the validation convergence threshold;
+- completion, crash and progress stratified by predeclared length and curvature
+  bins;
+- per-circuit paired Frenet-minus-LiDAR differences; and
+- runtime, throughput, memory and PPO optimization diagnostics.
+
+Report raw root-level values, mean/sample standard deviation, median/interquartile
+range, extrema and a 95% paired bootstrap interval resampling the five root-level
+differences. Track distributions are additional descriptive evidence. A small
+generalization gap accompanied by poor absolute performance is not successful
+generalization.
+
+Required Experiment 2 outputs are:
+
+- the recorded PPO actor-size calculation;
+- complete split manifest and circuit-geometry summary;
+- held-out completion, crash, progress, return and conditional lap-time table;
 - paired root-level Frenet-minus-LiDAR differences;
-- per-track paired performance distribution;
-- training-reference, validation and test generalization gaps;
-- validation learning curves against interactions;
-- performance stratified by predeclared track-geometry bins; and
-- computation, memory and optimization-diagnostic comparison.
+- per-circuit paired distributions and geometry-stratified plots;
+- training-reference, validation and test gaps;
+- validation learning curves and convergence censoring;
+- computation, memory and optimization diagnostics; and
+- explicit counts for every denominator.
 
-Every table and figure is generated from raw artifacts by the repository
-analysis command. Manually edited summary numbers are not authoritative.
+### Experiment 2 limitations
 
-## Artifact Layout
+- Five training roots provide modest evidence about optimizer randomness.
+- Test circuits cover only the frozen procedural generator distribution.
+- Feed-forward LiDAR is intentionally partially observable and may be
+  disadvantaged relative to a recurrent sensor policy.
+- Different episode lengths produce different total circuit exposure within an
+  equal interaction budget.
+- Input dimensions create a small unavoidable parameter-count difference even
+  with equal hidden widths.
 
-The fixed root path and each run contain:
+## Artifact and interpretation rules
+
+### Directory layout
+
+The directory names state why the run exists:
 
 ```text
 results/
-  <run-kind>/
-    <experiment>/
-      <run-id>/
-        manifest.json
-        config.json
-        metadata.json
-        episodes.jsonl
-        updates.jsonl
-        evaluations.jsonl
-        checkpoints/
-        trajectories/
-        completion.json
+  pre_experiment_configuration/
+    <purpose>/<run-id>/
+  reduced_budget_end_to_end_validation/
+    <experiment-path>/<run-id>/
+  reported_experiments/
+    experiment_1/<run-id>/
+    experiment_2/<run-id>/
 ```
 
-Aggregated tables and figures live outside individual run directories and record
-the input run IDs and checksums. Large routine checkpoints and raw result trees
-are not committed by default. Compact manifests, protocol revisions, smoke
-fixtures and final summary tables needed to audit claims may be committed when
-approved.
+Every run directory contains:
 
-## Interpretation Rules
+```text
+manifest.json
+config.json
+metadata.json
+episodes.jsonl
+updates.jsonl
+evaluations.jsonl
+checkpoints/
+trajectories/
+completion.json
+```
 
-- Network-size claims are made within each algorithm first. The policy-size
-  factor does not alter critic size.
-- Algorithm claims are secondary and acknowledge different estimators and
-  calibrated update rules.
-- Completion and crash counts accompany conditional lap-time statistics.
-- Sample efficiency uses environment interactions; computational efficiency
-  uses measured time and throughput on the fixed machine.
-- A non-converged run is not assigned the mean convergence time of successful
-  runs.
-- The Experiment 2 observation comparison is paired by training root and track
-  schedule.
-- A small generalization gap is meaningful only with adequate absolute test
-  performance.
-- PPO actor size is selected before viewing Experiment 2 test outcomes.
-- Negative results, high variance and violations of the expected algorithm
-  ordering are reported rather than tuned away.
+The schema rejects loading pre-experiment or reduced-budget results as reported
+experiment data. Aggregated tables record input run identifiers and checksums.
+Routine result trees and large checkpoints are not committed; frozen manifests,
+compact validation fixtures and final summary tables may be.
 
-## Known Limitations
+### Failure and reporting rules
 
-- Five training roots provide only a modest estimate of stochastic variability.
-- Experiment 1 uses one circuit, so its policy-size result is specific to that
-  circuit and observation representation.
-- The three actor sizes vary width while holding depth at two hidden layers;
-  conclusions concern capacity at those chosen architectures, not every notion
-  of neural-network complexity.
-- Fixed critic capacity isolates actor size but may constrain the largest actor
-  in actor-critic algorithms; critic diagnostics must be inspected.
-- The secondary algorithm comparison cannot attribute differences solely to
-  abstract “complexity,” because the estimators and update schedules differ.
-- Experiment 2 tests only circuits from the frozen procedural generator
-  distribution, not arbitrary real racing circuits.
-- Tracks are assigned at episode resets. Policies with different episode
-  lengths follow the same ordered seed schedule but can encounter different
-  numbers of circuits within the common interaction budget; circuit exposure is
-  therefore recorded and included when interpreting the observation comparison.
-- Feed-forward LiDAR is intentionally partially observable and may be
-  disadvantaged relative to a recurrent sensor policy.
-- Wall-clock results apply to the recorded machine and software environment.
-- The point-car and any minimal grip model remain simplified vehicle dynamics.
+- An exception, invalid artifact or hardware interruption is an operational
+  failure. Repair the cause and rerun the same specification.
+- A valid run that crashes, learns poorly or never converges is a scientific
+  outcome and remains in analysis.
+- The final fixed-budget policy is primary; best-seen performance is labelled as
+  diagnostic.
+- Completed-only lap-time summaries always state completion counts.
+- Convergence summaries show success fractions and censoring instead of
+  averaging only successful runs.
+- Learning curves align on training interactions, never episodes or updates.
+- Smoothing is display-only and never changes convergence or area calculations.
+- Actor-size claims are made within each algorithm before secondary algorithm
+  comparisons.
+- Experiment 2 test results cannot alter its actor, training or normalization.
+- Negative, high-variance and non-monotonic results are retained.
 
-These limitations bound the claims; they do not justify changing the frozen
-protocol after seeing measurement results.
+Every table and figure is regenerated from raw artifacts. Console output and
+manually copied summary values are not authoritative.

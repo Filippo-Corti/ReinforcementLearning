@@ -42,7 +42,8 @@ equations are fixed in [`docs/LEARNING.md`](docs/LEARNING.md).
    track, Frenet geometry, kinematic dynamics, episode lifecycle and rendering.
 2. **Phase 2 — experiment-ready learning system.** Implement deterministic
    training infrastructure, REINFORCE, A2C+GAE, PPO, conditional lateral grip,
-   LiDAR and multi-track orchestration. Smoke-test every experimental path.
+   LiDAR and multi-track orchestration. Run reduced-budget end-to-end validation
+   on every experimental path.
 3. **Experiment 1 — policy-space complexity.** Run REINFORCE, A2C+GAE and PPO
    with small, medium and large policy networks on one fixed circuit using
    Frenet observations and five paired training roots.
@@ -57,8 +58,8 @@ The version 0 kinematic model intentionally has no lateral grip limit, drag,
 finite vehicle footprint, tire slip, or steering-rate limit. Full throttle may
 therefore remain optimal in corners. A capable learned policy will first be
 diagnosed on version 0. The minimum grip constraint will be added before the
-measurement runs only if the preregistered pilot trigger is met; the reward
-remains unchanged during that decision.
+reported experiment runs only if the pre-experiment capability trigger is met;
+the reward remains unchanged during that decision.
 
 ## View a track
 
@@ -180,7 +181,7 @@ See [`docs/EXPERIMENT.md`](docs/EXPERIMENT.md) for the complete protocol.
 
 * **Keep the approved initial-state rule fixed.** The experiments use the
   canonical start. Randomized starts are a possible later study, not a training
-  shortcut for selected measurement runs.
+  shortcut for selected reported experiment runs.
 
 * **Keep version-0 dynamics until the registered diagnosis.** The current
   kinematic bicycle has no friction limit. Add only the minimum grip constraint
@@ -202,7 +203,7 @@ See [`docs/EXPERIMENT.md`](docs/EXPERIMENT.md) for the complete protocol.
 - If training is unstable -> diagnose the frozen configuration; changing the
   observation requires a new protocol amendment
 
-- If training is slow -> retain the fixed start for approved measurements; a
-  random-start curriculum is a separate variant
+- If training is slow -> retain the fixed start for the approved reported
+  experiments; a random-start curriculum is a separate variant
 
 - Infinite horizon -> The car is supposed to keep going indefinitely -> I would have to make sure that it does not crash intentionally
