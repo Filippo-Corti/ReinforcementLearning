@@ -163,3 +163,23 @@ class OnPolicyAgent(Protocol):
         Restore all owned model, optimizer and mutable generator state.
         """
         ...
+
+
+class ParameterizedOnPolicyAgent(OnPolicyAgent, Protocol):
+    """
+    Extend the engine contract with parameter counts required by run recording.
+    """
+
+    @property
+    def actor_parameter_count(self) -> int:
+        """
+        Return the number of trainable actor parameters.
+        """
+        ...
+
+    @property
+    def critic_parameter_count(self) -> int | None:
+        """
+        Return trainable critic parameters, or `None` for actor-only agents.
+        """
+        ...

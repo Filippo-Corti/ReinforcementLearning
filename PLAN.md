@@ -518,7 +518,7 @@ before introducing a critic.
 
 ### 7. Implement and Validate A2C with GAE
 
-**Status:** Pending; depends on Step 6.
+**Status:** Complete.
 
 **Objective:** Add synchronous actor-critic learning using the already tested
 policy, value model, rollout and GAE components.

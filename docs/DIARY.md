@@ -802,3 +802,43 @@ existing advisory warnings about infinite observation-space limits.
 `docs/LEARNING.md`, `README.md`, `PLAN.md`, and `docs/DIARY.md`.
 
 **Commit**: `feature: implement REINFORCE agent [ai]`
+
+## 2026-08-10 — A2C with detached GAE targets
+
+**Task**: Implement Phase-2 Step 7 by adding the synchronous actor-critic
+algorithm to the already validated model, target, engine and runner contracts.
+
+**Result**: Added `A2CAgent` with a bounded Gaussian actor, fixed-capacity
+V-function critic, separate Adam optimizers and fixed-rollout collection. Each
+update computes the approved detached TD errors, raw GAE advantages and critic
+targets; it standardizes advantages only for the mean actor loss and applies the
+half-squared critic loss to fresh value predictions. Actor and critic gradients
+are separately cleared, clipped and stepped. Checkpoints retain both models,
+optimizers, configurations, learning rates and the policy-sampling generator.
+
+Extended the shared training command and run-record writer for A2C without
+adding another environment loop. Actor and critic initialization use independent
+streams, critic counts and diagnostics are recorded, and the CLI requires the
+critic learning rate only for actor-critic algorithms. Added an explicit
+validation-only A2C gate plus independent loss reductions, gradient isolation,
+the `lambda=0` target boundary, five-seed learning, reproducibility and racing
+runner integration tests.
+
+**Review**: After delegated implementation, made the generalized runner use the
+existing `Algorithm` enum, strengthened the loss test so expectations do not
+call the private loss methods, and centralized population standardization and
+explained variance for identical use by REINFORCE, A2C and PPO. The acceptance
+gate also exposed missing parameter-count typing in the generic runner; a
+recording-specific extension of the agent protocol now declares those fields
+without burdening engine-only test agents.
+
+**Validation**: Twelve focused REINFORCE/A2C/runner tests and all 165 tests
+passed. Black, Ruff, Pyright, `pip check` and `git diff --check` passed;
+Gymnasium retained only its two existing infinite-bound advisory warnings.
+
+**Files**: `src/agents/a2c.py`, `src/agents/diagnostics.py`,
+`src/agents/reinforce.py`, `src/agents/__init__.py`, `experiments/train.py`,
+`tests/agents/test_a2c.py`, `tests/experiments/test_train.py`,
+`docs/LEARNING.md`, `PLAN.md`, and `docs/DIARY.md`.
+
+**Commit**: `feature: implement A2C with GAE [ai]`

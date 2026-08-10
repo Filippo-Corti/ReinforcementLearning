@@ -540,6 +540,15 @@ parameter is $\lambda=0.95$. This is a conventional middle point between the
 one-step case $\lambda=0$ and the higher-variance limit near $1$, and will be
 checked before the reported experiment rather than presented as a theorem.
 
+The implementation-only learning gate uses the same deterministic one-step task
+as REINFORCE: a constant observation $(1)$ with reward equal to the bounded
+throttle action. It uses `(4, 4)` actor and critic networks, $\gamma=0.9$,
+$\lambda=0.95$, validation-only actor and critic learning rates $0.02$, eight
+transitions per rollout, 40 updates, and controlled-problem seed identities
+`0..4`. Every seed must increase deterministic throttle by more than `0.2`
+relative to initialization. These settings validate the A2C implementation and
+are not candidates for either reported racing experiment.
+
 With $N$ transitions, A2C minimizes separate mean losses
 
 $$

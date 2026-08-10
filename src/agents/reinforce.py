@@ -14,7 +14,7 @@ from configs import ActorConfig, ReinforceConfig
 from models import ActorNetwork, agent_parameter_counts
 from training.buffers import OnPolicyRollout, monte_carlo_return_to_go
 
-from .diagnostics import parameter_norm, parameter_update_norm
+from .diagnostics import parameter_norm, parameter_update_norm, standardize
 from .types import (
     AgentUpdateInput,
     AgentUpdateOutput,
@@ -212,6 +212,12 @@ class ReinforceAgent:
         """
         return agent_parameter_counts(self.actor).actor
 
+    @property
+    def critic_parameter_count(self) -> None:
+        """
+        Report that actor-only REINFORCE has no critic parameters.
+        """
+
     def _trajectory_loss(
         self, episode: OnPolicyRollout, standardized_returns: Tensor
     ) -> Tensor:
@@ -226,11 +232,9 @@ class ReinforceAgent:
 
     def _standardize_returns(self, returns: tuple[Tensor, ...]) -> tuple[Tensor, ...]:
         all_returns = torch.cat(returns)
-        standardized = (all_returns - all_returns.mean()) / (
-            all_returns.std(unbiased=False) + self.config.optimizer_epsilon
-        )
+        standardized = standardize(all_returns, self.config.optimizer_epsilon)
         lengths = tuple(return_.numel() for return_ in returns)
-        return tuple(torch.split(standardized.detach(), list(lengths)))
+        return tuple(torch.split(standardized, list(lengths)))
 
     def _entropy_proxy(self, episodes: tuple[OnPolicyRollout, ...]) -> float:
         """

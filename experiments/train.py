@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
-from agents import ReinforceAgent
+from agents import A2CAgent, ParameterizedOnPolicyAgent, ReinforceAgent
 from configs import (
+    FIXED_CRITIC_CONFIG,
     LARGE_ACTOR_CONFIG,
     MEDIUM_ACTOR_CONFIG,
     SMALL_ACTOR_CONFIG,
+    A2CConfig,
     ActorConfig,
+    Algorithm,
+    CriticConfig,
     EnvironmentConfig,
     ExecutionConfig,
     ReinforceConfig,
@@ -85,6 +89,131 @@ def run_reinforce_training(
         ),
         execution=execution_config,
     )
+    return _run_training(
+        algorithm=Algorithm.REINFORCE,
+        seed=seed,
+        track_path=track_path,
+        run_path=run_path,
+        actor_config=actor_config,
+        environment_config=environment_config,
+        training_config=training_config,
+        run_category=run_category,
+        learning_rates={"actor_learning_rate": actor_learning_rate},
+        agent_factory=lambda observation_dimensions, streams: ReinforceAgent(
+            observation_dimensions=observation_dimensions,
+            actor_config=actor_config,
+            config=reinforce_config,
+            actor_learning_rate=actor_learning_rate,
+            initialization_generator=streams.get_torch_generator(
+                SeedStream.ACTOR_INITIALIZATION,
+                device=execution_config.device,
+            ),
+            sampling_generator=streams.get_torch_generator(
+                SeedStream.POLICY_ACTION_SAMPLING,
+                device=execution_config.device,
+            ),
+            device=execution_config.device,
+        ),
+    )
+
+
+def run_a2c_training(
+    *,
+    seed: int,
+    track_path: str | Path,
+    run_path: str | Path,
+    actor_config: ActorConfig,
+    actor_learning_rate: float,
+    critic_learning_rate: float,
+    training_interaction_budget: int,
+    environment_config: EnvironmentConfig | None = None,
+    a2c_config: A2CConfig | None = None,
+    critic_config: CriticConfig = FIXED_CRITIC_CONFIG,
+    evaluation_interval: int | None = None,
+    execution_config: ExecutionConfig | None = None,
+    run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
+) -> OnPolicyTrainingEngine:
+    """
+    Train A2C through the shared engine and persist its run records.
+    """
+    if training_interaction_budget <= 0:
+        raise ValueError("Training interaction budget must be positive.")
+    if actor_learning_rate <= 0 or critic_learning_rate <= 0:
+        raise ValueError("A2C learning rates must be positive.")
+    environment_config = environment_config or EnvironmentConfig()
+    a2c_config = a2c_config or A2CConfig()
+    execution_config = execution_config or ExecutionConfig()
+    configure_torch_determinism(execution_config)
+    base_training_config = TrainingConfig(actor=actor_config, critic=critic_config)
+    resolved_evaluation_interval = (
+        base_training_config.evaluation.evaluation_interval
+        if evaluation_interval is None
+        else evaluation_interval
+    )
+    training_config = replace(
+        base_training_config,
+        a2c=a2c_config,
+        training_interaction_budget=training_interaction_budget,
+        evaluation=replace(
+            base_training_config.evaluation,
+            evaluation_interval=resolved_evaluation_interval,
+        ),
+        execution=execution_config,
+    )
+    return _run_training(
+        algorithm=Algorithm.A2C,
+        seed=seed,
+        track_path=track_path,
+        run_path=run_path,
+        actor_config=actor_config,
+        environment_config=environment_config,
+        training_config=training_config,
+        run_category=run_category,
+        learning_rates={
+            "actor_learning_rate": actor_learning_rate,
+            "critic_learning_rate": critic_learning_rate,
+        },
+        agent_factory=lambda observation_dimensions, streams: A2CAgent(
+            observation_dimensions=observation_dimensions,
+            actor_config=actor_config,
+            critic_config=critic_config,
+            config=a2c_config,
+            actor_learning_rate=actor_learning_rate,
+            critic_learning_rate=critic_learning_rate,
+            actor_initialization_generator=streams.get_torch_generator(
+                SeedStream.ACTOR_INITIALIZATION,
+                device=execution_config.device,
+            ),
+            critic_initialization_generator=streams.get_torch_generator(
+                SeedStream.CRITIC_INITIALIZATION,
+                device=execution_config.device,
+            ),
+            sampling_generator=streams.get_torch_generator(
+                SeedStream.POLICY_ACTION_SAMPLING,
+                device=execution_config.device,
+            ),
+            device=execution_config.device,
+        ),
+    )
+
+
+def _run_training(
+    *,
+    algorithm: Algorithm,
+    seed: int,
+    track_path: str | Path,
+    run_path: str | Path,
+    actor_config: ActorConfig,
+    environment_config: EnvironmentConfig,
+    training_config: TrainingConfig,
+    run_category: RunCategory,
+    learning_rates: dict[str, float],
+    agent_factory: Callable[[int, RunSeedStreams], ParameterizedOnPolicyAgent],
+) -> OnPolicyTrainingEngine:
+    """
+    Train one selected on-policy agent through the common run lifecycle.
+    """
+    execution_config = training_config.execution
     streams = RunSeedStreams(_seed_namespace(run_category), seed)
     track = TrackWithGeometry.load(
         track_path,
@@ -94,10 +223,10 @@ def run_reinforce_training(
     run = RunDirectory.create(
         run_path,
         category=run_category,
-        run_id=f"reinforce-{actor_config.name}-seed-{seed}",
+        run_id=f"{algorithm.value}-{actor_config.name}-seed-{seed}",
         manifest={
-            "purpose": "reinforce_training",
-            "algorithm": "reinforce",
+            "purpose": f"{algorithm.value}_training",
+            "algorithm": algorithm.value,
             "root_seed": seed,
             "seed_namespace": streams.namespace.name,
             "track_path": str(track_path),
@@ -109,7 +238,7 @@ def run_reinforce_training(
         config={
             "training": training_config.to_dict(),
             "environment": environment_config.to_dict(),
-            "actor_learning_rate": actor_learning_rate,
+            **learning_rates,
         },
         metadata=collect_run_metadata(
             repository=Path(__file__).resolve().parents[1],
@@ -124,21 +253,7 @@ def run_reinforce_training(
     if observation_shape is None or observation_shape[0] is None:
         raise ValueError("RacingEnv must expose a fixed observation dimension.")
     observation_dimensions = observation_shape[0]
-    agent = ReinforceAgent(
-        observation_dimensions=observation_dimensions,
-        actor_config=actor_config,
-        config=reinforce_config,
-        actor_learning_rate=actor_learning_rate,
-        initialization_generator=streams.get_torch_generator(
-            SeedStream.ACTOR_INITIALIZATION,
-            device=execution_config.device,
-        ),
-        sampling_generator=streams.get_torch_generator(
-            SeedStream.POLICY_ACTION_SAMPLING,
-            device=execution_config.device,
-        ),
-        device=execution_config.device,
-    )
+    agent = agent_factory(observation_dimensions, streams)
     engine = OnPolicyTrainingEngine(
         agent,
         environment,
@@ -149,7 +264,7 @@ def run_reinforce_training(
         evaluation_environment_factory=lambda: RacingEnv(
             track, config=environment_config
         ),
-        evaluation_interval=resolved_evaluation_interval,
+        evaluation_interval=training_config.evaluation.evaluation_interval,
         environment_reset_generator=streams.get_numpy_generator(
             SeedStream.ENVIRONMENT_RESETS
         ),
@@ -173,6 +288,7 @@ def run_reinforce_training(
                 "finished_episodes": state.counters.finished_episodes,
                 "optimizer_updates": state.counters.optimizer_updates,
                 "actor_parameters": agent.actor_parameter_count,
+                "critic_parameters": agent.critic_parameter_count,
                 "timing": TimingRecord(
                     run_category=run_category,
                     scope=MetricScope.TRAINING,
@@ -194,12 +310,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     Parse the explicit algorithm settings and isolated run output location.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--algorithm", choices=("reinforce",), default="reinforce")
+    parser.add_argument(
+        "--algorithm",
+        choices=(Algorithm.REINFORCE.value, Algorithm.A2C.value),
+        default=Algorithm.REINFORCE.value,
+    )
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--track", required=True)
     parser.add_argument("--run-path", "--output", dest="run_path", required=True)
     parser.add_argument("--actor-size", choices=tuple(_ACTORS), default="medium")
     parser.add_argument("--actor-learning-rate", required=True, type=float)
+    parser.add_argument("--critic-learning-rate", type=float)
     parser.add_argument("--interaction-budget", required=True, type=int)
     parser.add_argument("--evaluation-interval", type=int)
     parser.add_argument(
@@ -220,19 +341,27 @@ def main(arguments: Sequence[str] | None = None) -> int:
     Train the selected agent and print its exact completed interaction count.
     """
     parsed = parse_arguments(arguments)
-    engine = run_reinforce_training(
-        seed=parsed.seed,
-        track_path=parsed.track,
-        run_path=parsed.run_path,
-        actor_config=_ACTORS[parsed.actor_size],
-        actor_learning_rate=parsed.actor_learning_rate,
-        training_interaction_budget=parsed.interaction_budget,
-        evaluation_interval=parsed.evaluation_interval,
-        execution_config=replace(ExecutionConfig(), device=parsed.device),
-        run_category=RunCategory(parsed.run_category),
-    )
+    common_arguments = {
+        "seed": parsed.seed,
+        "track_path": parsed.track,
+        "run_path": parsed.run_path,
+        "actor_config": _ACTORS[parsed.actor_size],
+        "actor_learning_rate": parsed.actor_learning_rate,
+        "training_interaction_budget": parsed.interaction_budget,
+        "evaluation_interval": parsed.evaluation_interval,
+        "execution_config": replace(ExecutionConfig(), device=parsed.device),
+        "run_category": RunCategory(parsed.run_category),
+    }
+    if Algorithm(parsed.algorithm) is Algorithm.REINFORCE:
+        engine = run_reinforce_training(**common_arguments)
+    else:
+        if parsed.critic_learning_rate is None:
+            raise ValueError("A2C requires --critic-learning-rate.")
+        engine = run_a2c_training(
+            **common_arguments, critic_learning_rate=parsed.critic_learning_rate
+        )
     print(
-        "REINFORCE completed "
+        f"{parsed.algorithm.upper()} completed "
         f"{engine.state().counters.training_interactions} training interactions."
     )
     return 0
@@ -240,7 +369,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
 def _write_engine_records(run: RunDirectory, engine: OnPolicyTrainingEngine) -> None:
     """
-    Persist shared episode/evaluation records and REINFORCE diagnostics.
+    Persist shared episode/evaluation records and algorithm diagnostics.
     """
     for record in engine.episode_records:
         run.append("episodes", record)
@@ -255,11 +384,13 @@ def _write_engine_records(run: RunDirectory, engine: OnPolicyTrainingEngine) -> 
                 update_index=update.update_index,
                 training_interactions=update.training_interactions,
                 actor_loss=float(_diagnostic(diagnostics, "actor_loss")),
-                critic_loss=None,
+                critic_loss=_optional_diagnostic(diagnostics, "critic_loss"),
                 actor_gradient_norm=float(
                     _diagnostic(diagnostics, "actor_gradient_norm")
                 ),
-                critic_gradient_norm=None,
+                critic_gradient_norm=_optional_diagnostic(
+                    diagnostics, "critic_gradient_norm"
+                ),
                 optimization_duration=update.optimization_duration,
                 actor_learning_rate=float(
                     _diagnostic(diagnostics, "actor_learning_rate")
@@ -271,6 +402,18 @@ def _write_engine_records(run: RunDirectory, engine: OnPolicyTrainingEngine) -> 
                 ),
                 actor_weight_norm=float(_diagnostic(diagnostics, "actor_weight_norm")),
                 actor_update_norm=float(_diagnostic(diagnostics, "actor_update_norm")),
+                critic_learning_rate=_optional_diagnostic(
+                    diagnostics, "critic_learning_rate"
+                ),
+                critic_weight_norm=_optional_diagnostic(
+                    diagnostics, "critic_weight_norm"
+                ),
+                critic_update_norm=_optional_diagnostic(
+                    diagnostics, "critic_update_norm"
+                ),
+                explained_variance=_optional_diagnostic(
+                    diagnostics, "explained_variance"
+                ),
                 diagnostics={
                     key: value
                     for key, value in diagnostics.items()
@@ -280,6 +423,12 @@ def _write_engine_records(run: RunDirectory, engine: OnPolicyTrainingEngine) -> 
                         "actor_gradient_norm",
                         "actor_weight_norm",
                         "actor_update_norm",
+                        "critic_loss",
+                        "critic_gradient_norm",
+                        "critic_learning_rate",
+                        "critic_weight_norm",
+                        "critic_update_norm",
+                        "explained_variance",
                         "actor_learning_rate",
                         "entropy_proxy",
                         "log_standard_deviation_0",
@@ -322,12 +471,21 @@ def _seed_namespace(category: RunCategory) -> SeedNamespace:
 
 def _diagnostic(diagnostics: dict[str, float | int | None], key: str) -> float | int:
     """
-    Return one required REINFORCE diagnostic with an explicit absent-value error.
+    Return one required shared diagnostic with an explicit absent-value error.
     """
     value = diagnostics.get(key)
     if value is None:
-        raise ValueError(f"REINFORCE update lacks required diagnostic: {key}.")
+        raise ValueError(f"Update lacks required diagnostic: {key}.")
     return value
+
+
+def _optional_diagnostic(
+    diagnostics: dict[str, float | int | None], key: str
+) -> float | int | None:
+    """
+    Return one algorithm-specific diagnostic when the active agent records it.
+    """
+    return diagnostics.get(key)
 
 
 def _first_seed(streams: RunSeedStreams, stream: SeedStream) -> int:

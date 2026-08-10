@@ -30,3 +30,21 @@ def parameter_update_norm(
         component = (parameter.detach() - prior).square().sum().cpu()
         squared_norm += component
     return float(torch.sqrt(squared_norm).item())
+
+
+def standardize(values: Tensor, epsilon: float) -> Tensor:
+    """
+    Return detached population-standardized values with a numerical safeguard.
+    """
+    return ((values - values.mean()) / (values.std(unbiased=False) + epsilon)).detach()
+
+
+def explained_variance(value_targets: Tensor, predictions: Tensor) -> float:
+    """
+    Return one minus residual population variance divided by target variance.
+    """
+    target_variance = value_targets.var(unbiased=False)
+    if target_variance.item() == 0.0:
+        return 0.0
+    residual_variance = (value_targets - predictions.detach()).var(unbiased=False)
+    return float((1.0 - residual_variance / target_variance).item())
