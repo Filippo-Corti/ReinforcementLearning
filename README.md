@@ -166,6 +166,22 @@ by training root, procedural track schedule and held-out circuits. Evaluation is
 deterministic and does not update normalization or consume training randomness.
 See [`docs/EXPERIMENT.md`](docs/EXPERIMENT.md) for the complete protocol.
 
+## Train REINFORCE
+
+The shared training entry point currently exposes the actor-only REINFORCE
+learner. Its learning rate is intentionally required: it must come from the
+documented pre-experiment calibration procedure rather than an implicit script
+default. For a saved circuit, run:
+
+```bash
+python experiments/train.py --algorithm reinforce --seed 0 --track tracks/experiment_1.json --run-path results/reduced_budget_end_to_end_validation/reinforce/seed_0 --actor-size medium --actor-learning-rate 0.0003 --interaction-budget 2000000
+```
+
+The run directory records complete training episodes, REINFORCE updates,
+deterministic evaluations when enabled, and a final checkpoint. A partial final
+eight-episode batch remains counted in the interaction budget but is not used
+for an optimizer update, as required by the Monte Carlo target.
+
 ## Final suggestions
 
 * **Track/Frenet math is where the bugs will live.** The point-to-centerline

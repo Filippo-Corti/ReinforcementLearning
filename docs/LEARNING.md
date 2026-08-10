@@ -418,6 +418,14 @@ several independently generated trajectories. The choice of eight is a project
 trade-off: fewer episodes update more frequently but noisily, while more delay
 every update and require more memory.
 
+The implementation-only learning gate uses a deterministic one-step task with
+constant observation $(1)$ and reward equal to the bounded throttle action.
+It uses a `(4, 4)` actor, $\gamma=0.9$, validation-only learning rate $0.02$,
+eight episodes per update, 40 updates and controlled-problem seed identities
+`0..4`. Every seed must increase its deterministic throttle by more than `0.2`
+relative to initialization. These settings validate the implementation; they
+are not candidates for either reported racing experiment.
+
 For complete trajectory $i$, compute return-to-go backward:
 
 $$

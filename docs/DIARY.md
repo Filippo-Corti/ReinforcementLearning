@@ -764,3 +764,41 @@ tests, `docs/LEARNING.md`, `docs/EXPERIMENT.md`, `README.md`, `PLAN.md`, and
 `docs/DIARY.md`.
 
 **Commit**: `refactor: resolve phase 2 review notes [ai]`
+
+## 2026-08-10 — Actor-only REINFORCE learner
+
+**Task**: Implement Phase-2 Step 6 with the exact complete-episode estimator,
+controlled-task evidence and the first algorithm path through the shared runner.
+
+**Result**: Added an actor-only `ReinforceAgent` that collects eight complete
+episodes, computes Monte Carlo return-to-go, standardizes returns over the full
+batch, averages trajectory-sum losses, recomputes corrected bounded-policy log
+probabilities and applies the documented Adam update with global gradient-norm
+clipping. Its checkpoint state owns the actor, optimizer and policy-sampling
+generator. Diagnostics record loss, return and dispersion statistics, pre-clip
+gradient norm, parameter norm and update magnitude.
+
+Added the shared `experiments/train.py` entry point with explicit learning rate,
+actor size, seed, device, interaction budget and run category. It uses the
+configured evaluation and checkpoint boundaries, leaves partial Monte Carlo
+batches unoptimized, records the actual deterministic execution policy, and
+writes episode, update, evaluation, checkpoint and completion records. Added a
+predeclared one-step positive-throttle problem and analytical, directional,
+five-seed improvement, reproducibility and runner tests.
+
+**Review**: After delegated implementation, made the serialized execution
+device and evaluation cadence match runtime behaviour, configured PyTorch
+determinism at runner startup, added intermediate checkpoint boundaries without
+premature batch finalization, corrected persistence timing and extracted shared
+parameter diagnostics for later actor-critic agents.
+
+**Validation**: Six focused tests and all 159 tests passed. Black, Ruff, Pyright,
+`pip check` and `git diff --check` passed; Gymnasium retained only its two
+existing advisory warnings about infinite observation-space limits.
+
+**Files**: `src/agents/reinforce.py`, `src/agents/diagnostics.py`,
+`src/agents/__init__.py`, `experiments/train.py`, `tests/agents/`,
+`tests/fixtures/envs/continuous_control.py`, `tests/experiments/test_train.py`,
+`docs/LEARNING.md`, `README.md`, `PLAN.md`, and `docs/DIARY.md`.
+
+**Commit**: `feature: implement REINFORCE agent [ai]`

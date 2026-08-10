@@ -482,7 +482,7 @@ checkpointing and accounting boundary.
 
 ### 6. Implement and Validate REINFORCE
 
-**Status:** Pending; depends on Step 5.
+**Status:** Complete.
 
 **Objective:** Establish the simplest project-owned policy-gradient learner
 before introducing a critic.
