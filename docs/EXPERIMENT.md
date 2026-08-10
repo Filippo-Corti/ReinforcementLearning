@@ -2,15 +2,8 @@
 
 ## Purpose and Status
 
-This file specifies the scientific experiments for the racing project. It plays
-the same role for empirical work that [`docs/MDP.md`](docs/MDP.md) plays for the
-environment: it defines what will be compared, what will remain fixed, what will
-be measured and how conclusions will be drawn.
-
-The implementation roadmap is [`PLAN.md`](PLAN.md). Phase 2 builds and validates
-the complete experiment system. Full measurement runs begin only after Phase 2
-acceptance freezes the remaining values in this protocol and writes the
-machine-readable manifests.
+This file specifies the scientific experiments for the racing project. 
+It defines what will be compared, what will remain fixed, what will be measured and how conclusions will be drawn.
 
 Three kinds of run must remain visibly distinct:
 
@@ -46,24 +39,7 @@ bootstrapping and controlled sample reuse produce the expected practical gains,
 but a negative or non-monotonic result is valid evidence. “More complex” is not
 treated as a guarantee that an algorithm must win.
 
-### Experiment 2 — Circuit Generalization and Observation Choice
-
-The second research question is:
-
-> How well does the selected PPO policy generalize from procedurally generated
-> training circuits to unseen circuits, and how does that behaviour differ
-> between Frenet and LiDAR observations?
-
-Experiment 2 compares two observation conditions while keeping the algorithm,
-policy architecture, training-track schedule, interaction budget and held-out
-tracks paired.
-
-## Hypotheses
-
-The experiments will report effect sizes and uncertainty whether or not these
-hypotheses are supported.
-
-### Experiment 1
+#### Hypotheses
 
 - **H1 — Capacity:** policy size affects final task performance. Increasing
   capacity may help up to a point, but diminishing or negative returns are
@@ -78,7 +54,19 @@ hypotheses are supported.
   bounded sample reuse. This is a secondary descriptive comparison rather than
   the main policy-space question.
 
-### Experiment 2
+### Experiment 2 — Circuit Generalization and Observation Choice
+
+The second research question is:
+
+> How well does the selected PPO policy generalize from procedurally generated
+> training circuits to unseen circuits, and how does that behaviour differ
+> between Frenet and LiDAR observations?
+
+Experiment 2 compares two observation conditions while keeping the algorithm,
+policy architecture, training-track schedule, interaction budget and held-out
+tracks paired.
+
+#### Hypotheses
 
 - **H5 — Generalization:** PPO trained on a distribution of generated circuits
   will retain useful performance on circuit seeds not used for training or
