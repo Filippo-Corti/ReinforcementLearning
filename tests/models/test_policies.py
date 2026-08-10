@@ -5,11 +5,11 @@ from math import exp, log
 import torch
 
 from configs import LARGE_ACTOR_CONFIG, MEDIUM_ACTOR_CONFIG, SMALL_ACTOR_CONFIG
-from models import GaussianPolicy, agent_parameter_counts
+from models import ActorNetwork, agent_parameter_counts
 
 
-def _actor(config=SMALL_ACTOR_CONFIG, seed: int = 10) -> GaussianPolicy:
-    return GaussianPolicy(
+def _actor(config=SMALL_ACTOR_CONFIG, seed: int = 10) -> ActorNetwork:
+    return ActorNetwork(
         observation_dimensions=4,
         config=config,
         initialization_generator=torch.Generator().manual_seed(seed),
@@ -31,47 +31,50 @@ def test_sample_and_recomputed_probability_support_single_and_batched_inputs() -
     batch = actor.sample(torch.zeros(3, 4), torch.Generator().manual_seed(11))
 
     assert single.action.shape == (2,)
-    assert single.latent.shape == (2,)
+    assert single.pre_squash_action.shape == (2,)
     assert single.log_probability.shape == ()
     assert batch.action.shape == (3, 2)
-    assert batch.latent.shape == (3, 2)
+    assert batch.pre_squash_action.shape == (3, 2)
     assert batch.log_probability.shape == (3,)
     assert torch.all(single.action > -1.0)
     assert torch.all(single.action < 1.0)
     assert torch.all(batch.action > -1.0)
     assert torch.all(batch.action < 1.0)
     assert not single.action.requires_grad
-    assert not single.latent.requires_grad
+    assert not single.pre_squash_action.requires_grad
     assert not single.log_probability.requires_grad
     assert torch.allclose(
-        actor.log_probability(torch.zeros(4), single.latent), single.log_probability
+        actor.log_probability(torch.zeros(4), single.pre_squash_action),
+        single.log_probability,
     )
 
 
 def test_log_probability_matches_independent_squashed_gaussian_calculation() -> None:
     actor = _actor()
     observations = torch.tensor([[0.3, -0.7, 1.2, 0.1], [-0.2, 0.4, 0.0, 1.1]])
-    latent = torch.tensor([[0.2, -0.5], [0.7, 0.1]])
+    pre_squash_actions = torch.tensor([[0.2, -0.5], [0.7, 0.1]])
 
-    mean = actor.mean(observations)
-    standard_deviation = actor.standard_deviation()
+    mean = actor.policy.mean(observations)
+    standard_deviation = actor.policy.standard_deviation
     gaussian = -0.5 * (
-        ((latent - mean) / standard_deviation).square()
+        ((pre_squash_actions - mean) / standard_deviation).square()
         + 2.0 * torch.log(standard_deviation)
         + log(2.0 * torch.pi)
     )
-    jacobian = torch.log(1.0 - torch.tanh(latent).square())
+    jacobian = torch.log(1.0 - torch.tanh(pre_squash_actions).square())
     expected = (gaussian - jacobian).sum(dim=-1)
 
-    assert torch.allclose(actor.log_probability(observations, latent), expected)
+    assert torch.allclose(
+        actor.log_probability(observations, pre_squash_actions), expected
+    )
 
 
 def test_log_probability_reaches_mean_and_dispersion_parameters() -> None:
     actor = _actor()
     observations = torch.randn(5, 4)
-    latent = torch.randn(5, 2)
+    pre_squash_actions = torch.randn(5, 2)
 
-    loss = -actor.log_probability(observations, latent).mean()
+    loss = -actor.log_probability(observations, pre_squash_actions).mean()
     loss.backward()
 
     assert all(
@@ -80,15 +83,15 @@ def test_log_probability_reaches_mean_and_dispersion_parameters() -> None:
     )
 
 
-def test_dispersion_bounds_and_extreme_latent_log_probability_remain_finite() -> None:
+def test_dispersion_bounds_and_extreme_actions_have_finite_log_probability() -> None:
     actor = _actor()
     with torch.no_grad():
-        actor.log_standard_deviation.fill_(100.0)
-    assert torch.allclose(actor.standard_deviation(), torch.full((2,), exp(2.0)))
+        actor.policy.log_standard_deviation.fill_(100.0)
+    assert torch.allclose(actor.policy.standard_deviation, torch.full((2,), exp(2.0)))
 
     with torch.no_grad():
-        actor.log_standard_deviation.fill_(-100.0)
-    assert torch.allclose(actor.standard_deviation(), torch.full((2,), exp(-5.0)))
+        actor.policy.log_standard_deviation.fill_(-100.0)
+    assert torch.allclose(actor.policy.standard_deviation, torch.full((2,), exp(-5.0)))
 
     log_probability = actor.log_probability(
         torch.zeros(2, 4),
@@ -125,7 +128,7 @@ def test_initialization_and_sampling_are_seed_reproducible_without_global_rng_ch
     observations = torch.ones(2, 4)
     first_sample = first.sample(observations, torch.Generator().manual_seed(14))
     second_sample = second.sample(observations, torch.Generator().manual_seed(14))
-    assert torch.equal(first_sample.latent, second_sample.latent)
+    assert torch.equal(first_sample.pre_squash_action, second_sample.pre_squash_action)
     assert torch.equal(first_sample.action, second_sample.action)
 
 

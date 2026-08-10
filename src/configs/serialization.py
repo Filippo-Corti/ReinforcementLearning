@@ -9,7 +9,11 @@ from typing import Any
 
 class SerializableConfig:
     """
-    Mixin that gives immutable configuration dataclasses stable serialization.
+    Give immutable configuration dataclasses stable plain-data serialization.
+
+    Runs save this representation in their configuration snapshot, making every
+    result-affecting choice readable as JSON and directly comparable across runs.
+    Enum values and tuples are converted to their JSON-compatible equivalents.
     """
 
     def to_dict(self) -> dict[str, Any]:

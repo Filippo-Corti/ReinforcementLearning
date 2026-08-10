@@ -3,38 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import numpy as np
 import torch
 
 from agents.types import OnPolicyAgent
 from envs.racing import RacingEnv
-
-from .metrics import (
+from recording.records import (
+    DeterministicEvaluation,
     EpisodeOutcome,
     EpisodeRecord,
     EvaluationRecord,
+    LoggedTransition,
     MetricScope,
     RunCategory,
     ScalarSummary,
-    TransitionRecord,
 )
-from .normalizers import RunningObservationNormalizer
 
-
-@dataclass(frozen=True, slots=True)
-class DeterministicEvaluation:
-    """
-    Store one isolated deterministic evaluation and its semantic trajectory.
-
-    Fields:
-        * record: Checkpoint-linked evaluation summary.
-        * transitions: Ordered action-level trajectory retained for diagnosis.
-    """
-
-    record: EvaluationRecord
-    transitions: tuple[TransitionRecord, ...]
+from .normalization import RunningObservationNormalizer
 
 
 def evaluate_deterministic(
@@ -93,13 +79,13 @@ def _evaluate_episode(
     speeds: list[float] = []
     throttles: list[float] = []
     steering: list[float] = []
-    transitions: list[TransitionRecord] = []
+    transitions: list[LoggedTransition] = []
     resolved_circuit_identity = circuit_identity or str(
         environment.track.generation.seed
     )
 
     for step_index in range(environment.config.simulation.max_episode_steps):
-        normalized = normalizer.normalize_frozen(observation)
+        normalized = normalizer.normalize(observation)
         with torch.inference_mode():
             action = agent.deterministic_action(normalized)
         next_observation, reward, terminated, truncated, info = environment.step(action)
@@ -109,7 +95,7 @@ def _evaluate_episode(
         throttles.append(float(action[0]))
         steering.append(abs(float(action[1])))
         transitions.append(
-            TransitionRecord(
+            LoggedTransition(
                 run_category=run_category,
                 scope=MetricScope.EVALUATION,
                 episode_index=evaluation_index,

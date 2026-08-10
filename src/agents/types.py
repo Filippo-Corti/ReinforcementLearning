@@ -10,7 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from utils.buffers import OnPolicyRollout
+    from training.buffers import OnPolicyRollout
 
 
 class CollectionMode(StrEnum):
@@ -28,13 +28,13 @@ class CollectedAction:
     Store the detached action quantities required by all project algorithms.
 
     Fields:
-        * latent_action: Pre-squash action sampled by the collection policy.
+        * pre_squash_action: Gaussian action sampled before applying `tanh`.
         * action: Bounded action sent to the environment.
         * behaviour_log_probability: Collection-policy action log probability.
         * current_value: Critic estimate at the acted-on observation, if present.
     """
 
-    latent_action: NDArray[np.float32]
+    pre_squash_action: NDArray[np.float32]
     action: NDArray[np.float32]
     behaviour_log_probability: float | None
     current_value: float | None
@@ -43,17 +43,21 @@ class CollectedAction:
         """
         Preserve private float32 action copies with one shared vector shape.
         """
-        latent = np.asarray(self.latent_action, dtype=np.float32)
+        pre_squash_action = np.asarray(self.pre_squash_action, dtype=np.float32)
         action = np.asarray(self.action, dtype=np.float32)
-        if latent.ndim != 1 or action.ndim != 1 or latent.shape != action.shape:
+        if (
+            pre_squash_action.ndim != 1
+            or action.ndim != 1
+            or pre_squash_action.shape != action.shape
+        ):
             raise ValueError(
-                "Collected latent and bounded actions must be matching vectors."
+                "Collected pre-squash and bounded actions must be matching vectors."
             )
-        latent = latent.copy()
+        pre_squash_action = pre_squash_action.copy()
         action = action.copy()
-        latent.setflags(write=False)
+        pre_squash_action.setflags(write=False)
         action.setflags(write=False)
-        object.__setattr__(self, "latent_action", latent)
+        object.__setattr__(self, "pre_squash_action", pre_squash_action)
         object.__setattr__(self, "action", action)
         if self.behaviour_log_probability is not None:
             object.__setattr__(

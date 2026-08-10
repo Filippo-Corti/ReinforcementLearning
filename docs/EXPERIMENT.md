@@ -158,7 +158,7 @@ eight maximum-length REINFORCE episodes, so even the slowest collection boundary
 can perform an update.
 
 The purpose is only to prove that training, evaluation, checkpointing, resume,
-artifact validation and analysis execute. Outputs are written under
+run-output validation and analysis execute. Outputs are written under
 `results/reduced_budget_end_to_end_validation/` and cannot be loaded as reported
 experiment data.
 
@@ -177,7 +177,8 @@ The solution is to derive independent child generators for distinct jobs:
 - environment reset;
 - training-circuit schedule;
 - PPO minibatch order; and
-- evaluation or reference sampling where sampling exists.
+- evaluation or baseline-policy sampling where sampling exists; and
+- track generation.
 
 For a concrete example, reported Experiment 1 root `0` always derives the same
 actor-initialization child and the same policy-sampling child. Evaluating that
@@ -186,34 +187,35 @@ change. Root `0` used during pre-experiment configuration is different because
 it belongs to a different namespace.
 
 `numpy.random.SeedSequence` implements this hierarchy. The stable protocol key
-`20260810`, namespace code and local identity are data—not secret randomness:
+`0`, namespace code and local identity are data—not secret randomness:
 
 $$
-\text{SeedSequence input}=[20260810,\text{namespace code},\text{local identity}].
+\text{SeedSequence input}=[0,\text{namespace code},\text{local identity}].
 $$
 
 | Purpose | Namespace code | Local identities |
 |---|---:|---|
-| Experiment 1 reported roots | 10 | `0..4` |
-| Experiment 2 reported roots | 11 | `0..4` |
-| Learning-rate configuration | 20 | `0..2` |
-| Capability and grip diagnosis | 21 | `0..2` |
-| Reduced-budget end-to-end validation | 30 | `0` |
-| Controlled-problem algorithm validation | 31 | `0..4` |
-| Experiment 1 circuit candidates | 40 | `0..99` |
-| Multi-circuit development checks | 50 | `0..7` |
-| Experiment 2 training-circuit schedule | 51 | unbounded episode index within each root |
-| Experiment 2 validation circuits | 52 | `0..15` |
-| Experiment 2 test circuits | 53 | `0..31` |
-| Randomized execution order | 60 | one identity per experiment |
+| Experiment 1 reported roots | 1 | `0..4` |
+| Experiment 2 reported roots | 2 | `0..4` |
+| Learning-rate configuration | 3 | `0..2` |
+| Capability and grip diagnosis | 4 | `0..2` |
+| Reduced-budget end-to-end validation | 5 | `0` |
+| Controlled-problem algorithm validation | 6 | `0..4` |
+| Experiment 1 circuit candidates | 7 | `0..99` |
+| Multi-circuit development checks | 8 | `0..7` |
+| Experiment 2 training circuits | 9 | one identity per saved training circuit |
+| Experiment 2 validation circuits | 10 | `0..15` |
+| Experiment 2 test circuits | 11 | `0..31` |
+| Randomized execution order | 12 | one identity per experiment |
 
-Within a run, child indices `0..6` correspond in order to the seven jobs listed
-above. A saved circuit identity uses the first generated `uint32` as the track
-generator seed. Training circuit $e$ for Experiment 2 root $i$ uses
-`[20260810, 51, i, e]`. Consequently, Frenet and LiDAR root `i` receive the same
-ordered circuit identities even when their mutable RNG objects are separate.
+Within a run, stream indices `1..8` correspond in order to the eight jobs listed
+above. A saved circuit uses its split namespace and circuit index as its local
+identity, and the first `uint32` from stream `8` as the track-generator seed.
+Frenet and LiDAR root $i$ use identically seeded stream `5` to select the same
+ordered training-circuit identities even though their generator objects are
+separate.
 
-Every artifact stores both human-readable logical identities and generated
+Every recorded run stores both human-readable logical identities and generated
 integer states. Checkpoints retain all mutable generator states required for an
 exact resume on the supported hardware and software stack.
 
@@ -635,7 +637,7 @@ Required Experiment 2 outputs are:
 - Input dimensions create a small unavoidable parameter-count difference even
   with equal hidden widths.
 
-## Artifact and interpretation rules
+## Run-output and interpretation rules
 
 ### Directory layout
 
@@ -673,7 +675,7 @@ compact validation fixtures and final summary tables may be.
 
 ### Failure and reporting rules
 
-- An exception, invalid artifact or hardware interruption is an operational
+- An exception, invalid run output or hardware interruption is an operational
   failure. Repair the cause and rerun the same specification.
 - A valid run that crashes, learns poorly or never converges is a scientific
   outcome and remains in analysis.
@@ -689,5 +691,5 @@ compact validation fixtures and final summary tables may be.
 - Experiment 2 test results cannot alter its actor, training or normalization.
 - Negative, high-variance and non-monotonic results are retained.
 
-Every table and figure is regenerated from raw artifacts. Console output and
+Every table and figure is regenerated from raw run records. Console output and
 manually copied summary values are not authoritative.

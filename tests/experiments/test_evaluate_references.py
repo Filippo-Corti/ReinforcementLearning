@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from experiments.evaluate_references import parse_arguments, run_reference_evaluation
-from utils.artifacts import RunDirectory
-from utils.metrics import RunCategory
+from recording import RunCategory, RunDirectory
 
 
-def test_reference_evaluator_writes_complete_separated_deterministic_artifacts(
+def test_reference_evaluator_writes_complete_separated_deterministic_outputs(
     tmp_path,
 ) -> None:
     first = run_reference_evaluation(

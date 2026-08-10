@@ -3,18 +3,18 @@ from __future__ import annotations
 import torch
 
 from configs import FIXED_CRITIC_CONFIG, SMALL_ACTOR_CONFIG
-from models import GaussianPolicy, ValueNetwork, agent_parameter_counts
+from models import ActorNetwork, CriticNetwork, agent_parameter_counts
 
 
-def _critic(seed: int = 21) -> ValueNetwork:
-    return ValueNetwork(
+def _critic(seed: int = 21) -> CriticNetwork:
+    return CriticNetwork(
         observation_dimensions=4,
         config=FIXED_CRITIC_CONFIG,
         initialization_generator=torch.Generator().manual_seed(seed),
     )
 
 
-def test_value_network_returns_scalar_for_single_and_batched_observations() -> None:
+def test_critic_returns_scalar_for_single_and_batched_observations() -> None:
     critic = _critic()
 
     assert critic(torch.zeros(4)).shape == ()
@@ -25,7 +25,7 @@ def test_critic_count_matches_documented_formula_and_gradients_reach_every_param
     None
 ):
     critic = _critic()
-    actor = GaussianPolicy(
+    actor = ActorNetwork(
         observation_dimensions=4,
         config=SMALL_ACTOR_CONFIG,
         initialization_generator=torch.Generator().manual_seed(22),

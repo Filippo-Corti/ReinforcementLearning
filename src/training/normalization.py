@@ -4,47 +4,28 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
 from hashlib import sha256
 
 import numpy as np
 from numpy.typing import NDArray
 
 from configs.training import ObservationNormalizationConfig
-
-
-@dataclass(frozen=True, slots=True)
-class ObservationNormalizerState:
-    """
-    Store the complete deterministic state of an observation normalizer.
-
-    Fields:
-        * count: Number of observations incorporated in the running sums.
-        * sums: Componentwise sum of incorporated observations.
-        * squared_sums: Componentwise sum of squared incorporated observations.
-    """
-
-    count: int
-    sums: tuple[float, ...]
-    squared_sums: tuple[float, ...]
-
-    def to_dict(self) -> dict[str, int | list[float]]:
-        """
-        Return a JSON-compatible state with a stable field order.
-        """
-        return {
-            "count": self.count,
-            "sums": list(self.sums),
-            "squared_sums": list(self.squared_sums),
-        }
+from recording.records import ObservationNormalizerState
+from utils.vectors import to_vector
 
 
 class RunningObservationNormalizer:
-    """
+    r"""
     Normalize vector observations with componentwise float64 running sums.
 
-    Training observations update the count, sum, and squared sum before they
-    are normalized. Frozen normalization is used for bootstrap and evaluation
+    For component $j$ after $n$ training observations, the running mean and
+    variance are
+    $\mu_j = (\sum_i x_{i,j}) / n$ and
+    $\sigma_j^2 = (\sum_i x_{i,j}^2) / n - \mu_j^2$.
+    Each input becomes
+    $\hat{x}_j = (x_j - \mu_j) / \sqrt{\sigma_j^2 + \epsilon}$ and is clipped
+    to the configured interval. Training observations update both sums before
+    this formula is applied. Frozen normalization is used for bootstrap and evaluation
     observations, so those operations cannot change later training inputs.
 
     Fields:
@@ -75,19 +56,19 @@ class RunningObservationNormalizer:
         """
         Update from one current training observation, then normalize it.
         """
-        vector = self._vector(observation)
+        vector = self._to_vector(observation)
         self.count += 1
         self.sums += vector
         self.squared_sums += np.square(vector)
-        return self._normalize(vector)
+        return self._apply_normalization(vector)
 
-    def normalize_frozen(
+    def normalize(
         self, observation: Sequence[float] | NDArray[np.floating]
     ) -> NDArray[np.float32]:
         """
         Normalize one bootstrap or evaluation observation without updating state.
         """
-        return self._normalize(self._vector(observation))
+        return self._apply_normalization(self._to_vector(observation))
 
     def state(self) -> ObservationNormalizerState:
         """
@@ -119,14 +100,18 @@ class RunningObservationNormalizer:
 
     def checksum(self) -> str:
         """
-        Return a stable checksum for checkpoint and evaluation provenance.
+        Return a stable SHA-256 identity for the current normalization state.
+
+        Evaluation records save this short identity so two results can be
+        checked to have used exactly the same count and running sums without
+        duplicating the full arrays in every record.
         """
         encoded_state = json.dumps(
             self.state().to_dict(), separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
         return sha256(encoded_state).hexdigest()
 
-    def _normalize(self, vector: NDArray[np.float64]) -> NDArray[np.float32]:
+    def _apply_normalization(self, vector: NDArray[np.float64]) -> NDArray[np.float32]:
         if self.count == 0:
             mean = np.zeros(self.observation_dimensions, dtype=np.float64)
             variance = np.zeros(self.observation_dimensions, dtype=np.float64)
@@ -140,13 +125,12 @@ class RunningObservationNormalizer:
             self.config.normalized_value_limit,
         ).astype(np.float32)
 
-    def _vector(
+    def _to_vector(
         self, observation: Sequence[float] | NDArray[np.floating]
     ) -> NDArray[np.float64]:
-        vector = np.asarray(observation, dtype=np.float64)
-        if vector.shape != (self.observation_dimensions,):
-            raise ValueError(
-                "Expected observation shape "
-                f"({self.observation_dimensions},), received {vector.shape}."
-            )
-        return vector
+        return to_vector(
+            observation,
+            name="observation",
+            dimensions=self.observation_dimensions,
+            dtype="float64",
+        )

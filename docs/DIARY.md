@@ -724,3 +724,43 @@ advisory warnings.
 `src/envs/racing/__init__.py`, focused tests, `PLAN.md`, `docs/DIARY.md`.
 
 **Commit**: `feature: add shared on-policy training engine [ai]`
+
+## 2026-08-10 — Resolve the Phase-2 code-review TODOs
+
+**Task**: Apply every inline review request left after inspecting the Phase-2
+configuration, model, recording, target and training-engine code.
+
+**Result**: Simplified the configuration hierarchy by inlining one-field
+collection and schedule objects, removing the learning-rate pair/calibration
+wrappers, moving algorithm settings to `configs/algorithms.py`, and using enums
+for algorithms and observation representations. Replaced the public seed and
+integer-seed helpers with two generator operations in `utils/random.py`; the
+protocol now uses sequential namespace identifiers and eight named streams,
+including ordinary track generation. Reorganized run schemas and persistence
+under `recording`, and collection, normalization, evaluation, checkpointing and
+the engine under `training`; retained `utils` only for random and vector helpers.
+Renamed artifact terminology to concrete run outputs and records.
+
+Introduced the abstract `Policy` mapping alongside explicit scripted and random
+policies. Split the learned role into an `ActorNetwork` that owns a documented
+`GaussianPolicy`, replaced ambiguous latent names with `pre_squash_action`, made
+the state-independent standard deviation a property, and documented the full
+Gaussian sampling and corrected log-probability mathematics. Renamed the value
+model and module to `CriticNetwork`/`critic.py`. Distinguished raw
+`LoggedTransition` records from checkpointed `TrainingTransition` update data,
+moved both to the recording schema, extracted shared vector conversions, and
+removed redundant complete-episode integrity traversal. Renamed frozen
+normalization to `normalize`, documented its running-sum equations, and clarified
+why evaluation records retain the normalizer-state checksum.
+
+**Validation**: Black, Ruff, Pyright, `pip check`, `git diff --check`, the full
+153-test suite and the Phase-1 acceptance runner passed. Gymnasium retained only
+its two existing advisory warnings about unbounded observation-space limits.
+No unresolved TODO or stale moved-module reference remains.
+
+**Files**: `src/configs/`, `src/models/`, `src/recording/`, `src/training/`,
+`src/utils/`, `src/agents/types.py`, `experiments/evaluate_references.py`, focused
+tests, `docs/LEARNING.md`, `docs/EXPERIMENT.md`, `README.md`, `PLAN.md`, and
+`docs/DIARY.md`.
+
+**Commit**: `refactor: resolve phase 2 review notes [ai]`

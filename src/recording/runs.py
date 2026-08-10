@@ -1,4 +1,4 @@
-"""Versioned run artifacts with atomic snapshots and validated JSONL metrics."""
+"""Versioned run directories with atomic snapshots and validated JSONL records."""
 
 from __future__ import annotations
 
@@ -14,19 +14,19 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from .metrics import RunCategory
+from .records import RunCategory
 
-ARTIFACT_SCHEMA_VERSION = 1
+RUN_SCHEMA_VERSION = 1
 _JSONL_NAMES = ("episodes", "updates", "evaluations")
 
 
-class ArtifactError(RuntimeError):
+class RunRecordingError(RuntimeError):
     """
-    Report an invalid, inconsistent, or unsafe run artifact operation.
+    Report an invalid, inconsistent, or unsafe run-recording operation.
     """
 
 
-class IncompleteRunError(ArtifactError):
+class IncompleteRunError(RunRecordingError):
     """
     Report a run that was interrupted before a valid completion marker.
     """
@@ -35,11 +35,11 @@ class IncompleteRunError(ArtifactError):
 @dataclass(frozen=True, slots=True)
 class RunDirectory:
     """
-    Own the fixed artifact layout for one isolated experimental run.
+    Own the fixed recorded-output layout for one isolated experimental run.
 
     Fields:
         * path: Root directory containing this run's files.
-        * category: Experiment scope encoded in every artifact.
+        * category: Experiment scope encoded in every recorded file.
         * run_id: Stable human-readable run identifier.
     """
 
@@ -64,7 +64,7 @@ class RunDirectory:
         directory = Path(path)
         if directory.exists():
             if not directory.is_dir() or any(directory.iterdir()):
-                raise ArtifactError(
+                raise RunRecordingError(
                     f"run directory already exists and is not empty: {directory}"
                 )
         else:
@@ -92,21 +92,21 @@ class RunDirectory:
         """
         directory = Path(path)
         if not directory.is_dir():
-            raise ArtifactError(f"run directory does not exist: {directory}")
+            raise RunRecordingError(f"run directory does not exist: {directory}")
         manifest = _read_json(directory / "manifest.json")
         _validate_document(manifest, "manifest")
         try:
             category = RunCategory(manifest["run_category"])
             run_id = manifest["run_id"]
         except (KeyError, ValueError) as error:
-            raise ArtifactError(
+            raise RunRecordingError(
                 "manifest has an invalid run category or run identifier."
             ) from error
         if not isinstance(run_id, str):
-            raise ArtifactError("manifest run_id must be a string.")
+            raise RunRecordingError("manifest run_id must be a string.")
         if expected_category is not None and category is not expected_category:
-            raise ArtifactError(
-                f"refusing to load {category.value} artifacts as {expected_category.value}."
+            raise RunRecordingError(
+                f"refusing to load {category.value} outputs as {expected_category.value}."
             )
         run = cls(path=directory, category=category, run_id=run_id)
         if require_complete:
@@ -122,16 +122,16 @@ class RunDirectory:
         """
         data = record.to_dict() if hasattr(record, "to_dict") else record
         if not isinstance(data, dict):
-            raise ArtifactError(
+            raise RunRecordingError(
                 "JSONL records must be dictionaries or expose to_dict()."
             )
-        if data.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
-            raise ArtifactError(
-                "metric record schema version does not match artifact schema."
+        if data.get("schema_version") != RUN_SCHEMA_VERSION:
+            raise RunRecordingError(
+                "metric record schema version does not match the run schema."
             )
         record_category = data.get("run_category")
         if record_category != self.category.value:
-            raise ArtifactError(
+            raise RunRecordingError(
                 "metric record category does not match its run directory."
             )
         line = _canonical_json(data)
@@ -149,25 +149,25 @@ class RunDirectory:
         """
         contents = self._jsonl_path(name).read_text(encoding="utf-8")
         if contents and not contents.endswith("\n"):
-            raise ArtifactError(f"{name}.jsonl ends with a partial append.")
+            raise RunRecordingError(f"{name}.jsonl ends with a partial append.")
         records: list[dict[str, Any]] = []
         for line_number, line in enumerate(contents.splitlines(), start=1):
             try:
                 record = json.loads(line)
             except json.JSONDecodeError as error:
-                raise ArtifactError(
+                raise RunRecordingError(
                     f"invalid {name}.jsonl line {line_number}."
                 ) from error
             if not isinstance(record, dict):
-                raise ArtifactError(
+                raise RunRecordingError(
                     f"{name}.jsonl line {line_number} is not an object."
                 )
-            if record.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
-                raise ArtifactError(
+            if record.get("schema_version") != RUN_SCHEMA_VERSION:
+                raise RunRecordingError(
                     f"{name}.jsonl line {line_number} has an incompatible schema."
                 )
             if record.get("run_category") != self.category.value:
-                raise ArtifactError(
+                raise RunRecordingError(
                     f"{name}.jsonl line {line_number} has a mismatched category."
                 )
             records.append(record)
@@ -183,10 +183,10 @@ class RunDirectory:
 
     def complete(self, summary: dict[str, Any]) -> None:
         """
-        Atomically mark the run complete after all preceding artifacts are durable.
+        Atomically mark the run complete after all preceding records are durable.
         """
         if (self.path / "completion.json").exists():
-            raise ArtifactError("a completed run cannot be completed again.")
+            raise RunRecordingError("a completed run cannot be completed again.")
         self._validate_layout()
         completion = self._document(summary, "completion")
         completion["state"] = "complete"
@@ -203,7 +203,7 @@ class RunDirectory:
         try:
             completion = _read_json(completion_path)
             _validate_document(completion, "completion")
-        except ArtifactError as error:
+        except RunRecordingError as error:
             raise IncompleteRunError(
                 f"run completion marker is invalid: {self.path}"
             ) from error
@@ -242,11 +242,11 @@ class RunDirectory:
         Build one versioned JSON snapshot with category identity.
         """
         if not isinstance(contents, dict):
-            raise ArtifactError(f"{document_type} must be a JSON object.")
+            raise RunRecordingError(f"{document_type} must be a JSON object.")
         document = dict(contents)
         document.update(
             {
-                "schema_version": ARTIFACT_SCHEMA_VERSION,
+                "schema_version": RUN_SCHEMA_VERSION,
                 "document_type": document_type,
                 "run_category": self.category.value,
             }
@@ -265,16 +265,16 @@ class RunDirectory:
             document = _read_json(self.path / snapshot)
             _validate_document(document, document_type)
             if document.get("run_category") != self.category.value:
-                raise ArtifactError(
+                raise RunRecordingError(
                     f"{snapshot} category does not match manifest category."
                 )
         for name in _JSONL_NAMES:
             if not self._jsonl_path(name).is_file():
-                raise ArtifactError(f"missing required metric stream: {name}.jsonl")
+                raise RunRecordingError(f"missing required metric stream: {name}.jsonl")
             self.records(name)
         for directory in ("checkpoints", "trajectories"):
             if not (self.path / directory).is_dir():
-                raise ArtifactError(f"missing required artifact directory: {directory}")
+                raise RunRecordingError(f"missing required run directory: {directory}")
 
     def _write_snapshot(self, name: str, document: dict[str, Any]) -> None:
         """
@@ -303,7 +303,7 @@ class RunDirectory:
         Return one fixed JSONL path after rejecting arbitrary filenames.
         """
         if name not in _JSONL_NAMES:
-            raise ArtifactError(f"unsupported metric stream: {name}")
+            raise RunRecordingError(f"unsupported metric stream: {name}")
         return self.path / f"{name}.jsonl"
 
 
@@ -419,14 +419,14 @@ def _run_command(arguments: list[str], directory: Path) -> str | None:
 
 def _read_json(path: Path) -> dict[str, Any]:
     """
-    Read one JSON object while converting malformed snapshots into ArtifactError.
+    Read one JSON object while converting malformed snapshots into a recording error.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ArtifactError(f"invalid JSON snapshot: {path}") from error
+        raise RunRecordingError(f"invalid JSON snapshot: {path}") from error
     if not isinstance(data, dict):
-        raise ArtifactError(f"JSON snapshot is not an object: {path}")
+        raise RunRecordingError(f"JSON snapshot is not an object: {path}")
     return data
 
 
@@ -434,10 +434,10 @@ def _validate_document(document: dict[str, Any], document_type: str) -> None:
     """
     Check the common version and document-type fields of a JSON snapshot.
     """
-    if document.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
-        raise ArtifactError(f"{document_type} has an incompatible schema version.")
+    if document.get("schema_version") != RUN_SCHEMA_VERSION:
+        raise RunRecordingError(f"{document_type} has an incompatible schema version.")
     if document.get("document_type") != document_type:
-        raise ArtifactError(f"expected a {document_type} document.")
+        raise RunRecordingError(f"expected a {document_type} document.")
 
 
 def _canonical_json(data: Any) -> str:
@@ -453,8 +453,8 @@ def _canonical_json(data: Any) -> str:
             separators=(",", ":"),
         )
     except (TypeError, ValueError) as error:
-        raise ArtifactError(
-            "artifact data is not finite JSON-compatible data."
+        raise RunRecordingError(
+            "run data is not finite JSON-compatible data."
         ) from error
 
 
@@ -470,12 +470,12 @@ def _safe_name(name: str) -> str:
     Validate a trajectory stem so writes cannot escape trajectories/.
     """
     if not name or Path(name).name != name or name in {".", ".."}:
-        raise ArtifactError("trajectory name must be a non-empty file stem.")
+        raise RunRecordingError("trajectory name must be a non-empty file stem.")
     return name
 
 
 def _utc_now() -> str:
     """
-    Return an explicit UTC timestamp for operational artifact provenance.
+    Return an explicit UTC timestamp for run provenance.
     """
     return datetime.now(UTC).isoformat()

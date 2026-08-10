@@ -6,12 +6,18 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
+import numpy as np
+from numpy.typing import NDArray
+from torch import Tensor
+
+from utils.vectors import optional_scalar, to_vector
+
 METRICS_SCHEMA_VERSION = 1
 
 
 class RunCategory(StrEnum):
     """
-    Identify the purpose of a run and the namespace of its artifacts.
+    Identify the purpose of a run and the namespace of its recorded outputs.
     """
 
     PRE_EXPERIMENT = "pre_experiment_configuration"
@@ -60,7 +66,7 @@ class ScalarSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class TransitionRecord:
+class LoggedTransition:
     """
     Store one environment transition without discarding lifecycle semantics.
 
@@ -104,6 +110,104 @@ class TransitionRecord:
         Return a deterministic JSON-compatible representation.
         """
         return _record_dict(self)
+
+
+VectorInput = NDArray[np.float32] | Tensor
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingTransition:
+    """
+    Store the detached transition data consumed by on-policy updates.
+
+    This differs from `LoggedTransition`: a logged transition retains raw
+    environment observations and diagnostic outcomes for later analysis, while
+    this checkpointed training record retains normalized network inputs,
+    pre-squash actions, behaviour probabilities, and critic estimates required
+    to reproduce an update.
+
+    Fields:
+        * normalized_observation: Exact network input before the action.
+        * pre_squash_action: Gaussian sample before applying `tanh`.
+        * action: Bounded action sent to the environment.
+        * reward: Environment reward returned after the action.
+        * behaviour_log_probability: Collection-policy log probability.
+        * current_value: Critic value at the current observation, if used.
+        * next_value: Bootstrap value, zero at true termination.
+        * terminated: Whether a genuine MDP ending occurred.
+        * truncated: Whether the external time limit occurred.
+        * next_normalized_observation: Frozen-statistics next-state input.
+        * episode_identity: Stable identity of the environment episode.
+        * episode_step_index: Zero-based position within that episode.
+        * circuit_identity: Stable identity of the episode's circuit.
+    """
+
+    normalized_observation: VectorInput
+    pre_squash_action: VectorInput
+    action: VectorInput
+    reward: float
+    behaviour_log_probability: float | Tensor | None
+    current_value: float | Tensor | None
+    next_value: float | Tensor | None
+    terminated: bool
+    truncated: bool
+    next_normalized_observation: VectorInput
+    episode_identity: int
+    episode_step_index: int
+    circuit_identity: str
+
+    def __post_init__(self) -> None:
+        """
+        Detach scalar tensors and preserve read-only float32 vector copies.
+        """
+        observation = to_vector(
+            self.normalized_observation,
+            name="normalized_observation",
+            readonly=True,
+        )
+        pre_squash_action = to_vector(
+            self.pre_squash_action,
+            name="pre_squash_action",
+            readonly=True,
+        )
+        action = to_vector(self.action, name="action", readonly=True)
+        next_observation = to_vector(
+            self.next_normalized_observation,
+            name="next_normalized_observation",
+            readonly=True,
+        )
+        if observation.shape != next_observation.shape:
+            raise ValueError(
+                "Current and next normalized observations must have one shape."
+            )
+        if pre_squash_action.shape != action.shape:
+            raise ValueError("Pre-squash and bounded actions must have one shape.")
+        if self.terminated and self.truncated:
+            raise ValueError("A transition cannot be both terminated and truncated.")
+        if self.episode_step_index < 0:
+            raise ValueError("Episode step indices cannot be negative.")
+        next_value = optional_scalar(self.next_value)
+        if self.terminated and next_value not in (None, 0.0):
+            raise ValueError("A true termination must store a zero bootstrap value.")
+        object.__setattr__(self, "normalized_observation", observation)
+        object.__setattr__(self, "pre_squash_action", pre_squash_action)
+        object.__setattr__(self, "action", action)
+        object.__setattr__(self, "reward", float(self.reward))
+        object.__setattr__(
+            self,
+            "behaviour_log_probability",
+            optional_scalar(self.behaviour_log_probability),
+        )
+        object.__setattr__(self, "current_value", optional_scalar(self.current_value))
+        object.__setattr__(self, "next_value", next_value)
+        object.__setattr__(self, "next_normalized_observation", next_observation)
+
+    @property
+    def ends_episode(self) -> bool:
+        """
+        Return whether this transition reaches an environment boundary.
+        """
+        return self.terminated or self.truncated
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,6 +450,60 @@ class ResourceRecord:
         record = _record_dict(self)
         record["total_parameters"] = self.total_parameters
         return record
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationNormalizerState:
+    """
+    Store the running sums needed to restore observation normalization.
+
+    Fields:
+        * count: Number of training observations incorporated.
+        * sums: Componentwise observation sums.
+        * squared_sums: Componentwise squared-observation sums.
+    """
+
+    count: int
+    sums: tuple[float, ...]
+    squared_sums: tuple[float, ...]
+
+    def to_dict(self) -> dict[str, int | list[float]]:
+        """
+        Return checkpoint-compatible plain data.
+        """
+        return {
+            "count": self.count,
+            "sums": list(self.sums),
+            "squared_sums": list(self.squared_sums),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyEvaluation:
+    """
+    Store one baseline-policy episode and its logged trajectory.
+
+    Fields:
+        * episode: Complete episode summary.
+        * transitions: Raw environment transitions in action order.
+    """
+
+    episode: EpisodeRecord
+    transitions: tuple[LoggedTransition, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DeterministicEvaluation:
+    """
+    Store one learned-policy evaluation and its logged trajectory.
+
+    Fields:
+        * record: Checkpoint-linked evaluation summary.
+        * transitions: Raw environment transitions in action order.
+    """
+
+    record: EvaluationRecord
+    transitions: tuple[LoggedTransition, ...]
 
 
 def _record_dict(record: Any) -> dict[str, Any]:

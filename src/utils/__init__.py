@@ -1,113 +1,23 @@
-"""Utilities shared by learning and experiment orchestration."""
+"""Small helpers shared across otherwise independent project domains."""
 
-from .artifacts import (
-    ARTIFACT_SCHEMA_VERSION,
-    ArtifactError,
-    IncompleteRunError,
-    RunDirectory,
-    collect_run_metadata,
-)
-from .buffers import (
-    FixedRolloutBuffer,
-    GAETargets,
-    OnPolicyRollout,
-    OnPolicyTensors,
-    OnPolicyTransition,
-    ReinforceEpisodeBuffer,
-    compute_gae_targets,
-    monte_carlo_return_to_go,
-)
-from .checkpointing import (
-    CHECKPOINT_SCHEMA_VERSION,
-    CheckpointError,
-    load_checkpoint,
-    save_checkpoint,
-)
-from .evaluation import DeterministicEvaluation, evaluate_deterministic
-from .metrics import (
-    METRICS_SCHEMA_VERSION,
-    EpisodeOutcome,
-    EpisodeRecord,
-    EvaluationRecord,
-    MetricScope,
-    ResourceRecord,
-    RunCategory,
-    ScalarSummary,
-    TimingRecord,
-    TransitionRecord,
-    UpdateRecord,
-)
-from .normalizers import ObservationNormalizerState, RunningObservationNormalizer
-from .references import (
-    RandomActionReference,
-    ReferenceEvaluation,
-    ScriptedFrenetController,
-    evaluate_reference,
-    random_action_reference,
-)
-from .seeding import (
+from .random import (
     ROOT_PROTOCOL_KEY,
     RunSeedStreams,
     SeedNamespace,
     SeedStream,
     TorchDeterminismState,
     configure_torch_determinism,
-    track_seed,
 )
-from .training import (
-    OnPolicyTrainingEngine,
-    TrainingCounters,
-    TrainingRunState,
-    TrainingUpdate,
-)
+from .vectors import optional_scalar, optional_tensor, to_vector
 
 __all__ = [
-    "ARTIFACT_SCHEMA_VERSION",
-    "CHECKPOINT_SCHEMA_VERSION",
-    "METRICS_SCHEMA_VERSION",
     "ROOT_PROTOCOL_KEY",
-    "ArtifactError",
-    "CheckpointError",
-    "DeterministicEvaluation",
-    "EpisodeOutcome",
-    "EpisodeRecord",
-    "EvaluationRecord",
-    "FixedRolloutBuffer",
-    "GAETargets",
-    "IncompleteRunError",
-    "MetricScope",
-    "ObservationNormalizerState",
-    "OnPolicyRollout",
-    "OnPolicyTensors",
-    "OnPolicyTrainingEngine",
-    "OnPolicyTransition",
-    "RandomActionReference",
-    "ReferenceEvaluation",
-    "ReinforceEpisodeBuffer",
-    "ResourceRecord",
-    "RunCategory",
-    "RunDirectory",
     "RunSeedStreams",
-    "RunningObservationNormalizer",
-    "ScalarSummary",
-    "ScriptedFrenetController",
     "SeedNamespace",
     "SeedStream",
-    "TimingRecord",
     "TorchDeterminismState",
-    "TrainingCounters",
-    "TrainingRunState",
-    "TrainingUpdate",
-    "TransitionRecord",
-    "UpdateRecord",
-    "collect_run_metadata",
-    "compute_gae_targets",
     "configure_torch_determinism",
-    "evaluate_deterministic",
-    "evaluate_reference",
-    "load_checkpoint",
-    "monte_carlo_return_to_go",
-    "random_action_reference",
-    "save_checkpoint",
-    "track_seed",
+    "optional_scalar",
+    "optional_tensor",
+    "to_vector",
 ]

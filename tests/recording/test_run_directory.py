@@ -1,4 +1,4 @@
-"""Tests for versioned, safely persisted run artifacts."""
+"""Tests for versioned, safely persisted run directories."""
 
 from __future__ import annotations
 
@@ -6,8 +6,15 @@ import json
 
 import pytest
 
-from utils.artifacts import ArtifactError, IncompleteRunError, RunDirectory
-from utils.metrics import EpisodeOutcome, EpisodeRecord, MetricScope, RunCategory
+from recording import (
+    EpisodeOutcome,
+    EpisodeRecord,
+    IncompleteRunError,
+    MetricScope,
+    RunCategory,
+    RunDirectory,
+    RunRecordingError,
+)
 
 
 def _create_run(
@@ -48,19 +55,19 @@ def test_incomplete_runs_and_partial_jsonl_writes_are_rejected(tmp_path) -> None
 
     with pytest.raises(IncompleteRunError):
         RunDirectory.open(run.path, require_complete=True)
-    with pytest.raises(ArtifactError, match="invalid episodes"):
+    with pytest.raises(RunRecordingError, match="invalid episodes"):
         run.records("episodes")
 
 
 def test_run_category_and_schema_mismatches_are_rejected(tmp_path) -> None:
     run = _create_run(tmp_path, RunCategory.PRE_EXPERIMENT)
-    with pytest.raises(ArtifactError, match="reported_experiments"):
+    with pytest.raises(RunRecordingError, match="reported_experiments"):
         RunDirectory.open(run.path, expected_category=RunCategory.REPORTED)
-    with pytest.raises(ArtifactError, match="schema"):
+    with pytest.raises(RunRecordingError, match="schema"):
         run.append("episodes", {"schema_version": 99})
-    with pytest.raises(ArtifactError, match="category"):
+    with pytest.raises(RunRecordingError, match="category"):
         run.append("episodes", {"schema_version": 1})
-    with pytest.raises(ArtifactError, match="category"):
+    with pytest.raises(RunRecordingError, match="category"):
         mismatched = _episode(RunCategory.REPORTED)
         run.append("episodes", mismatched)
 
@@ -83,5 +90,5 @@ def test_completion_rejects_a_partial_metric_append(tmp_path) -> None:
     run = _create_run(tmp_path)
     (run.path / "episodes.jsonl").write_text('{"schema_version":1}', encoding="utf-8")
 
-    with pytest.raises(ArtifactError, match="partial append"):
+    with pytest.raises(RunRecordingError, match="partial append"):
         run.complete({"training_interactions": 0})

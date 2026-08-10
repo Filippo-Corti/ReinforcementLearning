@@ -1,5 +1,7 @@
 """Configuration objects."""
 
+from .algorithms import A2CConfig, PPOConfig, ReinforceConfig
+from .choices import Algorithm, ObservationRepresentation
 from .environment import (
     CarConfig,
     EnvironmentConfig,
@@ -12,28 +14,19 @@ from .experiments import (
     Experiment1MatrixConfig,
     Experiment2MatrixConfig,
     ExperimentMatricesConfig,
-    LearningRateCalibrationConfig,
 )
 from .training import (
     FIXED_CRITIC_CONFIG,
     LARGE_ACTOR_CONFIG,
     MEDIUM_ACTOR_CONFIG,
     SMALL_ACTOR_CONFIG,
-    A2CConfig,
     ActorConfig,
     CriticConfig,
-    EpisodeCollectionConfig,
     EvaluationConfig,
     ExecutionConfig,
-    LearningRatePair,
     LoggingConfig,
     ObservationNormalizationConfig,
-    OptimizerConfig,
-    PPOConfig,
-    ReinforceConfig,
-    RolloutCollectionConfig,
     TrainingConfig,
-    TrainingScheduleConfig,
 )
 
 __all__ = [
@@ -43,27 +36,23 @@ __all__ = [
     "SMALL_ACTOR_CONFIG",
     "A2CConfig",
     "ActorConfig",
+    "Algorithm",
     "CarConfig",
     "CriticConfig",
     "EnvironmentConfig",
-    "EpisodeCollectionConfig",
     "EvaluationConfig",
     "ExecutionConfig",
     "Experiment1MatrixConfig",
     "Experiment2MatrixConfig",
     "ExperimentMatricesConfig",
     "FrenetObservationConfig",
-    "LearningRateCalibrationConfig",
-    "LearningRatePair",
     "LoggingConfig",
     "ObservationNormalizationConfig",
-    "OptimizerConfig",
+    "ObservationRepresentation",
     "PPOConfig",
     "ReinforceConfig",
     "RewardConfig",
-    "RolloutCollectionConfig",
     "SimulationConfig",
     "TrackGenerationConfig",
     "TrainingConfig",
-    "TrainingScheduleConfig",
 ]

@@ -178,10 +178,10 @@ Phase 2 is complete only when all of the following are true:
   training, validation and test track streams without regenerating a different
   circuit after resume.
 - A reduced Experiment 1 matrix executes every algorithm/actor-size cell and
-  produces the expected artifacts.
+  produces the expected run outputs.
 - A reduced Experiment 2 matrix trains and evaluates paired Frenet and LiDAR
   PPO runs on disjoint procedurally generated circuits.
-- The analysis command regenerates tables and plots from raw artifacts and does
+- The analysis command regenerates tables and plots from raw run records and does
   not depend on manually copied values.
 - The final acceptance runner passes dependency, formatting, linting, type,
   compilation, test, whitespace, deterministic replay and reduced-budget
@@ -302,11 +302,11 @@ models or optimizers are introduced.
 - `src/configs/training.py`
 - `src/configs/experiments.py`
 - `src/configs/__init__.py`
-- `src/utils/seeding.py`
+- `src/utils/random.py`
 - `src/utils/__init__.py`
 - `requirements.txt`
 - `tests/configs/test_training_config.py`
-- `tests/utils/test_seeding.py`
+- `tests/utils/test_random.py`
 - `docs/LEARNING.md`
 - `docs/DIARY.md`
 
@@ -318,7 +318,7 @@ models or optimizers are introduced.
 - Global NumPy and PyTorch RNG state is not modified unexpectedly.
 - `pip check` passes with the pinned dependency set.
 
-### 2. Establish Metrics, Artifact Schemas and Reference Policies
+### 2. Establish Recorded Schemas, Run Directories and Baseline Policies
 
 **Status:** Complete.
 
@@ -340,14 +340,14 @@ learned policy.
 
 **Expected files:**
 
-- `src/utils/metrics.py`
-- `src/utils/artifacts.py`
-- `src/utils/references.py`
-- `src/utils/__init__.py`
+- `src/recording/records.py`
+- `src/recording/runs.py`
+- `src/models/policies.py`
+- `src/training/policy_evaluation.py`
 - `experiments/evaluate_references.py`
-- `tests/utils/test_metrics.py`
-- `tests/utils/test_artifacts.py`
-- `tests/utils/test_references.py`
+- `tests/recording/test_records.py`
+- `tests/recording/test_run_directory.py`
+- `tests/training/test_policy_evaluation.py`
 - `tests/experiments/test_evaluate_references.py`
 - `README.md`
 - `docs/DIARY.md`
@@ -358,7 +358,7 @@ learned policy.
 - Same-seed reference evaluations produce identical actions and summaries.
 - Training, evaluation and pre-experiment counters cannot be aggregated
   accidentally.
-- An interrupted artifact write is either complete or detected as incomplete.
+- An interrupted run-record write is either complete or detected as incomplete.
 - The scripted controller makes meaningful forward progress; otherwise the
   environment/control boundary is diagnosed before learning work begins.
 
@@ -383,11 +383,11 @@ probability semantics are controlled entirely by configuration.
 
 - `src/models/mlp.py`
 - `src/models/policies.py`
-- `src/models/value.py`
+- `src/models/critic.py`
 - `src/models/__init__.py`
 - `tests/models/test_mlp.py`
 - `tests/models/test_policies.py`
-- `tests/models/test_value.py`
+- `tests/models/test_critic.py`
 - `docs/DIARY.md`
 
 **Validation gate:**
@@ -420,11 +420,11 @@ it is used by an optimizer.
 
 **Expected files:**
 
-- `src/utils/normalizers.py`
-- `src/utils/buffers.py`
-- `src/utils/__init__.py`
-- `tests/utils/test_normalizers.py`
-- `tests/utils/test_buffers.py`
+- `src/training/normalization.py`
+- `src/training/buffers.py`
+- `src/recording/records.py`
+- `tests/training/test_normalization.py`
+- `tests/training/test_buffers.py`
 - `docs/DIARY.md`
 
 **Validation gate:**
@@ -461,13 +461,13 @@ checkpointing and accounting boundary.
 
 - `src/agents/types.py`
 - `src/agents/__init__.py`
-- `src/utils/training.py`
-- `src/utils/evaluation.py`
-- `src/utils/checkpointing.py`
-- `src/utils/__init__.py`
-- `tests/utils/test_training.py`
-- `tests/utils/test_evaluation.py`
-- `tests/utils/test_checkpointing.py`
+- `src/training/engine.py`
+- `src/training/evaluation.py`
+- `src/training/checkpoints.py`
+- `src/training/__init__.py`
+- `tests/training/test_engine.py`
+- `tests/training/test_evaluation.py`
+- `tests/training/test_checkpoints.py`
 - `docs/DIARY.md`
 
 **Validation gate:**
@@ -592,7 +592,7 @@ data or evaluation contracts.
 **Status:** Pending; depends on Step 8.
 
 **Objective:** Derive every table, curve and diagnostic in `docs/EXPERIMENT.md` from
-machine-readable run artifacts.
+machine-readable run records.
 
 **Work:**
 
@@ -703,7 +703,7 @@ make unrealistic full-speed cornering relevant to the study.
   is not attributed to an untrained controller.
 - The report includes unsuccessful episodes and answers whether speed or
   throttle decreases with curvature.
-- The trigger calculation is reproducible from retained artifacts.
+- The trigger calculation is reproducible from retained run records.
 - The physics decision is recorded before an Experiment 1 reported-run manifest
   is generated.
 
@@ -797,7 +797,7 @@ and analyzed without manual intervention.
   remain invariant where required.
 - Run a reduced-budget end-to-end validation job for every unique
   algorithm/size cell under a dedicated validation root.
-- Aggregate the validation artifacts and generate every Experiment 1 table/plot
+- Aggregate the validation records and generate every Experiment 1 table/plot
   with explicit reduced-budget watermarks.
 - Add commands for launching individual cells, the complete matrix and analysis.
 
@@ -809,7 +809,7 @@ and analyzed without manual intervention.
 - `tests/experiments/test_experiment_1.py`
 - `README.md`
 - `docs/DIARY.md`
-- compact reduced-budget validation artifacts only
+- compact reduced-budget validation outputs only
 
 **Validation gate:**
 
@@ -821,7 +821,7 @@ and analyzed without manual intervention.
   successfully.
 - Analysis includes failed/non-converged cells instead of silently dropping
   them.
-- No reduced-budget validation artifact can be loaded as reported experiment
+- No reduced-budget validation output can be loaded as reported experiment
   data without an explicit schema error.
 
 ### 15. Implement LiDAR as an Interchangeable Observation
@@ -885,8 +885,8 @@ validation and test circuits from leakage.
 
 - `src/envs/racing/factory.py`
 - `src/configs/experiments.py`
-- `src/utils/training.py`
-- `src/utils/evaluation.py`
+- `src/training/engine.py`
+- `src/training/evaluation.py`
 - `tests/envs/test_environment_factory.py`
 - `tests/utils/test_multitrack_training.py`
 - `docs/EXPERIMENT.md`
@@ -899,7 +899,7 @@ validation and test circuits from leakage.
 - Resume produces the same subsequent track sequence and training transitions.
 - Evaluation never mutates the training schedule or normalizer.
 - Every final test result identifies its track and no test track appears in a
-  training or calibration artifact.
+  training or calibration output.
 
 ### 17. Assemble and Validate Experiment 2 End to End
 
@@ -928,7 +928,7 @@ run and be analyzed end to end.
 - `tests/experiments/test_experiment_2.py`
 - `README.md`
 - `docs/DIARY.md`
-- compact reduced-budget validation artifacts only
+- compact reduced-budget validation outputs only
 
 **Validation gate:**
 
@@ -954,7 +954,7 @@ comparable reported experiment runs.
 - Run deterministic same-seed training/resume/evaluation checks for all agents.
 - Execute reduced Experiment 1 and Experiment 2 matrices from a fresh result
   directory.
-- Regenerate all tables and plots solely from the new raw artifacts.
+- Regenerate all tables and plots solely from the new raw records.
 - Verify frozen manifests, dependency freeze, hardware/software metadata and
   separation between pre-experiment and reported results.
 - Update README commands and diary results.

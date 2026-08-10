@@ -21,17 +21,20 @@ plain JSON-compatible dictionaries. Actor sizes are named `small`, `medium` and
 pre-experiment rule in [`EXPERIMENT.md`](EXPERIMENT.md) selects from its finite
 candidates; no agent configuration supplies a silent final rate.
 
-For a run with namespace $n$ and local identity $i$, all seed derivation starts
-from `SeedSequence([20260810, n, i])`. Seven immutable child identities keep
-independent randomness for actor initialization, critic initialization, policy
-actions, environment resets, training-track scheduling, minibatch permutations,
-and evaluation/reference work, in that order at child indices `0..6`. A child is
-derived from its fixed index rather than by mutating a shared generator, so using
-evaluation cannot change a training stream. Track-only identities use the same
-protocol with their documented additional coordinates.
+For a run with namespace $n$ and local identity $i$, seed derivation starts from
+`SeedSequence([0, n, i], spawn_key=(stream,))`. Eight immutable stream identities
+separate actor initialization, critic initialization, policy-action sampling,
+environment resets, training-track selection, optimization-batch order,
+evaluation, and track generation, at indices `1..8` respectively. Deriving a
+stream never mutates another stream, so evaluation cannot change training.
+Saved tracks use their split namespace and track index as their logical identity;
+their integer generator seed is the first `uint32` from the track-generation
+stream. A run's training-track-selection stream chooses among those identities.
 
-Seed derivation returns fresh NumPy generators or deterministic integer seeds
-for PyTorch and environments without changing global NumPy or PyTorch RNG state.
+Seed derivation exposes only fresh NumPy and PyTorch generators and does not
+change global NumPy or PyTorch state. Callers retain a generator when they need
+sequential draws. Environment and track seeds are drawn from their named NumPy
+generators rather than through a separate seed API.
 At run startup, a separate explicit operation configures PyTorch for one
 intra-op and one inter-op thread, deterministic algorithms with errors, and
 disabled cuDNN benchmarking. That operation intentionally changes process-wide
@@ -246,7 +249,9 @@ actor-size factor. In the LiDAR comparison the input dimension necessarily
 changes from $4$ to $17$, so the resulting input-layer parameter difference is
 reported.
 
-Hidden weights use orthogonal initialization with gain $\sqrt2$ and zero bias.
+Hidden weights use orthogonal initialization with gain $\sqrt2$ (the gain is
+the scalar that multiplies the initial orthogonal matrix, so it controls the
+initial weight norm of the network) and zero bias.
 The actor mean output uses gain $0.01$, making initial mean actions close to
 neutral; the critic output uses gain $1$. These gains are project engineering
 choices, not consequences of the policy-gradient theorem.

@@ -19,24 +19,26 @@ from agents.types import (
 from envs.racing import RacingEnv, RacingEnvState
 from envs.racing.lifecycle import EpisodeLifecycleState
 from envs.vehicle import VehicleState
+from recording.records import (
+    DeterministicEvaluation,
+    EpisodeOutcome,
+    EpisodeRecord,
+    MetricScope,
+    ObservationNormalizerState,
+    RunCategory,
+    ScalarSummary,
+    TimingRecord,
+    TrainingTransition,
+)
 
 from .buffers import (
     FixedRolloutBuffer,
     OnPolicyRollout,
-    OnPolicyTransition,
     ReinforceEpisodeBuffer,
 )
-from .checkpointing import load_checkpoint, save_checkpoint
-from .evaluation import DeterministicEvaluation, evaluate_deterministic
-from .metrics import (
-    EpisodeOutcome,
-    EpisodeRecord,
-    MetricScope,
-    RunCategory,
-    ScalarSummary,
-    TimingRecord,
-)
-from .normalizers import ObservationNormalizerState, RunningObservationNormalizer
+from .checkpoints import load_checkpoint, save_checkpoint
+from .evaluation import evaluate_deterministic
+from .normalization import RunningObservationNormalizer
 
 
 @dataclass(slots=True)
@@ -131,7 +133,7 @@ class OnPolicyTrainingEngine:
         * agent: Owner of policy/value models, optimizers, and agent random streams.
         * environment: Training-only environment whose episode can span updates.
         * normalizer: Training-updated and evaluation-frozen observation normalizer.
-        * run_category: Artifact namespace carried by emitted metric summaries.
+        * run_category: Run namespace carried by emitted metric summaries.
         * counters: Independent training, evaluation, episode, and update counts.
     """
 
@@ -260,11 +262,11 @@ class OnPolicyTrainingEngine:
             self.environment.step(decision.action)
         )
         info = cast(dict[str, Any], raw_info)
-        next_normalized = self.normalizer.normalize_frozen(next_observation)
+        next_normalized = self.normalizer.normalize(next_observation)
         next_value = 0.0 if terminated else self.agent.bootstrap_value(next_normalized)
-        transition = OnPolicyTransition(
+        transition = TrainingTransition(
             normalized_observation=normalized,
-            latent_action=decision.latent_action,
+            pre_squash_action=decision.pre_squash_action,
             action=decision.action,
             reward=float(reward),
             behaviour_log_probability=decision.behaviour_log_probability,
@@ -290,7 +292,7 @@ class OnPolicyTrainingEngine:
                 next_observation, dtype=np.float32
             ).copy()
 
-    def _append_transition(self, transition: OnPolicyTransition) -> None:
+    def _append_transition(self, transition: TrainingTransition) -> None:
         if self._episode_buffer is not None:
             self._episode_buffer.append(transition)
             if transition.ends_episode:
@@ -599,13 +601,13 @@ def _outcome(terminated: bool, truncated: bool, info: dict[str, Any]) -> Episode
     raise ValueError("Terminal transition lacks a supported RacingEnv outcome.")
 
 
-def _transition_to_dict(row: OnPolicyTransition) -> dict[str, Any]:
+def _transition_to_dict(row: TrainingTransition) -> dict[str, Any]:
     """
     Serialize one immutable rollout row without retaining framework objects.
     """
     return {
         "normalized_observation": row.normalized_observation.tolist(),
-        "latent_action": row.latent_action.tolist(),
+        "pre_squash_action": row.pre_squash_action.tolist(),
         "action": row.action.tolist(),
         "reward": row.reward,
         "behaviour_log_probability": row.behaviour_log_probability,
@@ -620,11 +622,11 @@ def _transition_to_dict(row: OnPolicyTransition) -> dict[str, Any]:
     }
 
 
-def _transition_from_dict(data: dict[str, Any]) -> OnPolicyTransition:
+def _transition_from_dict(data: dict[str, Any]) -> TrainingTransition:
     """
     Reconstruct one immutable rollout row from checkpoint-safe primitives.
     """
-    return OnPolicyTransition(**data)
+    return TrainingTransition(**data)
 
 
 def _environment_to_dict(state: RacingEnvState) -> dict[str, Any]:

@@ -4,10 +4,10 @@ import numpy as np
 import pytest
 import torch
 
-from utils.buffers import (
+from recording import TrainingTransition
+from training.buffers import (
     FixedRolloutBuffer,
     OnPolicyRollout,
-    OnPolicyTransition,
     ReinforceEpisodeBuffer,
     compute_gae_targets,
     monte_carlo_return_to_go,
@@ -24,10 +24,10 @@ def _transition(
     next_value: float | None = 0.0,
     terminated: bool = False,
     truncated: bool = False,
-) -> OnPolicyTransition:
-    return OnPolicyTransition(
+) -> TrainingTransition:
+    return TrainingTransition(
         normalized_observation=np.array([step, step + 0.5], dtype=np.float32),
-        latent_action=np.array([step + 0.25, -step - 0.25], dtype=np.float32),
+        pre_squash_action=np.array([step + 0.25, -step - 0.25], dtype=np.float32),
         action=np.array([0.5, -0.5], dtype=np.float32),
         reward=reward,
         behaviour_log_probability=torch.tensor(-0.25, requires_grad=True),
@@ -52,7 +52,7 @@ def test_transition_preserves_vector_fields_as_detached_float32_data() -> None:
     transition = _transition(0)
 
     assert transition.normalized_observation.shape == (2,)
-    assert transition.latent_action.shape == (2,)
+    assert transition.pre_squash_action.shape == (2,)
     assert transition.action.shape == (2,)
     assert transition.next_normalized_observation.shape == (2,)
     assert transition.normalized_observation.dtype == np.float32
@@ -62,9 +62,9 @@ def test_transition_preserves_vector_fields_as_detached_float32_data() -> None:
 
 
 def test_transition_detaches_tensor_vector_fields() -> None:
-    transition = OnPolicyTransition(
+    transition = TrainingTransition(
         normalized_observation=torch.tensor([1.0, 2.0], requires_grad=True),
-        latent_action=torch.tensor([0.1, 0.2], requires_grad=True),
+        pre_squash_action=torch.tensor([0.1, 0.2], requires_grad=True),
         action=torch.tensor([0.1, 0.2], requires_grad=True),
         reward=1.0,
         behaviour_log_probability=0.0,
@@ -89,7 +89,7 @@ def test_rollout_tensors_have_framework_ready_vector_shapes_and_dtypes() -> None
     tensors = rollout.tensors()
 
     assert tensors.observations.shape == (1, 2)
-    assert tensors.latents.shape == (1, 2)
+    assert tensors.pre_squash_actions.shape == (1, 2)
     assert tensors.actions.shape == (1, 2)
     assert tensors.next_observations.shape == (1, 2)
     assert tensors.observations.dtype == torch.float32

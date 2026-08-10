@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from utils.metrics import (
+from recording import (
     EpisodeOutcome,
     EpisodeRecord,
     EvaluationRecord,

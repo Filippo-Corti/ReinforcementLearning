@@ -16,8 +16,8 @@ from agents import (
 from configs import EnvironmentConfig, ObservationNormalizationConfig, SimulationConfig
 from envs.racing import RacingEnv
 from envs.tracks import Track, TrackWithGeometry
-from utils import OnPolicyTrainingEngine, RunCategory, RunningObservationNormalizer
-from utils.buffers import OnPolicyTransition
+from recording import RunCategory, TrainingTransition
+from training import OnPolicyTrainingEngine, RunningObservationNormalizer
 
 
 class _FixedAgent:
@@ -29,7 +29,7 @@ class _FixedAgent:
         self.collection_size = collection_size
         self.training_actions: list[tuple[float, float]] = []
         self.updates: list[int] = []
-        self.received: list[tuple[OnPolicyTransition, ...]] = []
+        self.received: list[tuple[TrainingTransition, ...]] = []
         self.generator = np.random.default_rng(789)
 
     def collect_action(self, normalized_observation: np.ndarray) -> CollectedAction:
@@ -218,7 +218,7 @@ def test_checkpoint_rejects_incompatible_engine_state(tmp_path: Path) -> None:
     engine.save(str(checkpoint))
     state = engine._state_dict()
     state["engine_state_version"] = 999
-    from utils.checkpointing import save_checkpoint
+    from training.checkpoints import save_checkpoint
 
     save_checkpoint(checkpoint, state)
 

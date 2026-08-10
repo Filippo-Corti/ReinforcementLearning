@@ -12,7 +12,9 @@ from configs import (
     MEDIUM_ACTOR_CONFIG,
     SMALL_ACTOR_CONFIG,
     A2CConfig,
+    Algorithm,
     ExperimentMatricesConfig,
+    ObservationRepresentation,
     PPOConfig,
     ReinforceConfig,
     TrainingConfig,
@@ -29,10 +31,10 @@ def test_training_configuration_serializes_stably_with_literal_actor_widths() ->
     assert first["actor"]["hidden_sizes"] == [32, 32]
     assert first["critic"]["hidden_sizes"] == [64, 64]
     assert first["critic"]["hidden_initialization_gain"] == 2**0.5
-    assert first["schedule"]["training_interaction_budget"] == 2_000_000
-    assert first["schedule"]["checkpoint_interval"] == 250_000
+    assert first["training_interaction_budget"] == 2_000_000
+    assert first["checkpoint_interval"] == 250_000
     assert first["evaluation"]["evaluation_interval"] == 50_000
-    assert not first["optimizer"]["learning_rate_scheduler_enabled"]
+    assert not first["ppo"]["learning_rate_scheduler_enabled"]
     assert json.loads(json.dumps(first, sort_keys=True)) == first
 
 
@@ -49,15 +51,11 @@ def test_agent_configs_expose_only_documented_learning_rate_candidates() -> None
     ppo = PPOConfig()
 
     assert reinforce.actor_learning_rate_candidates == (1e-4, 3e-4, 1e-3)
-    assert tuple(
-        (rate.actor, rate.critic) for rate in a2c.learning_rate_candidates
-    ) == (
+    assert a2c.learning_rate_candidates == (
         (1e-4, 3e-4),
         (3e-4, 1e-3),
     )
-    assert tuple(
-        (rate.actor, rate.critic) for rate in ppo.learning_rate_candidates
-    ) == (
+    assert ppo.learning_rate_candidates == (
         (1e-4, 3e-4),
         (3e-4, 1e-3),
     )
@@ -71,16 +69,23 @@ def test_experiment_matrices_cover_approved_choices() -> None:
     experiment_1 = matrices.experiment_1
     experiment_2 = matrices.experiment_2
 
-    assert experiment_1.algorithms == ("reinforce", "a2c", "ppo")
+    assert experiment_1.algorithms == (
+        Algorithm.REINFORCE,
+        Algorithm.A2C,
+        Algorithm.PPO,
+    )
     assert tuple(actor.hidden_sizes for actor in experiment_1.actors) == (
         (32, 32),
         (64, 64),
         (256, 256),
     )
     assert experiment_1.root_identities == (0, 1, 2, 3, 4)
-    assert experiment_2.observations == ("frenet", "lidar")
+    assert experiment_2.observations == (
+        ObservationRepresentation.FRENET,
+        ObservationRepresentation.LIDAR,
+    )
     assert experiment_2.root_identities == (0, 1, 2, 3, 4)
     assert experiment_2.validation_circuit_count == 16
     assert experiment_2.test_circuit_count == 32
-    assert matrices.learning_rate_calibration.actor == MEDIUM_ACTOR_CONFIG
+    assert not hasattr(matrices, "learning_rate_calibration")
     assert FIXED_CRITIC_CONFIG.hidden_sizes == (64, 64)

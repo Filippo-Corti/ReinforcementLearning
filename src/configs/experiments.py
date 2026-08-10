@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .choices import Algorithm, ObservationRepresentation
 from .serialization import SerializableConfig
 from .training import (
     LARGE_ACTOR_CONFIG,
@@ -15,38 +16,44 @@ from .training import (
 
 
 @dataclass(frozen=True, slots=True)
-class LearningRateCalibrationConfig(SerializableConfig):
+class ExperimentMatricesConfig(SerializableConfig):
     """
-    Fixed protocol for resolving documented learning-rate candidates.
+    Collect the machine-readable matrices for both reported experiments.
+
+    Learning-rate calibration is intentionally absent: the calibration runner
+    will try the candidates declared by each algorithm without needing a second
+    configuration object or a separate training loop.
 
     Fields:
-        * interactions_per_candidate: Training budget for each candidate/root run.
-        * root_identities: Dedicated root identities used by calibration.
-        * actor: Actor architecture fixed during calibration.
+        * experiment_1: Fixed-circuit actor-size matrix.
+        * experiment_2: PPO observation-generalization matrix.
     """
 
-    interactions_per_candidate: int = 250_000
-    root_identities: tuple[int, ...] = (0, 1, 2)
-    actor: ActorConfig = field(default_factory=lambda: MEDIUM_ACTOR_CONFIG)
+    experiment_1: Experiment1MatrixConfig = field(
+        default_factory=lambda: Experiment1MatrixConfig()
+    )
+    experiment_2: Experiment2MatrixConfig = field(
+        default_factory=lambda: Experiment2MatrixConfig()
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class Experiment1MatrixConfig(SerializableConfig):
     """
-    Complete reported-run matrix for the fixed-circuit actor-size experiment.
+    Configure the fixed-circuit actor-size experiment matrix.
 
     Fields:
         * algorithms: Algorithms occupying the matrix rows.
-        * actors: Named actor configurations occupying the matrix columns.
+        * actors: Named actor configurations occupying the columns.
         * root_identities: Paired reported-run identities.
         * track_path: Saved fixed circuit used by every run.
-        * observation: Observation representation for every run.
+        * observation: Observation representation used by every run.
     """
 
-    algorithms: tuple[Literal["reinforce", "a2c", "ppo"], ...] = (
-        "reinforce",
-        "a2c",
-        "ppo",
+    algorithms: tuple[Algorithm, ...] = (
+        Algorithm.REINFORCE,
+        Algorithm.A2C,
+        Algorithm.PPO,
     )
     actors: tuple[ActorConfig, ...] = (
         SMALL_ACTOR_CONFIG,
@@ -55,16 +62,16 @@ class Experiment1MatrixConfig(SerializableConfig):
     )
     root_identities: tuple[int, ...] = (0, 1, 2, 3, 4)
     track_path: str = "tracks/experiment_1.json"
-    observation: Literal["frenet"] = "frenet"
+    observation: ObservationRepresentation = ObservationRepresentation.FRENET
 
 
 @dataclass(frozen=True, slots=True)
 class Experiment2MatrixConfig(SerializableConfig):
     """
-    Complete reported-run matrix for PPO observation generalization.
+    Configure the paired PPO observation-generalization experiment matrix.
 
     Fields:
-        * algorithm: The fixed learning algorithm.
+        * algorithm: Fixed learning algorithm.
         * actor_selection_rule: Predeclared source of the shared actor architecture.
         * observations: Paired observation conditions.
         * root_identities: Paired reported-run identities.
@@ -73,34 +80,15 @@ class Experiment2MatrixConfig(SerializableConfig):
         * test_circuit_count: Fixed held-out test-circuit count.
     """
 
-    algorithm: Literal["ppo"] = "ppo"
+    algorithm: Algorithm = Algorithm.PPO
     actor_selection_rule: Literal["experiment_1_ppo_parsimony_rule"] = (
         "experiment_1_ppo_parsimony_rule"
     )
-    observations: tuple[Literal["frenet", "lidar"], ...] = ("frenet", "lidar")
+    observations: tuple[ObservationRepresentation, ...] = (
+        ObservationRepresentation.FRENET,
+        ObservationRepresentation.LIDAR,
+    )
     root_identities: tuple[int, ...] = (0, 1, 2, 3, 4)
     development_circuit_count: int = 8
     validation_circuit_count: int = 16
     test_circuit_count: int = 32
-
-
-@dataclass(frozen=True, slots=True)
-class ExperimentMatricesConfig(SerializableConfig):
-    """
-    All machine-readable experiment matrices and calibration protocol.
-
-    Fields:
-        * learning_rate_calibration: Protocol for unresolved learning rates.
-        * experiment_1: Fixed-circuit actor-size matrix.
-        * experiment_2: PPO observation-generalization matrix.
-    """
-
-    learning_rate_calibration: LearningRateCalibrationConfig = field(
-        default_factory=LearningRateCalibrationConfig
-    )
-    experiment_1: Experiment1MatrixConfig = field(
-        default_factory=Experiment1MatrixConfig
-    )
-    experiment_2: Experiment2MatrixConfig = field(
-        default_factory=Experiment2MatrixConfig
-    )

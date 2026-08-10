@@ -11,17 +11,18 @@ from time import perf_counter
 from configs import EnvironmentConfig
 from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry, generate_track_file
-from utils.artifacts import RunDirectory, collect_run_metadata
-from utils.metrics import EvaluationRecord, MetricScope, RunCategory, TimingRecord
-from utils.references import (
-    ReferenceEvaluation,
-    ScriptedFrenetController,
-    evaluate_reference,
-    random_action_reference,
+from models import RandomPolicy, ScriptedFrenetPolicy
+from recording import (
+    EvaluationRecord,
+    MetricScope,
+    PolicyEvaluation,
+    RunCategory,
+    RunDirectory,
+    TimingRecord,
+    collect_run_metadata,
 )
-from utils.seeding import RunSeedStreams, SeedNamespace, SeedStream
-
-REFERENCE_TRACK_SEED = 0
+from training import evaluate_policy_episode
+from utils.random import RunSeedStreams, SeedNamespace, SeedStream
 
 
 def run_reference_evaluation(
@@ -29,7 +30,7 @@ def run_reference_evaluation(
     seed: int,
     run_path: str | Path,
     references: Sequence[str] = ("random", "scripted"),
-) -> tuple[ReferenceEvaluation, ...]:
+) -> tuple[PolicyEvaluation, ...]:
     """
     Generate, save, and evaluate references without consuming training counters.
     """
@@ -39,6 +40,8 @@ def run_reference_evaluation(
         raise ValueError("references must contain only 'random' and/or 'scripted'.")
     run_started = perf_counter()
     streams = RunSeedStreams(SeedNamespace.REDUCED_BUDGET_VALIDATION, seed)
+    track_streams = RunSeedStreams(SeedNamespace.EXPERIMENT_1_CIRCUIT_CANDIDATE, 0)
+    track_seed = _first_seed(track_streams, SeedStream.TRACK_GENERATION)
     environment_config = EnvironmentConfig()
     run = RunDirectory.create(
         run_path,
@@ -48,15 +51,15 @@ def run_reference_evaluation(
             "purpose": "reference_evaluation",
             "root_seed": seed,
             "seed_namespace": streams.namespace.name,
-            "reference_track_seed": REFERENCE_TRACK_SEED,
+            "reference_track_seed": track_seed,
             "seed_streams": {
-                stream.name: streams.integer_seed(stream) for stream in SeedStream
+                stream.name: _first_seed(streams, stream) for stream in SeedStream
             },
         },
         config={
             "environment": environment_config.to_dict(),
             "references": list(references),
-            "scripted_controller": asdict(ScriptedFrenetController()),
+            "scripted_policy": asdict(ScriptedFrenetPolicy()),
         },
         metadata=collect_run_metadata(
             repository=Path(__file__).resolve().parents[1],
@@ -65,27 +68,27 @@ def run_reference_evaluation(
         ),
     )
     track_path = run.path / "reference_track.json"
-    track = generate_track_file(track_path, seed=REFERENCE_TRACK_SEED)
+    track = generate_track_file(track_path, seed=track_seed)
     environment = RacingEnv(TrackWithGeometry(track), config=environment_config)
-    evaluations: list[ReferenceEvaluation] = []
+    evaluations: list[PolicyEvaluation] = []
     evaluation_interactions = 0
     evaluation_duration = 0.0
     persistence_duration = 0.0
     try:
         for evaluation_index, reference_name in enumerate(references):
             policy = (
-                random_action_reference(streams)
+                RandomPolicy(streams.get_numpy_generator(SeedStream.EVALUATION))
                 if reference_name == "random"
-                else ScriptedFrenetController()
+                else ScriptedFrenetPolicy()
             )
             evaluation_started = perf_counter()
-            evaluation = evaluate_reference(
+            evaluation = evaluate_policy_episode(
                 environment,
                 policy,
                 run_category=RunCategory.REDUCED_VALIDATION,
                 episode_index=evaluation_index,
                 evaluation_interactions_before=evaluation_interactions,
-                reset_seed=streams.integer_seed(SeedStream.ENVIRONMENT_RESET),
+                reset_seed=_first_seed(streams, SeedStream.ENVIRONMENT_RESETS),
                 circuit_identity=str(track.generation.seed),
                 root_identity=seed,
                 circuit_split="development",
@@ -149,7 +152,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--output",
         dest="run_path",
         required=True,
-        help="New empty directory that will receive the run artifacts.",
+        help="New empty directory that will receive the recorded run outputs.",
     )
     parser.add_argument(
         "--reference",
@@ -158,6 +161,18 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="Reference policy or policies to evaluate.",
     )
     return parser.parse_args(arguments)
+
+
+def _first_seed(streams: RunSeedStreams, stream: SeedStream) -> int:
+    """
+    Draw the reproducible first uint32 value from one named NumPy stream.
+    """
+    return int(
+        streams.get_numpy_generator(stream).integers(
+            0,
+            2**32,
+        )
+    )
 
 
 def main(arguments: Sequence[str] | None = None) -> int:

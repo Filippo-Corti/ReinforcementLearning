@@ -138,7 +138,7 @@ The selected run directory must be new or empty. It contains the versioned
 `manifest.json`, `config.json`, `metadata.json`, episode/update/evaluation
 JSONL streams, selected trajectories, checkpoints directory and an atomic
 `completion.json`. Consumers reject a missing completion marker and reject
-non-reported categories when reported artifacts are requested.
+non-reported categories when reported run outputs are requested.
 
 ## Learning and experiment design
 

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from configs.training import ObservationNormalizationConfig
-from utils.normalizers import RunningObservationNormalizer
+from training.normalization import RunningObservationNormalizer
 
 
 def _normalizer() -> RunningObservationNormalizer:
@@ -34,7 +34,7 @@ def test_frozen_normalization_and_evaluation_leave_state_unchanged() -> None:
     before = normalizer.state()
     before_checksum = normalizer.checksum()
 
-    normalized = normalizer.normalize_frozen([5.0, 11.0])
+    normalized = normalizer.normalize([5.0, 11.0])
 
     np.testing.assert_allclose(normalized, np.array([3.0, 3.0], dtype=np.float32))
     assert normalizer.state() == before
@@ -46,13 +46,13 @@ def test_restore_reproduces_outputs_and_checksum() -> None:
     normalizer.update_and_normalize([1.0, 2.0])
     normalizer.update_and_normalize([3.0, 8.0])
     state = normalizer.state()
-    expected = normalizer.normalize_frozen([5.0, 14.0])
+    expected = normalizer.normalize([5.0, 14.0])
     expected_checksum = normalizer.checksum()
 
     restored = _normalizer()
     restored.restore(state)
 
-    np.testing.assert_array_equal(restored.normalize_frozen([5.0, 14.0]), expected)
+    np.testing.assert_array_equal(restored.normalize([5.0, 14.0]), expected)
     assert restored.state() == state
     assert restored.checksum() == expected_checksum
 
@@ -60,7 +60,7 @@ def test_restore_reproduces_outputs_and_checksum() -> None:
 def test_normalized_values_are_float32_and_clipped() -> None:
     normalizer = _normalizer()
 
-    normalized = normalizer.normalize_frozen([100.0, -100.0])
+    normalized = normalizer.normalize([100.0, -100.0])
 
     assert normalized.dtype == np.float32
     np.testing.assert_array_equal(normalized, np.array([10.0, -10.0], dtype=np.float32))
@@ -69,5 +69,5 @@ def test_normalized_values_are_float32_and_clipped() -> None:
 def test_normalizer_rejects_observations_with_wrong_shape() -> None:
     normalizer = _normalizer()
 
-    with pytest.raises(ValueError, match="Expected observation shape"):
+    with pytest.raises(ValueError, match="observation must have shape"):
         normalizer.update_and_normalize([1.0])

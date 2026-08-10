@@ -6,9 +6,16 @@ from dataclasses import dataclass
 
 from torch import nn
 
+from .critic import CriticNetwork
 from .mlp import make_mlp
-from .policies import GaussianPolicy, PolicySample
-from .value import ValueNetwork
+from .policies import (
+    ActorNetwork,
+    GaussianPolicy,
+    Policy,
+    PolicySample,
+    RandomPolicy,
+    ScriptedFrenetPolicy,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +49,7 @@ def trainable_parameter_count(model: nn.Module) -> int:
 
 
 def agent_parameter_counts(
-    actor: GaussianPolicy, critic: ValueNetwork | None = None
+    actor: ActorNetwork, critic: CriticNetwork | None = None
 ) -> TrainableParameterCounts:
     """
     Return role-separated counts for an actor-only or actor-critic agent.
@@ -54,10 +61,14 @@ def agent_parameter_counts(
 
 
 __all__ = [
+    "ActorNetwork",
+    "CriticNetwork",
     "GaussianPolicy",
+    "Policy",
     "PolicySample",
+    "RandomPolicy",
+    "ScriptedFrenetPolicy",
     "TrainableParameterCounts",
-    "ValueNetwork",
     "agent_parameter_counts",
     "make_mlp",
     "trainable_parameter_count",

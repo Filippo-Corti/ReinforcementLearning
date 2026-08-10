@@ -8,7 +8,8 @@ from agents import AgentUpdateInput, AgentUpdateOutput, CollectedAction, Collect
 from configs import EnvironmentConfig, ObservationNormalizationConfig, SimulationConfig
 from envs.racing import RacingEnv
 from envs.tracks import Track, TrackWithGeometry
-from utils import RunCategory, RunningObservationNormalizer, evaluate_deterministic
+from recording import RunCategory
+from training import RunningObservationNormalizer, evaluate_deterministic
 
 
 class _EvaluationAgent:

@@ -1,4 +1,4 @@
-"""State-value neural network shared by actor-critic algorithms."""
+"""V-function critic network shared by actor-critic algorithms."""
 
 from __future__ import annotations
 
@@ -10,9 +10,13 @@ from configs.training import CriticConfig
 from .mlp import make_mlp
 
 
-class ValueNetwork(nn.Module):
-    """
-    Estimate one scalar value for each normalized observation.
+class CriticNetwork(nn.Module):
+    r"""
+    Approximate the state-value function used by actor-critic algorithms.
+
+    A2C and PPO use this critic to estimate $V_\phi(s)$ for bootstrapping,
+    advantage estimation, and the value-regression objective. It returns one
+    scalar estimate for each normalized observation.
 
     Fields:
         * network: MLP with one scalar output unit.

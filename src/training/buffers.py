@@ -7,111 +7,10 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
-from numpy.typing import NDArray
 from torch import Tensor
 
-VectorInput = NDArray[np.float32] | Tensor
-
-
-def _vector(value: object, field_name: str) -> NDArray[np.float32]:
-    if isinstance(value, Tensor):
-        value = value.detach().cpu().numpy()
-    array = np.asarray(value, dtype=np.float32)
-    if array.ndim != 1:
-        raise ValueError(
-            f"{field_name} must be a vector, received shape {array.shape}."
-        )
-    copied = array.copy()
-    copied.setflags(write=False)
-    return copied
-
-
-def _optional_scalar(value: float | Tensor | None) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, Tensor):
-        return float(value.detach().item())
-    return float(value)
-
-
-@dataclass(frozen=True, slots=True)
-class OnPolicyTransition:
-    """
-    Store one detached on-policy transition without losing its episode semantics.
-
-    Fields:
-        * normalized_observation: Exact float32 network input before the action.
-        * latent_action: Detached pre-squash Gaussian sample $U_t$.
-        * action: Bounded action sent to the environment.
-        * reward: Environment reward returned after the action.
-        * behaviour_log_probability: Detached collection-policy log probability.
-        * current_value: Detached critic value at the current observation, if used.
-        * next_value: Detached bootstrap critic value, zero at true termination.
-        * terminated: Whether a genuine MDP ending occurred.
-        * truncated: Whether the external time limit occurred.
-        * next_normalized_observation: Frozen-statistics input for the next state.
-        * episode_identity: Stable identity of the environment episode.
-        * episode_step_index: Zero-based position within that episode.
-        * circuit_identity: Stable identity of the circuit used by the episode.
-    """
-
-    normalized_observation: VectorInput
-    latent_action: VectorInput
-    action: VectorInput
-    reward: float
-    behaviour_log_probability: float | Tensor | None
-    current_value: float | Tensor | None
-    next_value: float | Tensor | None
-    terminated: bool
-    truncated: bool
-    next_normalized_observation: VectorInput
-    episode_identity: int
-    episode_step_index: int
-    circuit_identity: str
-
-    def __post_init__(self) -> None:
-        """
-        Detach scalar tensors and preserve immutable float32 vector copies.
-        """
-        observation = _vector(self.normalized_observation, "normalized_observation")
-        latent = _vector(self.latent_action, "latent_action")
-        action = _vector(self.action, "action")
-        next_observation = _vector(
-            self.next_normalized_observation, "next_normalized_observation"
-        )
-        if observation.shape != next_observation.shape:
-            raise ValueError(
-                "Current and next normalized observations must have one shape."
-            )
-        if latent.shape != action.shape:
-            raise ValueError("Latent and bounded action vectors must have one shape.")
-        if self.terminated and self.truncated:
-            raise ValueError("A transition cannot be both terminated and truncated.")
-        if self.episode_step_index < 0:
-            raise ValueError("Episode step indices cannot be negative.")
-        object.__setattr__(self, "normalized_observation", observation)
-        object.__setattr__(self, "latent_action", latent)
-        object.__setattr__(self, "action", action)
-        object.__setattr__(self, "reward", float(self.reward))
-        behaviour_log_probability = _optional_scalar(self.behaviour_log_probability)
-        current_value = _optional_scalar(self.current_value)
-        next_value = _optional_scalar(self.next_value)
-        if self.terminated and next_value not in (None, 0.0):
-            raise ValueError("A true termination must store a zero bootstrap value.")
-        object.__setattr__(
-            self,
-            "behaviour_log_probability",
-            behaviour_log_probability,
-        )
-        object.__setattr__(self, "current_value", current_value)
-        object.__setattr__(self, "next_value", next_value)
-
-    @property
-    def ends_episode(self) -> bool:
-        """
-        Return whether this row is the environment boundary of its episode.
-        """
-        return self.terminated or self.truncated
+from recording.records import TrainingTransition
+from utils.vectors import optional_tensor, to_vector
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +20,7 @@ class OnPolicyTensors:
 
     Fields:
         * observations: Float32 normalized observations with shape `(rows, features)`.
-        * latents: Float32 pre-squash actions with shape `(rows, actions)`.
+        * pre_squash_actions: Gaussian samples before `tanh`, shape `(rows, actions)`.
         * actions: Float32 bounded actions with shape `(rows, actions)`.
         * rewards: Float32 environment rewards with shape `(rows,)`.
         * behaviour_log_probabilities: Detached collection values when every row has one.
@@ -135,7 +34,7 @@ class OnPolicyTensors:
     """
 
     observations: Tensor
-    latents: Tensor
+    pre_squash_actions: Tensor
     actions: Tensor
     rewards: Tensor
     behaviour_log_probabilities: Tensor | None
@@ -158,7 +57,7 @@ class OnPolicyRollout:
         * transitions: Ordered rows, which may span complete episode boundaries.
     """
 
-    transitions: tuple[OnPolicyTransition, ...]
+    transitions: tuple[TrainingTransition, ...]
 
     def __post_init__(self) -> None:
         """
@@ -176,29 +75,37 @@ class OnPolicyRollout:
             observations=torch.as_tensor(
                 np.stack(
                     [
-                        _vector(row.normalized_observation, "normalized_observation")
+                        to_vector(
+                            row.normalized_observation, name="normalized_observation"
+                        )
                         for row in rows
                     ]
                 ),
                 device=device,
             ),
-            latents=torch.as_tensor(
-                np.stack([_vector(row.latent_action, "latent_action") for row in rows]),
+            pre_squash_actions=torch.as_tensor(
+                np.stack(
+                    [
+                        to_vector(row.pre_squash_action, name="pre_squash_action")
+                        for row in rows
+                    ]
+                ),
                 device=device,
             ),
             actions=torch.as_tensor(
-                np.stack([_vector(row.action, "action") for row in rows]), device=device
+                np.stack([to_vector(row.action, name="action") for row in rows]),
+                device=device,
             ),
             rewards=torch.tensor(
                 [row.reward for row in rows], dtype=torch.float32, device=device
             ),
-            behaviour_log_probabilities=_optional_tensor(
+            behaviour_log_probabilities=optional_tensor(
                 [row.behaviour_log_probability for row in rows], device=device
             ),
-            current_values=_optional_tensor(
+            current_values=optional_tensor(
                 [row.current_value for row in rows], device=device
             ),
-            next_values=_optional_tensor(
+            next_values=optional_tensor(
                 [row.next_value for row in rows], device=device
             ),
             terminated=torch.tensor(
@@ -210,9 +117,9 @@ class OnPolicyRollout:
             next_observations=torch.as_tensor(
                 np.stack(
                     [
-                        _vector(
+                        to_vector(
                             row.next_normalized_observation,
-                            "next_normalized_observation",
+                            name="next_normalized_observation",
                         )
                         for row in rows
                     ]
@@ -231,21 +138,6 @@ class OnPolicyRollout:
         )
 
 
-def _optional_tensor(
-    values: Sequence[float | Tensor | None], device: torch.device | str | None
-) -> Tensor | None:
-    present = [value is not None for value in values]
-    if not any(present):
-        return None
-    if not all(present):
-        raise ValueError("A tensor field must be present for every transition or none.")
-    return torch.tensor(
-        [float(value) for value in values if value is not None],
-        dtype=torch.float32,
-        device=device,
-    )
-
-
 class ReinforceEpisodeBuffer:
     """
     Collect only complete, separate trajectories for Monte Carlo REINFORCE.
@@ -260,9 +152,9 @@ class ReinforceEpisodeBuffer:
         Initialize an empty complete-episode collection.
         """
         self.completed_episodes: list[OnPolicyRollout] = []
-        self._active_episode: list[OnPolicyTransition] = []
+        self._active_episode: list[TrainingTransition] = []
 
-    def append(self, transition: OnPolicyTransition) -> None:
+    def append(self, transition: TrainingTransition) -> None:
         """
         Append one ordered row to the active episode without finalizing it.
         """
@@ -301,14 +193,15 @@ class ReinforceEpisodeBuffer:
     def restore(
         self,
         completed_episodes: Sequence[OnPolicyRollout],
-        active_episode: Sequence[OnPolicyTransition],
+        active_episode: Sequence[TrainingTransition],
     ) -> None:
         """
         Restore checkpointed complete and active episode rows.
         """
         for episode in completed_episodes:
-            _validate_complete_episode(episode)
-        validated_active: list[OnPolicyTransition] = []
+            if not episode.transitions[-1].ends_episode:
+                raise ValueError("A restored completed episode must have ended.")
+        validated_active: list[TrainingTransition] = []
         for transition in active_episode:
             self._validate_next_transition(validated_active, transition)
             validated_active.append(transition)
@@ -318,7 +211,7 @@ class ReinforceEpisodeBuffer:
         self._active_episode = validated_active
 
     @property
-    def active_episode(self) -> tuple[OnPolicyTransition, ...]:
+    def active_episode(self) -> tuple[TrainingTransition, ...]:
         """
         Return the incomplete active trajectory without making it update-eligible.
         """
@@ -326,7 +219,7 @@ class ReinforceEpisodeBuffer:
 
     @staticmethod
     def _validate_next_transition(
-        rows: Sequence[OnPolicyTransition], transition: OnPolicyTransition
+        rows: Sequence[TrainingTransition], transition: TrainingTransition
     ) -> None:
         if not rows:
             if transition.episode_step_index != 0:
@@ -362,16 +255,16 @@ class FixedRolloutBuffer:
         if capacity <= 0:
             raise ValueError("Rollout capacity must be positive.")
         self.capacity = capacity
-        self._transitions: list[OnPolicyTransition] = []
-        self._previous_transition: OnPolicyTransition | None = None
+        self._transitions: list[TrainingTransition] = []
+        self._previous_transition: TrainingTransition | None = None
 
-    def append(self, transition: OnPolicyTransition) -> None:
+    def append(self, transition: TrainingTransition) -> None:
         """
         Append one row, preserving episode boundaries and rejecting overflow.
         """
         if len(self._transitions) >= self.capacity:
             raise ValueError("Finalize the full rollout before appending another row.")
-        preceding_rows: Sequence[OnPolicyTransition] = self._transitions
+        preceding_rows: Sequence[TrainingTransition] = self._transitions
         if not preceding_rows and self._previous_transition is not None:
             preceding_rows = (self._previous_transition,)
         self._validate_next_transition(preceding_rows, transition)
@@ -387,14 +280,14 @@ class FixedRolloutBuffer:
         return rollout
 
     @property
-    def transitions(self) -> tuple[OnPolicyTransition, ...]:
+    def transitions(self) -> tuple[TrainingTransition, ...]:
         """
         Return the stored rows without allowing duplicate finalization by mutation.
         """
         return tuple(self._transitions)
 
     @property
-    def previous_transition(self) -> OnPolicyTransition | None:
+    def previous_transition(self) -> TrainingTransition | None:
         """
         Return the last finalized row retained for boundary validation.
         """
@@ -402,15 +295,15 @@ class FixedRolloutBuffer:
 
     def restore(
         self,
-        transitions: Sequence[OnPolicyTransition],
-        previous_transition: OnPolicyTransition | None,
+        transitions: Sequence[TrainingTransition],
+        previous_transition: TrainingTransition | None,
     ) -> None:
         """
         Restore checkpointed active rows and rollout-boundary context.
         """
         if len(transitions) > self.capacity:
             raise ValueError("Checkpointed rollout exceeds this buffer's capacity.")
-        validated: list[OnPolicyTransition] = []
+        validated: list[TrainingTransition] = []
         if previous_transition is not None:
             validated.append(previous_transition)
         for transition in transitions:
@@ -421,7 +314,7 @@ class FixedRolloutBuffer:
 
     @staticmethod
     def _validate_next_transition(
-        rows: Sequence[OnPolicyTransition], transition: OnPolicyTransition
+        rows: Sequence[TrainingTransition], transition: TrainingTransition
     ) -> None:
         if not rows:
             return
@@ -465,7 +358,8 @@ def monte_carlo_return_to_go(
     """
     Compute detached return-to-go values for one complete REINFORCE episode.
     """
-    _validate_complete_episode(episode)
+    if not episode.transitions[-1].ends_episode:
+        raise ValueError("Monte Carlo return-to-go requires a complete episode.")
     returns = torch.empty(len(episode.transitions), dtype=torch.float32, device=device)
     running_return = 0.0
     for index in range(len(episode.transitions) - 1, -1, -1):
@@ -526,25 +420,3 @@ def compute_gae_targets(
         raw_advantages=raw_advantages.detach(),
         value_targets=value_targets,
     )
-
-
-def _validate_complete_episode(episode: OnPolicyRollout) -> None:
-    rows = episode.transitions
-    first = rows[0]
-    if first.episode_step_index != 0:
-        raise ValueError("A Monte Carlo episode must begin at step index zero.")
-    if not rows[-1].ends_episode:
-        raise ValueError("Monte Carlo return-to-go requires a complete episode.")
-    for index, transition in enumerate(rows):
-        if transition.episode_identity != first.episode_identity:
-            raise ValueError(
-                "Monte Carlo return-to-go cannot cross episode identities."
-            )
-        if transition.circuit_identity != first.circuit_identity:
-            raise ValueError(
-                "Monte Carlo return-to-go cannot cross circuit identities."
-            )
-        if transition.episode_step_index != index:
-            raise ValueError("Monte Carlo episode step indices must be consecutive.")
-        if index < len(rows) - 1 and transition.ends_episode:
-            raise ValueError("A Monte Carlo episode cannot continue after an ending.")

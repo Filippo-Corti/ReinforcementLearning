@@ -1,124 +1,25 @@
-"""Reference policies and deterministic environment evaluation helpers."""
+"""Episode evaluation shared by scripted and random baseline policies."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol
-
 import numpy as np
-from numpy.typing import NDArray
 
 from envs.racing import RacingEnv
-
-from .metrics import (
+from models import Policy
+from recording.records import (
     EpisodeOutcome,
     EpisodeRecord,
+    LoggedTransition,
     MetricScope,
+    PolicyEvaluation,
     RunCategory,
     ScalarSummary,
-    TransitionRecord,
 )
-from .seeding import RunSeedStreams, SeedStream
 
 
-class ReferencePolicy(Protocol):
-    """
-    Select a normalized racing action from one observation.
-    """
-
-    def action(self, observation: NDArray[np.float32]) -> NDArray[np.float32]:
-        """
-        Return a normalized throttle/brake and steering action.
-        """
-        ...
-
-
-@dataclass(frozen=True, slots=True)
-class ScriptedFrenetController:
-    """
-    Apply the documented deterministic Frenet driving controller.
-
-    Fields:
-        * lateral_gain: Steering correction for lateral distance.
-        * heading_gain: Steering correction for heading error.
-        * curvature_gain: Steering feed-forward from preview curvature.
-        * lateral_acceleration_limit: Curvature-dependent speed target constant.
-        * maximum_target_speed: Upper bound for the target speed.
-        * speed_error_scale: Speed error that saturates throttle/braking.
-    """
-
-    lateral_gain: float = 0.15
-    heading_gain: float = 0.8
-    curvature_gain: float = 50.0
-    lateral_acceleration_limit: float = 20.0
-    maximum_target_speed: float = 50.0
-    speed_error_scale: float = 10.0
-
-    def action(self, observation: NDArray[np.float32]) -> NDArray[np.float32]:
-        """
-        Return the exact documented deterministic controller action.
-        """
-        lateral_distance, heading_error, speed, curvature = map(float, observation)
-        steering = np.clip(
-            -self.lateral_gain * lateral_distance
-            - self.heading_gain * heading_error
-            + self.curvature_gain * curvature,
-            -1.0,
-            1.0,
-        )
-        target_speed = min(
-            self.maximum_target_speed,
-            np.sqrt(self.lateral_acceleration_limit / max(abs(curvature), 1e-4)),
-        )
-        throttle = np.clip((target_speed - speed) / self.speed_error_scale, -1.0, 1.0)
-        return np.asarray((throttle, steering), dtype=np.float32)
-
-
-@dataclass(slots=True)
-class RandomActionReference:
-    """
-    Sample normalized actions from only the named evaluation/reference stream.
-
-    Fields:
-        * generator: Isolated NumPy generator used for reference actions.
-    """
-
-    generator: np.random.Generator
-
-    def action(self, observation: NDArray[np.float32]) -> NDArray[np.float32]:
-        """
-        Return one independent uniform action without consuming global randomness.
-        """
-        del observation
-        return self.generator.uniform(-1.0, 1.0, size=2).astype(np.float32)
-
-
-@dataclass(frozen=True, slots=True)
-class ReferenceEvaluation:
-    """
-    Store an evaluation summary and its action-level semantic trajectory.
-
-    Fields:
-        * episode: Complete semantic episode summary.
-        * transitions: Transition records in action order.
-    """
-
-    episode: EpisodeRecord
-    transitions: tuple[TransitionRecord, ...]
-
-
-def random_action_reference(streams: RunSeedStreams) -> RandomActionReference:
-    """
-    Build a random policy from the run's isolated evaluation/reference stream.
-    """
-    return RandomActionReference(
-        streams.numpy_generator(SeedStream.EVALUATION_REFERENCE)
-    )
-
-
-def evaluate_reference(
+def evaluate_policy_episode(
     environment: RacingEnv,
-    policy: ReferencePolicy,
+    policy: Policy,
     *,
     run_category: RunCategory,
     episode_index: int = 0,
@@ -128,14 +29,14 @@ def evaluate_reference(
     circuit_identity: str | None = None,
     root_identity: int | None = None,
     circuit_split: str | None = None,
-) -> ReferenceEvaluation:
+) -> PolicyEvaluation:
     """
-    Run one isolated reference episode and retain every semantic transition.
+    Run one baseline-policy episode and retain its summary and raw trajectory.
     """
     observation, _ = environment.reset(seed=reset_seed)
     total_return = 0.0
     maximum_progress = 0.0
-    transitions: list[TransitionRecord] = []
+    transitions: list[LoggedTransition] = []
     speeds: list[float] = []
     throttles: list[float] = []
     absolute_steering: list[float] = []
@@ -151,7 +52,7 @@ def evaluate_reference(
         progress = float(info["episode_progress"]) / environment.track.track_length
         maximum_progress = max(maximum_progress, progress)
         transitions.append(
-            TransitionRecord(
+            LoggedTransition(
                 run_category=run_category,
                 scope=MetricScope.REFERENCE,
                 episode_index=episode_index,
@@ -203,7 +104,7 @@ def evaluate_reference(
                 positive_throttle_fraction=float(np.mean(np.asarray(throttles) > 0)),
                 braking_fraction=float(np.mean(np.asarray(throttles) < 0)),
             )
-            return ReferenceEvaluation(episode=episode, transitions=tuple(transitions))
+            return PolicyEvaluation(episode=episode, transitions=tuple(transitions))
     raise RuntimeError("RacingEnv did not end within its configured episode limit.")
 
 
