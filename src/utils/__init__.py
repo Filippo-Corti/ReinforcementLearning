@@ -7,6 +7,16 @@ from .artifacts import (
     RunDirectory,
     collect_run_metadata,
 )
+from .buffers import (
+    FixedRolloutBuffer,
+    GAETargets,
+    OnPolicyRollout,
+    OnPolicyTensors,
+    OnPolicyTransition,
+    ReinforceEpisodeBuffer,
+    compute_gae_targets,
+    monte_carlo_return_to_go,
+)
 from .metrics import (
     METRICS_SCHEMA_VERSION,
     EpisodeOutcome,
@@ -20,6 +30,7 @@ from .metrics import (
     TransitionRecord,
     UpdateRecord,
 )
+from .normalizers import ObservationNormalizerState, RunningObservationNormalizer
 from .references import (
     RandomActionReference,
     ReferenceEvaluation,
@@ -45,14 +56,22 @@ __all__ = [
     "EpisodeOutcome",
     "EpisodeRecord",
     "EvaluationRecord",
+    "FixedRolloutBuffer",
+    "GAETargets",
     "IncompleteRunError",
     "MetricScope",
+    "ObservationNormalizerState",
+    "OnPolicyRollout",
+    "OnPolicyTensors",
+    "OnPolicyTransition",
     "RandomActionReference",
     "ReferenceEvaluation",
+    "ReinforceEpisodeBuffer",
     "ResourceRecord",
     "RunCategory",
     "RunDirectory",
     "RunSeedStreams",
+    "RunningObservationNormalizer",
     "ScalarSummary",
     "ScriptedFrenetController",
     "SeedNamespace",
@@ -62,8 +81,10 @@ __all__ = [
     "TransitionRecord",
     "UpdateRecord",
     "collect_run_metadata",
+    "compute_gae_targets",
     "configure_torch_determinism",
     "evaluate_reference",
+    "monte_carlo_return_to_go",
     "random_action_reference",
     "track_seed",
 ]

@@ -402,7 +402,7 @@ probability semantics are controlled entirely by configuration.
 
 ### 4. Implement Normalization, Rollout Records, Returns and GAE
 
-**Status:** Pending; depends on Step 3.
+**Status:** Complete.
 
 **Objective:** Preserve semantic transition data and verify every target before
 it is used by an optimizer.

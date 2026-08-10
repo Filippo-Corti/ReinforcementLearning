@@ -652,3 +652,34 @@ Gymnasium retained only its existing advisory warnings.
 `docs/DIARY.md`.
 
 **Commit**: `feature: add shared policy and value models [ai]`
+
+## 2026-08-10 — Normalization, rollout records and fixed targets
+
+**Task**: Implement Phase-2 Step 4 so exact network inputs and environment
+boundaries survive collection and every learning target is verified before an
+optimizer uses it.
+
+**Result**: Added the documented float64 count/sum/squared-sum observation
+normalizer with update-before-use training semantics, frozen bootstrap/evaluation
+normalization, clipping, deterministic state restoration and checksums. Added an
+immutable semantic on-policy transition containing normalized current/next
+observations, latent and bounded actions, behaviour log-probability, current and
+bootstrap values, separate termination/truncation flags, and episode/circuit
+identity. Added complete-episode REINFORCE and fixed-rollout actor-critic buffers,
+framework-ready detached tensor views, Monte Carlo return-to-go and fixed TD/GAE
+targets. Truncation and rollout cuts bootstrap once; true termination does not;
+GAE recursion ends at every environment or rollout boundary.
+
+**Review**: After delegated implementation, retained the last finalized row so
+the next rollout rejects duplicated or skipped transitions. Added one combined
+hand-calculated fixture covering ordinary recursion, time-limit truncation, true
+termination and a final rollout cut in the same batch.
+
+**Validation**: Black, Ruff, Pyright, 21 focused buffer/normalizer tests,
+`pip check` and `git diff --check` passed. The Phase-1 acceptance runner passed
+all 140 tests with only the existing Gymnasium advisory warnings.
+
+**Files**: `src/utils/normalizers.py`, `src/utils/buffers.py`,
+`src/utils/__init__.py`, focused tests, `PLAN.md`, `docs/DIARY.md`.
+
+**Commit**: `feature: add rollout buffers and learning targets [ai]`
