@@ -11,6 +11,34 @@ The main course references are
 [`actor-critic.md`](theory/actor-critic.md) and
 [`deep-rl.md`](theory/deep-rl.md).
 
+## Configuration, seed and execution contract
+
+The implementation stores immutable training and experiment configurations as
+plain JSON-compatible dictionaries. Actor sizes are named `small`, `medium` and
+`large`, but each serialized configuration retains its literal hidden-width pair:
+`[32, 32]`, `[64, 64]` or `[256, 256]`. The critic always serializes as
+`[64, 64]`. The learning rates remain deliberately unresolved until the
+pre-experiment rule in [`EXPERIMENT.md`](EXPERIMENT.md) selects from its finite
+candidates; no agent configuration supplies a silent final rate.
+
+For a run with namespace $n$ and local identity $i$, all seed derivation starts
+from `SeedSequence([20260810, n, i])`. Seven immutable child identities keep
+independent randomness for actor initialization, critic initialization, policy
+actions, environment resets, training-track scheduling, minibatch permutations,
+and evaluation/reference work, in that order at child indices `0..6`. A child is
+derived from its fixed index rather than by mutating a shared generator, so using
+evaluation cannot change a training stream. Track-only identities use the same
+protocol with their documented additional coordinates.
+
+Seed derivation returns fresh NumPy generators or deterministic integer seeds
+for PyTorch and environments without changing global NumPy or PyTorch RNG state.
+At run startup, a separate explicit operation configures PyTorch for one
+intra-op and one inter-op thread, deterministic algorithms with errors, and
+disabled cuDNN benchmarking. That operation intentionally changes process-wide
+PyTorch settings and must run before parallel PyTorch work. It cannot guarantee
+bitwise equality across PyTorch versions, platforms, CPU versus GPU, or kernels
+without deterministic implementations.
+
 ## Problem-specific notation
 
 At agent timestep $t$, the policy receives an observation $O_t$. Depending on

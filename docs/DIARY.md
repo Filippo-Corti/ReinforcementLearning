@@ -556,3 +556,34 @@ only its existing advisory warnings.
 **Files**: `docs/LEARNING.md`, `docs/DIARY.md`.
 
 **Commit**: `docs: clarify learning implementation notation [ai]`
+
+## 2026-08-10 — Training configuration and independent seed streams
+
+**Task**: Implement Phase-2 Step 1 so every approved learning choice and source
+of randomness has a machine-readable contract before neural models are added.
+
+**Result**: Added frozen, stable-serializable configurations for the three named
+actor sizes, fixed critic, optimizer and normalization conventions, each agent's
+collection and update settings, training/evaluation/logging schedules, execution
+policy, learning-rate calibration and both experiment matrices. Learning rates
+remain finite pre-experiment candidates rather than implicit final defaults.
+Added the full namespace registry and seven fixed child seed streams, with fresh
+NumPy and PyTorch generators that do not consume siblings or mutate global RNG
+state. Added explicit process-wide PyTorch determinism setup and documented its
+cross-platform limits. Declared the supported PyTorch 2.11 release series.
+
+**Review**: After delegated implementation, added the missing critic hidden-layer
+initialization gain and disabled scheduler setting, exposed local PyTorch
+generators and track seeds, and separated the training/checkpoint schedule from
+evaluation-owned settings.
+
+**Validation**: Black, Ruff, Pyright, nine focused configuration/seeding tests,
+`pip check` and `git diff --check` passed. The Phase-1 acceptance runner passed
+all 95 tests; Gymnasium retained only its existing advisory warnings.
+
+**Files**: `src/configs/serialization.py`, `src/configs/training.py`,
+`src/configs/experiments.py`, `src/configs/__init__.py`, `src/utils/seeding.py`,
+`src/utils/__init__.py`, `requirements.txt`, focused tests, `docs/LEARNING.md`,
+`PLAN.md`, `docs/DIARY.md`.
+
+**Commit**: `feature: add training configs and seed streams [ai]`

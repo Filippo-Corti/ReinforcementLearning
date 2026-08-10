@@ -280,7 +280,7 @@ project-specific equations and an auditable decision registry.
 
 ### 1. Add Training Configuration, Dependencies and Seed Streams
 
-**Status:** Pending; depends on Step 0.
+**Status:** Complete.
 
 **Objective:** Represent all approved training choices and random streams before
 models or optimizers are introduced.
