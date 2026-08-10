@@ -622,3 +622,33 @@ acceptance runner passed all 108 tests with only the existing Gymnasium warnings
 `PLAN.md`, `docs/DIARY.md`.
 
 **Commit**: `feature: add metrics artifacts and references [ai]`
+
+## 2026-08-10 — Shared policy and value models
+
+**Task**: Implement Phase-2 Step 3 with reusable neural components whose
+capacity, initialization and probability semantics are controlled by the frozen
+configuration.
+
+**Result**: Added a generic Tanh MLP builder with orthogonal initialization from
+a caller-owned PyTorch generator and no implicit global RNG consumption. Added
+the bounded diagonal-Gaussian policy with state-independent learned dispersion,
+reparametrized latent sampling, detached collection samples, deterministic mean
+actions and the stable summed `tanh` change-of-variables log-probability. Added
+the fixed-capacity scalar value network through the same builder and explicit
+actor, critic and total trainable parameter counts. Model definitions remain
+independent of racing observation dimensions.
+
+**Review**: Verified the meta-device construction materializes ordinary
+trainable parameters and initializes every real tensor from the supplied local
+generator. Added coverage for clamped dispersion bounds and finite corrected
+log-probabilities at extreme latent values.
+
+**Validation**: Black, Ruff, Pyright, 11 focused model tests, `pip check` and
+`git diff --check` passed. The Phase-1 acceptance runner passed all 119 tests;
+Gymnasium retained only its existing advisory warnings.
+
+**Files**: `src/models/mlp.py`, `src/models/policies.py`,
+`src/models/value.py`, `src/models/__init__.py`, focused model tests, `PLAN.md`,
+`docs/DIARY.md`.
+
+**Commit**: `feature: add shared policy and value models [ai]`

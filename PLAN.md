@@ -364,7 +364,7 @@ learned policy.
 
 ### 3. Implement Shared Neural Models
 
-**Status:** Pending; depends on Step 2.
+**Status:** Complete.
 
 **Objective:** Add reusable actor and critic components whose capacity and
 probability semantics are controlled entirely by configuration.
