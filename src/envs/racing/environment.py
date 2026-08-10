@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any
 
 import gymnasium as gym
@@ -12,11 +14,29 @@ from configs import EnvironmentConfig
 
 from ..tracks import Track, TrackWithGeometry
 from ..vehicle import NormalizedAction, VehicleState, transition
-from .lifecycle import ActionOutcome, EpisodeLifecycle
+from .lifecycle import ActionOutcome, EpisodeLifecycle, EpisodeLifecycleState
 from .rendering import RacingPygameRenderer
 
 ActionType = NDArray[np.float32]
 ObservationType = NDArray[np.float32]
+
+
+@dataclass(frozen=True, slots=True)
+class RacingEnvState:
+    """
+    Store focused non-rendering environment state for exact collection resume.
+
+    Fields:
+        * vehicle_state: Current kinematic state, or none before reset.
+        * lifecycle_state: Mutable progress state paired with the vehicle state.
+        * episode_finished: Whether reset is required before another action.
+        * numpy_random_state: Gymnasium reset-generator state.
+    """
+
+    vehicle_state: VehicleState | None
+    lifecycle_state: EpisodeLifecycleState | None
+    episode_finished: bool
+    numpy_random_state: dict[str, Any]
 
 
 class RacingEnv(gym.Env[ObservationType, ActionType]):
@@ -170,6 +190,49 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
         if self._renderer is not None:
             self._renderer.close()
             self._renderer = None
+
+    def snapshot(self) -> RacingEnvState:
+        """
+        Return a focused dynamics snapshot without including rendering resources.
+        """
+        if (self.state is None) != (self._lifecycle is None):
+            raise RuntimeError(
+                "RacingEnv state and lifecycle must be initialized together."
+            )
+        return RacingEnvState(
+            vehicle_state=self.state,
+            lifecycle_state=(
+                None if self._lifecycle is None else self._lifecycle.state()
+            ),
+            episode_finished=self._episode_finished,
+            numpy_random_state=deepcopy(dict(self.np_random.bit_generator.state)),
+        )
+
+    def restore(self, state: RacingEnvState) -> None:
+        """
+        Restore a focused dynamics snapshot without recreating rendering state.
+        """
+        if (state.vehicle_state is None) != (state.lifecycle_state is None):
+            raise ValueError(
+                "RacingEnv snapshots require vehicle and lifecycle together."
+            )
+        generator = np.random.default_rng()
+        generator.bit_generator.state = state.numpy_random_state
+        self.np_random = generator
+        self.state = state.vehicle_state
+        self._episode_finished = state.episode_finished
+        if state.vehicle_state is None:
+            self._lifecycle = None
+            return
+        self._lifecycle = EpisodeLifecycle(
+            self.track_with_geometry,
+            simulation_config=self.config.simulation,
+            vehicle_config=self.config.vehicle,
+            reward_config=self.config.reward,
+        )
+        if state.lifecycle_state is None:
+            raise ValueError("RacingEnv snapshot lifecycle state is missing.")
+        self._lifecycle.restore(state.lifecycle_state)
 
     def _observe(self) -> ObservationType:
         """

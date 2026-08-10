@@ -17,6 +17,13 @@ from .buffers import (
     compute_gae_targets,
     monte_carlo_return_to_go,
 )
+from .checkpointing import (
+    CHECKPOINT_SCHEMA_VERSION,
+    CheckpointError,
+    load_checkpoint,
+    save_checkpoint,
+)
+from .evaluation import DeterministicEvaluation, evaluate_deterministic
 from .metrics import (
     METRICS_SCHEMA_VERSION,
     EpisodeOutcome,
@@ -47,12 +54,21 @@ from .seeding import (
     configure_torch_determinism,
     track_seed,
 )
+from .training import (
+    OnPolicyTrainingEngine,
+    TrainingCounters,
+    TrainingRunState,
+    TrainingUpdate,
+)
 
 __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
+    "CHECKPOINT_SCHEMA_VERSION",
     "METRICS_SCHEMA_VERSION",
     "ROOT_PROTOCOL_KEY",
     "ArtifactError",
+    "CheckpointError",
+    "DeterministicEvaluation",
     "EpisodeOutcome",
     "EpisodeRecord",
     "EvaluationRecord",
@@ -63,6 +79,7 @@ __all__ = [
     "ObservationNormalizerState",
     "OnPolicyRollout",
     "OnPolicyTensors",
+    "OnPolicyTrainingEngine",
     "OnPolicyTransition",
     "RandomActionReference",
     "ReferenceEvaluation",
@@ -78,13 +95,19 @@ __all__ = [
     "SeedStream",
     "TimingRecord",
     "TorchDeterminismState",
+    "TrainingCounters",
+    "TrainingRunState",
+    "TrainingUpdate",
     "TransitionRecord",
     "UpdateRecord",
     "collect_run_metadata",
     "compute_gae_targets",
     "configure_torch_determinism",
+    "evaluate_deterministic",
     "evaluate_reference",
+    "load_checkpoint",
     "monte_carlo_return_to_go",
     "random_action_reference",
+    "save_checkpoint",
     "track_seed",
 ]

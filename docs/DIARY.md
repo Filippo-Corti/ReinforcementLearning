@@ -683,3 +683,44 @@ all 140 tests with only the existing Gymnasium advisory warnings.
 `src/utils/__init__.py`, focused tests, `PLAN.md`, `docs/DIARY.md`.
 
 **Commit**: `feature: add rollout buffers and learning targets [ai]`
+
+## 2026-08-10 — Shared on-policy training, evaluation and resume engine
+
+**Task**: Implement Phase-2 Step 5 by defining the project-owned agent boundary
+and one collection, evaluation, accounting and checkpoint lifecycle for every
+later algorithm.
+
+**Result**: Added the continuous on-policy agent contract for stochastic
+collection, deterministic actions, critic bootstrap, complete-episode or fixed-
+rollout updates, diagnostics and agent-owned model/optimizer/generator state.
+Added the shared racing training engine with exact interaction budgets,
+update-before-use normalization, complete and fixed collection boundaries,
+episode/update/evaluation counters and non-overlapping component timers. Added
+fresh-environment deterministic evaluation at exact interaction boundaries with
+frozen normalization. Added atomic versioned checkpoints containing agent,
+normalizer, collector, active episode, focused environment, history, counters,
+timing and named generator state, plus semantic RacingEnv/lifecycle snapshots for
+mid-episode resume.
+
+**Review**: After delegated implementation, added immutable engine/track/config
+compatibility checks before restore, removed unnecessary process-global RNG
+mutation, exercised an agent-owned stochastic generator, preserved earlier
+episode/evaluation/update histories, added interaction-bound update events,
+replaced access to buffer-private fields with restore APIs, validated restored
+buffer structure, deep-copied environment RNG state, supported device-aware
+checkpoint loading and normalized corrupt-checkpoint errors.
+
+**Validation**: Black, Ruff, Pyright, 13 focused training/evaluation/checkpoint
+tests, `pip check` and `git diff --check` passed. The resume fixture checkpoints
+inside an active episode after prior updates and evaluations, then matches the
+uninterrupted actions, local RNG state, summaries, counters and normalizer. The
+Phase-1 acceptance runner passed all 153 tests with only the existing Gymnasium
+advisory warnings.
+
+**Files**: `src/agents/types.py`, `src/agents/__init__.py`,
+`src/utils/training.py`, `src/utils/evaluation.py`,
+`src/utils/checkpointing.py`, `src/utils/buffers.py`, `src/utils/__init__.py`,
+`src/envs/racing/environment.py`, `src/envs/racing/lifecycle.py`,
+`src/envs/racing/__init__.py`, focused tests, `PLAN.md`, `docs/DIARY.md`.
+
+**Commit**: `feature: add shared on-policy training engine [ai]`

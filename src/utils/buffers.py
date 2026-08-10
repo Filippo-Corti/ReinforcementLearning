@@ -298,6 +298,25 @@ class ReinforceEpisodeBuffer:
         del self.completed_episodes[:episode_count]
         return batch
 
+    def restore(
+        self,
+        completed_episodes: Sequence[OnPolicyRollout],
+        active_episode: Sequence[OnPolicyTransition],
+    ) -> None:
+        """
+        Restore checkpointed complete and active episode rows.
+        """
+        for episode in completed_episodes:
+            _validate_complete_episode(episode)
+        validated_active: list[OnPolicyTransition] = []
+        for transition in active_episode:
+            self._validate_next_transition(validated_active, transition)
+            validated_active.append(transition)
+        if validated_active and validated_active[-1].ends_episode:
+            raise ValueError("An active REINFORCE episode cannot already be ended.")
+        self.completed_episodes = list(completed_episodes)
+        self._active_episode = validated_active
+
     @property
     def active_episode(self) -> tuple[OnPolicyTransition, ...]:
         """
@@ -373,6 +392,32 @@ class FixedRolloutBuffer:
         Return the stored rows without allowing duplicate finalization by mutation.
         """
         return tuple(self._transitions)
+
+    @property
+    def previous_transition(self) -> OnPolicyTransition | None:
+        """
+        Return the last finalized row retained for boundary validation.
+        """
+        return self._previous_transition
+
+    def restore(
+        self,
+        transitions: Sequence[OnPolicyTransition],
+        previous_transition: OnPolicyTransition | None,
+    ) -> None:
+        """
+        Restore checkpointed active rows and rollout-boundary context.
+        """
+        if len(transitions) > self.capacity:
+            raise ValueError("Checkpointed rollout exceeds this buffer's capacity.")
+        validated: list[OnPolicyTransition] = []
+        if previous_transition is not None:
+            validated.append(previous_transition)
+        for transition in transitions:
+            self._validate_next_transition(validated, transition)
+            validated.append(transition)
+        self._transitions = list(transitions)
+        self._previous_transition = previous_transition
 
     @staticmethod
     def _validate_next_transition(

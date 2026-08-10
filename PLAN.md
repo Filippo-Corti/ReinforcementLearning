@@ -439,7 +439,7 @@ it is used by an optimizer.
 
 ### 5. Add the Shared On-Policy Training and Evaluation Engine
 
-**Status:** Pending; depends on Step 4.
+**Status:** Complete.
 
 **Objective:** Give every algorithm the same collection, evaluation,
 checkpointing and accounting boundary.

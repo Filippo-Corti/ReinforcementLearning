@@ -44,6 +44,26 @@ class ActionOutcome:
     termination_substep: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class EpisodeLifecycleState:
+    """
+    Store the mutable episode progress needed to resume racing dynamics exactly.
+
+    Fields:
+        * wrapped_progress: Previous centerline position modulo track length.
+        * episode_progress: Signed progress accumulated since reset.
+        * agent_steps: Number of processed agent actions.
+        * previous_position: Cartesian point used by finish-gate detection.
+        * previous_segment_index: Projection hint used by the Frenet observer.
+    """
+
+    wrapped_progress: float
+    episode_progress: float
+    agent_steps: int
+    previous_position: tuple[float, float]
+    previous_segment_index: int | None
+
+
 class EpisodeLifecycle:
     """
     Track progress, terminal outcomes, and reward for one fixed-start episode.
@@ -156,6 +176,31 @@ class EpisodeLifecycle:
             collision_substep=collision_substep,
             termination_substep=termination_substep,
         )
+
+    def state(self) -> EpisodeLifecycleState:
+        """
+        Return the semantic mutable state needed for a mid-episode restore.
+        """
+        return EpisodeLifecycleState(
+            wrapped_progress=self.wrapped_progress,
+            episode_progress=self.episode_progress,
+            agent_steps=self.agent_steps,
+            previous_position=(
+                float(self._previous_position[0]),
+                float(self._previous_position[1]),
+            ),
+            previous_segment_index=self._previous_segment_index,
+        )
+
+    def restore(self, state: EpisodeLifecycleState) -> None:
+        """
+        Restore semantic episode progress after the owning environment restores pose.
+        """
+        self.wrapped_progress = state.wrapped_progress
+        self.episode_progress = state.episode_progress
+        self.agent_steps = state.agent_steps
+        self._previous_position = np.asarray(state.previous_position, dtype=np.float64)
+        self._previous_segment_index = state.previous_segment_index
 
     @property
     def _finish_progress_requirement(self) -> float:
