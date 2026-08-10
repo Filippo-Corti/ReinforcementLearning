@@ -123,6 +123,23 @@ Learning agents, LiDAR and multi-circuit training are Phase-2 work; randomized
 starts and more detailed vehicle dynamics remain outside the approved
 experiments.
 
+## Evaluate the reference controllers
+
+The random-action and deterministic Frenet references are debugging baselines,
+not training data. They generate and save one deterministic circuit, retain
+JSONL episode/evaluation records, and keep their interactions separate from the
+zero training counter:
+
+```bash
+python experiments/evaluate_references.py --seed 0 --run-path results/reduced_budget_end_to_end_validation/reference/seed_0
+```
+
+The selected run directory must be new or empty. It contains the versioned
+`manifest.json`, `config.json`, `metadata.json`, episode/update/evaluation
+JSONL streams, selected trajectories, checkpoints directory and an atomic
+`completion.json`. Consumers reject a missing completion marker and reject
+non-reported categories when reported artifacts are requested.
+
 ## Learning and experiment design
 
 The three agents use one project-owned bounded Gaussian policy interface and a

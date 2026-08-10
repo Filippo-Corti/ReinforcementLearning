@@ -320,7 +320,7 @@ models or optimizers are introduced.
 
 ### 2. Establish Metrics, Artifact Schemas and Reference Policies
 
-**Status:** Pending; depends on Step 1.
+**Status:** Complete.
 
 **Objective:** Make behaviour and resource use observable before adding a
 learned policy.

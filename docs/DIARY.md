@@ -587,3 +587,38 @@ all 95 tests; Gymnasium retained only its existing advisory warnings.
 `PLAN.md`, `docs/DIARY.md`.
 
 **Commit**: `feature: add training configs and seed streams [ai]`
+
+## 2026-08-10 — Metrics, artifacts and driving references
+
+**Task**: Implement Phase-2 Step 2 so environment behaviour, learning updates,
+resource use and run provenance are observable before neural agents are added.
+
+**Result**: Added versioned semantic records for transitions, episodes,
+evaluations, optimizer updates, timing and resources, with explicit run category,
+metric scope and completion/crash/time-limit outcomes. Added atomic JSON snapshot
+writes, durable and validated JSONL streams, category/schema rejection, required
+run directories, incomplete-run detection, manifest checksums and reproducibility
+metadata covering Git, dependencies, platform, execution and available PyTorch/
+CUDA context. Added isolated random-action and exact scripted Frenet reference
+policies plus a seeded CLI that generates and saves its circuit, writes complete
+artifacts and keeps all reference interactions outside the training counter.
+
+**Review**: After delegated implementation, required lifecycle and next-state
+fields on transitions, added structured speed/control episode summaries and
+explicit optimizer diagnostics, required every metric row to declare the run
+category, prevented corrupt JSONL streams from being completed, separated
+evaluation and persistence timing, exposed total parameter count and ignored
+routine `results/` trees.
+
+**Validation**: Black, Ruff, Pyright, 13 focused Step-2 tests, `pip check` and
+`git diff --check` passed. An independent CLI replay recorded zero training and
+1,243 reference interactions; the scripted controller completed the generated
+track in 948 steps with normalized progress approximately 1.0. The Phase-1
+acceptance runner passed all 108 tests with only the existing Gymnasium warnings.
+
+**Files**: `src/utils/metrics.py`, `src/utils/artifacts.py`,
+`src/utils/references.py`, `src/utils/__init__.py`,
+`experiments/evaluate_references.py`, focused tests, `README.md`, `.gitignore`,
+`PLAN.md`, `docs/DIARY.md`.
+
+**Commit**: `feature: add metrics artifacts and references [ai]`
