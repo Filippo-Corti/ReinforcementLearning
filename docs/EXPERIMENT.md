@@ -5,6 +5,8 @@
 This file specifies the scientific experiments for the racing project. 
 It defines what will be compared, what will remain fixed, what will be measured and how conclusions will be drawn.
 
+**Protocol revision:** 2026-08-10 learning-contract baseline.
+
 Three kinds of run must remain visibly distinct:
 
 - **pilot runs** select or validate settings using pilot-only roots;
@@ -106,31 +108,130 @@ The five measurement roots will have stable identities `0` through `4` within a
 dedicated measurement namespace. Pilot, smoke, track and evaluation streams use
 different namespace identifiers even if their local integer labels match.
 
-## Values to Lock During Phase 2
+## Phase-2 Decision Registry
 
-The following values depend on implementation validation or runtime evidence.
-They must be written here and into the final manifests before measurement starts;
-they may not be chosen by individual runs:
+The learning equations and fixed implementation constants are defined in
+[`LEARNING.md`](LEARNING.md). The remaining protocol fields are fixed below.
+Only the learning-rate rows marked **pilot-selected** may choose among multiple
+values, and only by the stated procedure. A change after this revision requires
+a dated amendment before measurement begins.
 
-- the exact bounded Gaussian parameterization, activation, initialization and
-  initial dispersion;
-- the fixed critic architecture;
-- discount, GAE, normalization, entropy and gradient-clipping choices;
-- optimizer and update settings for each algorithm;
-- the common training-interaction budget and evaluation/checkpoint cadences;
-- the fixed Experiment 1 track seed and geometry;
-- pilot roots and algorithm-calibration allowance;
-- the reference controller and numerical convergence threshold;
-- the capable-policy gate and quantitative lateral-grip trigger;
-- the final physics version and, if applicable, grip constant;
-- Experiment 2 validation/test track counts and their seed lists;
-- environment worker count, thread settings and timing boundary; and
-- artifact retention and trajectory-sampling cadence.
+| Concern | Decision |
+|---|---|
+| Policy and numerical contract | Tanh-squashed diagonal Gaussian, models, normalization, targets and losses in `LEARNING.md` |
+| Discount and GAE | $\gamma=0.9995$ for every agent; $\lambda=0.95$ for A2C and PPO |
+| Critic capacity | `(64, 64)` with the initialization in `LEARNING.md` |
+| REINFORCE update | 8 complete episodes; pilot-select actor learning rate from $\{10^{-4},3\cdot10^{-4},10^{-3}\}$ |
+| A2C update | 2048 transitions and one full-batch update; pilot-select actor/critic rates from $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3})\}$ |
+| PPO update | 2048 transitions, minibatches of 256, 10 epochs, clip $0.2$; pilot-select the same two actor/critic rate pairs as A2C |
+| Calibration | Medium actor, pilot roots `0..2`, 250,000 interactions per candidate and no early stopping |
+| Measurement budget | 2,000,000 training interactions per run in both experiments |
+| Smoke budget | 40,000 training interactions per cell |
+| Cadences | Deterministic evaluation every 50,000 interactions; checkpoint and retained trajectory every 250,000 interactions and at the final budget; update and episode records are never downsampled |
+| Experiment 1 convergence | First of 3 consecutive evaluations that complete the lap in at most $100\,\mathrm{s}$ |
+| Experiment 2 convergence | First of 3 consecutive validation evaluations with completion rate at least $0.75$ and median normalized progress at least $0.95$ |
+| Experiment 2 splits | 16 validation and 32 test tracks; logical identities `0..15` and `0..31` in their separate namespaces |
+| Execution | CPU, PyTorch `float32`, one environment worker, one intra-op and one inter-op thread, deterministic algorithms enabled |
+| Result root | `results/<run-kind>/<experiment>/<run-id>/` using the artifact layout below |
+| Timing | Collection, optimization, evaluation and persistence timers do not overlap; end-to-end time runs from accepted manifest to `completion.json` |
 
-These are preregistration fields, not invitations to tune after measurement.
-Phase 2 may amend them using only pilot results. The final acceptance commit
-must replace this section with a dated locked-values table or link each field to
-an immutable machine-readable manifest.
+### Seed namespaces
+
+Every logical identity is derived from `numpy.random.SeedSequence` entropy
+
+$$
+[20260810,\;N,\;i],
+$$
+
+where $N$ is the namespace code and $i$ is the local identity. This makes equal
+local labels in different run kinds distinct without relying on Python string
+hashes. A track identity uses the first generated `uint32` as its track-generator
+seed. Training circuit $e$ for measurement root $i$ analogously uses entropy
+`[20260810, 51, i, e]`, so its schedule is independent of episode length in
+other runs.
+
+| Namespace | Code $N$ | Local identities |
+|---|---:|---|
+| Measurement roots | 10 | `0..4` |
+| Algorithm-calibration roots | 20 | `0..2` |
+| Capability/grip pilot roots | 21 | `0..2` |
+| Smoke roots | 30 | `0` |
+| Learning-validation roots | 31 | `0..4` |
+| Experiment 1 track candidates | 40 | `0..99` |
+| Multi-track pilot | 50 | `0..7` |
+| Multi-track training schedule | 51 | unbounded episode index within each measurement root |
+| Multi-track validation | 52 | `0..15` |
+| Multi-track test | 53 | `0..31` |
+| Blocked run-order schedule | 60 | one identity per experiment |
+
+Within a training root, child stream indices are fixed as actor initialization
+`0`, critic initialization `1`, policy sampling `2`, environment reset `3`,
+training-track schedule `4`, minibatch order `5` and evaluation/reference `6`.
+Step 1 will serialize both the logical identity and generated integer state of
+every stream.
+
+### Pilot selection rules
+
+Learning-rate candidates are compared only after every candidate has consumed
+its full allowance on all three calibration roots. Select lexicographically by:
+
+1. final deterministic lap-completion count;
+2. mean final maximum normalized progress;
+3. mean final deterministic return; and
+4. the smaller actor learning rate, then smaller critic learning rate.
+
+Non-finite losses or parameters make a learning candidate ineligible, but a
+poor valid policy remains evidence. The chosen configuration is applied to all
+three actor sizes.
+
+The scripted reference controller is fixed as
+
+$$
+a_t^{\mathrm{steer}}=
+\operatorname{clip}(-0.15d_t-0.8\phi_{e,t}+50\bar\kappa_t,-1,1),
+$$
+
+$$
+v_t^\star=\min\left\{50,
+\sqrt{20/\max(|\bar\kappa_t|,10^{-4})}\right\},
+\qquad
+a_t^{\mathrm{throttle}}=
+\operatorname{clip}((v_t^\star-v_t)/10,-1,1).
+$$
+
+It is a deterministic diagnostic, not an expert demonstrator and not a source
+of training data.
+
+### Fixed-track and grip decisions
+
+Generate the 100 Experiment 1 candidate identities with the frozen generator.
+A candidate is eligible when at least 15% of its arc-length samples have
+$|\kappa|\le0.002$ and at least 5% have $|\kappa|\ge0.01$. Among eligible
+candidates, center track length, median $|\kappa|$ and the 90th percentile of
+$|\kappa|$ on their eligible-set medians and divide each by its eligible-set
+interquartile range. Omit a component only if its interquartile range is zero;
+select the candidate with the smallest Euclidean norm of the resulting vector,
+breaking an exact tie by lower local identity. Save the selected data as
+`tracks/experiment_1.json`.
+
+The version-0 PPO diagnosis is interpretable only when at least two of the
+three capability roots meet the Experiment 1 convergence rule. Grip work is
+triggered when, over their final deterministic trajectories:
+
+- quartile boundaries come from all arc-length samples of the fixed track;
+- the highest-curvature quartile contains at least 100 visited samples;
+- at least 5% of those samples have $v^2|\kappa|>4g$, with
+  $g=9.81\,\mathrm{m\,s^{-2}}$; and
+- relative to the lowest-curvature quartile, neither median speed falls by 10%
+  nor median throttle falls by 0.1.
+
+The $4g$ value is a conservative diagnostic proxy, not a claim that this point-
+car model reproduces a specific Formula 1 tire. If the capability gate fails,
+the physics decision is not made and measurement cannot begin. Once the gate
+passes, version 0 is retained if any trigger condition is false. If all are
+true, Steps 12 and 13 specify and validate the minimum grip model before its
+constants and final physics version are frozen. This conditional constant
+cannot be selected from measurement results.
 
 ## Common Experimental Protocol
 
@@ -247,7 +348,7 @@ procedure:
 2. reject only candidates that fail the existing geometric validator;
 3. summarize length and the distribution of absolute curvature;
 4. choose a circuit with both straights and materially curved sections using
-   thresholds locked before inspecting learned-policy results; and
+   the thresholds in the decision registry; and
 5. save the exact JSON circuit as `tracks/experiment_1.json`.
 
 No learned return, completion or lap time may influence circuit selection.
@@ -273,9 +374,8 @@ use different calibrated optimizer settings.
 ### Version-0 Physics and Grip Decision
 
 Before the Experiment 1 measurement matrix, a designated PPO pilot is trained on
-version-0 physics. Cornering is interpreted only if it passes a capable-policy
-gate, such as stable useful progress or lap completion, whose exact threshold is
-locked before the pilot.
+version-0 physics. Cornering is interpreted only if it passes the capable-policy
+gate defined in the decision registry.
 
 The analysis uses bins derived from the fixed track's absolute curvature, not
 from whichever portions the policy happens to visit. For every bin it reports:
@@ -290,8 +390,8 @@ The grip trigger must combine a documented physical limit with predeclared
 behavioural evidence. In outline, grip is triggered only when a capable policy
 repeatedly exceeds the physical cornering limit in materially curved sections
 and does not produce the predeclared reduction in throttle or speed from low- to
-high-curvature bins. The physical bound, required count and reduction tolerance
-are Phase-2 lock values.
+high-curvature bins. The decision registry fixes the proxy bound, required count
+and reduction tolerance.
 
 If the trigger is not met, version 0 is retained and the negative decision is
 recorded. If it is met:
@@ -366,11 +466,9 @@ completion count remains the main task statement.
 - convergence success fraction within budget; and
 - final-window instability or regression as a diagnostic.
 
-Stable convergence is the first of a predeclared number of consecutive
-evaluation checkpoints that both completes the lap and meets the fixed
-performance threshold. Phase 2 locks the threshold and required consecutive
-checkpoints using references and pilots. Runs that never converge are
-right-censored at the common budget; they remain in success-rate and curve
+Stable convergence is the first checkpoint satisfying the applicable decision-
+registry threshold for three consecutive evaluations. Runs that never converge
+are right-censored at the common budget; they remain in success-rate and curve
 summaries.
 
 For comparable scalar summaries, define restricted time to convergence as the
@@ -438,7 +536,8 @@ namespaces:
 - **test tracks:** fixed unseen circuits used only for final reported
   generalization.
 
-The exact validation and test counts and seed lists are locked during Phase 2.
+The decision registry fixes the validation and test counts and logical seed
+identities.
 The training schedule may be logically unbounded; the run records every circuit
 actually used. Procedural generation and geometry caching must not change the
 logical seed schedule.
@@ -496,9 +595,9 @@ helps or fails, but they are not substituted for independent training seeds.
   test analysis; and
 - learning curves on the fixed validation set versus training interactions.
 
-Experiment 2 convergence uses a Phase-2-locked aggregate validation score and
-the same consecutive-checkpoint principle as Experiment 1. Test circuits never
-participate in convergence detection.
+Experiment 2 convergence uses the aggregate validation threshold in the
+decision registry and the same consecutive-checkpoint principle as Experiment
+1. Test circuits never participate in convergence detection.
 
 The generalization gap is always reported alongside absolute test performance.
 A small gap caused by uniformly poor driving is not evidence of successful
@@ -681,7 +780,7 @@ analysis command. Manually edited summary numbers are not authoritative.
 
 ## Artifact Layout
 
-The exact root path is locked during Phase 2. Conceptually, each run contains:
+The fixed root path and each run contain:
 
 ```text
 results/

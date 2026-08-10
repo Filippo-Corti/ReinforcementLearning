@@ -464,3 +464,33 @@ unbounded Frenet observation dimensions.
 **Files**: `PLAN.md`, `EXPERIMENT.md`, `README.md`, `docs/DIARY.md`.
 
 **Commit**: `docs: define experiment-ready phase two [ai]`
+
+## 2026-08-10 — Learning contract and frozen protocol baseline
+
+**Task**: Complete Step 0 of the Phase-2 roadmap by translating the course
+policy-gradient notation into an implementation-complete learning specification
+and resolving the experiment fields that must not be chosen per run.
+
+**Result**: Added the bounded diagonal-Gaussian policy and stable transformed
+log-probability, deterministic action, shared network and numerical conventions,
+REINFORCE return-to-go, A2C+GAE targets and PPO clipped losses. The contract
+distinguishes true termination, time-limit truncation and rollout cuts, and gives
+short project-specific pseudocode for all three agents. Added a dated protocol
+registry covering finite learning-rate calibration, interaction budgets,
+cadences, seed namespaces, fixed-track selection, convergence, the conditional
+grip gate, multi-track splits, deterministic execution and artifact retention.
+Corrected experiment links and removed README advice that conflicted with the
+canonical start and conditional-grip design.
+
+**Validation**: All scoped Markdown links resolved and `git diff --check`
+passed. The 100 deterministic fixed-track candidate identities produced 100
+unique generator seeds, with 85 candidates satisfying the registered geometry
+thresholds. `python experiments/phase1_acceptance.py --seed 0` passed dependency,
+Black, Ruff, Pyright, compilation, whitespace, deterministic replay, rendering,
+Gymnasium conformance and all 86 tests. Gymnasium retained only its existing
+advisory warnings for unbounded observation limits and direct construction.
+
+**Files**: `docs/LEARNING.md`, `docs/EXPERIMENT.md`, `README.md`, `PLAN.md`,
+`docs/DIARY.md`.
+
+**Commit**: `docs: specify learning contract and freeze protocol [ai]`

@@ -32,7 +32,8 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
 
 The current implementation roadmap is maintained in [`PLAN.md`](PLAN.md). The
 scientific comparisons, measures and analysis rules are specified separately in
-[`EXPERIMENT.md`](EXPERIMENT.md).
+[`docs/EXPERIMENT.md`](docs/EXPERIMENT.md). The exact policy, target and loss
+equations are fixed in [`docs/LEARNING.md`](docs/LEARNING.md).
 
 ## Full Plan
 
@@ -125,8 +126,8 @@ experiments.
 
 The three agents use one project-owned bounded Gaussian policy interface and a
 shared MLP builder. Exact probability, return, advantage, bootstrapping and loss
-semantics will be frozen in `docs/LEARNING.md` before implementation. Course-lab
-agent code is not reused by default.
+semantics are frozen in [`docs/LEARNING.md`](docs/LEARNING.md). Course-lab agent
+code is not reused by default.
 
 Experiment 1 varies only the actor hidden sizes:
 
@@ -145,7 +146,7 @@ Experiment 2 uses PPO and selects the smallest adequate actor through the rule
 declared before seeing multi-track test results. Frenet and LiDAR runs are paired
 by training root, procedural track schedule and held-out circuits. Evaluation is
 deterministic and does not update normalization or consume training randomness.
-See [`EXPERIMENT.md`](EXPERIMENT.md) for the complete protocol.
+See [`docs/EXPERIMENT.md`](docs/EXPERIMENT.md) for the complete protocol.
 
 ## Final suggestions
 
@@ -177,16 +178,14 @@ See [`EXPERIMENT.md`](EXPERIMENT.md) for the complete protocol.
   $(x,y)$ cannot generalize. Worth stating explicitly as a hypothesis and testing
   it — it's a clean, gradeable scientific result.
 
-* **Curriculum helps.** Randomizing the start position along the track (as
-  described in [`docs/MDP.md`](docs/MDP.md)) and
-  optionally starting near hard corners dramatically speeds early learning versus
-  always starting from a standstill at $s_0=0$.
+* **Keep the approved initial-state rule fixed.** The experiments use the
+  canonical start. Randomized starts are a possible later study, not a training
+  shortcut for selected measurement runs.
 
-* **Keep the dynamics kinematic unless you have time to spare.** The kinematic
-  bicycle + friction limit already gives a real speed/curvature trade-off. A full
-  dynamic model (tire slip, load transfer) is more realistic but adds state,
-  tuning, and instability for little pedagogical gain relative to the stated
-  objective. Note it as future work.
+* **Keep version-0 dynamics until the registered diagnosis.** The current
+  kinematic bicycle has no friction limit. Add only the minimum grip constraint
+  if the capable-policy trigger in the protocol is met; richer tire and vehicle
+  dynamics remain future work.
 
 * **Metrics/tracking.** Even without `wandb`/`tensorboard` installed, a small CSV
   logger per run + the planned project plotting utilities is enough. What
@@ -200,8 +199,10 @@ See [`EXPERIMENT.md`](EXPERIMENT.md) for the complete protocol.
 - If the car always uses full throttle -> implement the planned grip-limited
   dynamics before retuning the reward.
 
-- If training is unstable -> Add the previous action to the state observation
+- If training is unstable -> diagnose the frozen configuration; changing the
+  observation requires a new protocol amendment
 
-- If training is slow -> random starting distribution
+- If training is slow -> retain the fixed start for approved measurements; a
+  random-start curriculum is a separate variant
 
 - Infinite horizon -> The car is supposed to keep going indefinitely -> I would have to make sure that it does not crash intentionally

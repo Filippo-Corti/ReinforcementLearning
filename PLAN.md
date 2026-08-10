@@ -3,7 +3,8 @@
 ## Goal
 
 Build and validate every environment, learning, measurement and orchestration
-component needed to run the two studies specified in [`EXPERIMENT.md`](EXPERIMENT.md).
+component needed to run the two studies specified in
+[`docs/EXPERIMENT.md`](docs/EXPERIMENT.md).
 At the end of Phase 2, the repository must be able to launch the complete
 experiment matrices without adding code or making an undocumented scientific
 choice.
@@ -37,7 +38,7 @@ directories that cannot be mistaken for measurement results.
 
 ## Scientific Boundary
 
-[`EXPERIMENT.md`](EXPERIMENT.md) is the authoritative study design. This file
+[`docs/EXPERIMENT.md`](docs/EXPERIMENT.md) is the authoritative study design. This file
 describes how to build and validate the system that will execute that design.
 The distinction is important:
 
@@ -49,7 +50,7 @@ The distinction is important:
   algorithm and observation representation using the frozen protocol.
 
 Pilot results may change a setting only through an explicit update to
-`EXPERIMENT.md` made before measurement starts. Once the measurement manifest is
+`docs/EXPERIMENT.md` made before measurement starts. Once the measurement manifest is
 frozen, failed or surprising runs are retained; they are not repaired by
 changing budgets, metrics, reward, tracks or hyperparameters for selected
 configurations.
@@ -58,7 +59,7 @@ configurations.
 
 Implementation decisions must agree with:
 
-- [`EXPERIMENT.md`](EXPERIMENT.md) for hypotheses, comparison matrices,
+- [`docs/EXPERIMENT.md`](docs/EXPERIMENT.md) for hypotheses, comparison matrices,
   experimental units, measures, aggregation and fairness rules;
 - [`docs/MDP.md`](docs/MDP.md) for state, observations, actions, dynamics,
   reward and episode lifecycle;
@@ -98,7 +99,7 @@ configuration:
    different update rules. They are calibrated only with the medium actor and
    pilot seeds, then frozen before the size sweep.
 5. Experiment 2 uses PPO and selects one actor size by the predeclared rule in
-   `EXPERIMENT.md`; it does not choose the most flattering network after looking
+   `docs/EXPERIMENT.md`; it does not choose the most flattering network after looking
    at held-out circuits.
 6. Frenet and LiDAR runs use paired root seeds, training-track schedules,
    budgets, PPO settings and held-out circuits. Neither actor nor critic receives
@@ -133,7 +134,7 @@ including short pilots and smoke runs. It excludes:
 Randomized start states, reward scaling, entropy bonuses, gradient clipping and
 other training mechanisms are not assumed silently. If the approved learning
 contract uses one, its value and scope must be explicit and it must be held
-fixed wherever `EXPERIMENT.md` requires.
+fixed wherever `docs/EXPERIMENT.md` requires.
 
 ## Definition of Done
 
@@ -211,7 +212,7 @@ implicit when measurement starts:
 13. Result paths, run identifiers, schemas, retained checkpoints and trajectory
     sampling cadence.
 
-`EXPERIMENT.md` distinguishes decisions already approved from decisions to be
+`docs/EXPERIMENT.md` distinguishes decisions already approved from decisions to be
 locked by the preparatory pilots. Changing a frozen decision requires a dated
 amendment applied uniformly to every affected measurement cell.
 
@@ -237,7 +238,7 @@ advancing to a more complex algorithm.
 
 ### 0. Specify the Learning Contract and Freeze Protocol Fields
 
-**Status:** Pending.
+**Status:** Complete.
 
 **Objective:** Translate the repository theory and experiment design into exact,
 project-specific equations and an auditable decision registry.
@@ -252,14 +253,14 @@ project-specific equations and an auditable decision registry.
 - Decide initialization, normalization, optimizer, loss reduction and numerical
   conventions.
 - Fill the algorithm, budget, cadence, seed, fixed-track, convergence and
-  multi-track split fields marked for Phase-2 locking in `EXPERIMENT.md`.
+  multi-track split fields marked for Phase-2 locking in `docs/EXPERIMENT.md`.
 - Define pilot-only settings separately from measurement settings.
 - Correct README guidance where it conflicts with the approved contract.
 
 **Expected files:**
 
 - `docs/LEARNING.md`
-- `EXPERIMENT.md`
+- `docs/EXPERIMENT.md`
 - `README.md`
 - `docs/DIARY.md`
 
@@ -322,7 +323,7 @@ learned policy.
 **Work:**
 
 - Define named transition, episode, update, evaluation, timing and resource
-  records matching `EXPERIMENT.md`.
+  records matching `docs/EXPERIMENT.md`.
 - Define a versioned run directory containing configuration, manifest, metadata,
   JSONL or CSV metrics, checkpoints and selected evaluation trajectories.
 - Record git commit and dirty status, dependency freeze, platform, processor,
@@ -584,7 +585,7 @@ data or evaluation contracts.
 
 **Status:** Pending; depends on Step 8.
 
-**Objective:** Derive every table, curve and diagnostic in `EXPERIMENT.md` from
+**Objective:** Derive every table, curve and diagnostic in `docs/EXPERIMENT.md` from
 machine-readable run artifacts.
 
 **Work:**
@@ -631,7 +632,7 @@ held-out outcomes.
 **Work:**
 
 - Generate candidate Experiment 1 circuits and select one using only the
-  predeclared geometry criteria in `EXPERIMENT.md`.
+  predeclared geometry criteria in `docs/EXPERIMENT.md`.
 - Save the selected circuit as versioned data and record its generator config
   and seed.
 - Evaluate the reference policies and define the fixed convergence threshold
@@ -646,7 +647,7 @@ held-out outcomes.
 
 - `tracks/experiment_1.json`
 - `src/configs/experiments.py`
-- `EXPERIMENT.md`
+- `docs/EXPERIMENT.md`
 - `experiments/calibrate.py`
 - focused orchestration tests
 - `README.md`
@@ -677,7 +678,7 @@ make unrealistic full-speed cornering relevant to the study.
 - Replay deterministic policies and align current/preview curvature with speed,
   throttle and steering.
 - Report all predeclared curvature bins, crashes and incomplete trajectories.
-- Apply the quantitative grip trigger in `EXPERIMENT.md` without changing it
+- Apply the quantitative grip trigger in `docs/EXPERIMENT.md` without changing it
   after seeing the traces.
 - Record a decision to retain version 0 or begin the conditional grip work.
 
@@ -685,7 +686,7 @@ make unrealistic full-speed cornering relevant to the study.
 
 - `experiments/diagnose_cornering.py`
 - focused analysis tests
-- `EXPERIMENT.md`
+- `docs/EXPERIMENT.md`
 - `docs/DIARY.md`
 - the approved compact pilot diagnosis
 
@@ -719,7 +720,7 @@ real speed-versus-curvature constraint.
 **Expected files:**
 
 - `docs/MDP.md`
-- `EXPERIMENT.md`
+- `docs/EXPERIMENT.md`
 - `docs/DIARY.md`
 
 **Validation gate:**
@@ -880,7 +881,7 @@ validation and test circuits from leakage.
 - `src/utils/evaluation.py`
 - `tests/envs/test_environment_factory.py`
 - `tests/utils/test_multitrack_training.py`
-- `EXPERIMENT.md`
+- `docs/EXPERIMENT.md`
 - `docs/DIARY.md`
 
 **Validation gate:**
@@ -955,7 +956,7 @@ comparable measurement runs.
 
 - `experiments/phase2_acceptance.py`
 - `tests/experiments/test_phase2_acceptance.py`
-- `EXPERIMENT.md`
+- `docs/EXPERIMENT.md`
 - `README.md`
 - `docs/DIARY.md`
 - corrections only if acceptance exposes a defect
