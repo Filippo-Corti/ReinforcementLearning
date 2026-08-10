@@ -553,7 +553,7 @@ policy, value model, rollout and GAE components.
 
 ### 8. Implement and Validate PPO
 
-**Status:** Pending; depends on Step 7.
+**Status:** Complete.
 
 **Objective:** Add clipped, multi-epoch sample reuse without changing the shared
 data or evaluation contracts.

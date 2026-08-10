@@ -646,6 +646,16 @@ rollout transitions, $10$ epochs and clipping parameter $\epsilon=0.2$. This
 project uses minibatches of $64$, matching that reference configuration rather
 than the previously unexplained value $256$.
 
+The implementation-only learning gate uses the same deterministic one-step task
+as REINFORCE and A2C: a constant observation $(1)$ with reward equal to the
+bounded throttle action. It uses `(4, 4)` actor and critic networks,
+$\gamma=0.9$, $\lambda=0.95$, validation-only actor and critic learning rates
+$0.02$, eight transitions per rollout, ten PPO epochs, an eight-row minibatch,
+$\epsilon=0.2$, 40 updates, and controlled-problem seed identities `0..4`.
+Every seed must increase deterministic throttle by more than `0.2` relative to
+initialization. These settings validate the implementation; they are not
+candidates for either reported racing experiment.
+
 Store and detach the behaviour-policy log-probability at collection time. During
 an update,
 
@@ -677,6 +687,10 @@ $$
 
 Old log-probabilities, standardized advantages and value targets remain fixed
 for all ten epochs. Each seeded epoch permutation covers every rollout row once.
+The approximate-KL diagnostic is the nonnegative sample mean
+$((\omega_t-1)-\log\omega_t)$, while clip fraction is the sample fraction with
+$|\omega_t-1|>\epsilon$. Both are diagnostics only: the approved PPO update has
+neither KL early stopping nor value clipping.
 
 ### PPO pseudocode
 

@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
-from agents import A2CAgent, ParameterizedOnPolicyAgent, ReinforceAgent
+from agents import A2CAgent, ParameterizedOnPolicyAgent, PPOAgent, ReinforceAgent
 from configs import (
     FIXED_CRITIC_CONFIG,
     LARGE_ACTOR_CONFIG,
@@ -20,6 +20,7 @@ from configs import (
     CriticConfig,
     EnvironmentConfig,
     ExecutionConfig,
+    PPOConfig,
     ReinforceConfig,
     TrainingConfig,
 )
@@ -197,6 +198,90 @@ def run_a2c_training(
     )
 
 
+def run_ppo_training(
+    *,
+    seed: int,
+    track_path: str | Path,
+    run_path: str | Path,
+    actor_config: ActorConfig,
+    actor_learning_rate: float,
+    critic_learning_rate: float,
+    training_interaction_budget: int,
+    environment_config: EnvironmentConfig | None = None,
+    ppo_config: PPOConfig | None = None,
+    critic_config: CriticConfig = FIXED_CRITIC_CONFIG,
+    evaluation_interval: int | None = None,
+    execution_config: ExecutionConfig | None = None,
+    run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
+) -> OnPolicyTrainingEngine:
+    """
+    Train PPO through the shared engine and persist its run records.
+    """
+    if training_interaction_budget <= 0:
+        raise ValueError("Training interaction budget must be positive.")
+    if actor_learning_rate <= 0 or critic_learning_rate <= 0:
+        raise ValueError("PPO learning rates must be positive.")
+    environment_config = environment_config or EnvironmentConfig()
+    ppo_config = ppo_config or PPOConfig()
+    execution_config = execution_config or ExecutionConfig()
+    configure_torch_determinism(execution_config)
+    base_training_config = TrainingConfig(actor=actor_config, critic=critic_config)
+    resolved_evaluation_interval = (
+        base_training_config.evaluation.evaluation_interval
+        if evaluation_interval is None
+        else evaluation_interval
+    )
+    training_config = replace(
+        base_training_config,
+        ppo=ppo_config,
+        training_interaction_budget=training_interaction_budget,
+        evaluation=replace(
+            base_training_config.evaluation,
+            evaluation_interval=resolved_evaluation_interval,
+        ),
+        execution=execution_config,
+    )
+    return _run_training(
+        algorithm=Algorithm.PPO,
+        seed=seed,
+        track_path=track_path,
+        run_path=run_path,
+        actor_config=actor_config,
+        environment_config=environment_config,
+        training_config=training_config,
+        run_category=run_category,
+        learning_rates={
+            "actor_learning_rate": actor_learning_rate,
+            "critic_learning_rate": critic_learning_rate,
+        },
+        agent_factory=lambda observation_dimensions, streams: PPOAgent(
+            observation_dimensions=observation_dimensions,
+            actor_config=actor_config,
+            critic_config=critic_config,
+            config=ppo_config,
+            actor_learning_rate=actor_learning_rate,
+            critic_learning_rate=critic_learning_rate,
+            actor_initialization_generator=streams.get_torch_generator(
+                SeedStream.ACTOR_INITIALIZATION,
+                device=execution_config.device,
+            ),
+            critic_initialization_generator=streams.get_torch_generator(
+                SeedStream.CRITIC_INITIALIZATION,
+                device=execution_config.device,
+            ),
+            sampling_generator=streams.get_torch_generator(
+                SeedStream.POLICY_ACTION_SAMPLING,
+                device=execution_config.device,
+            ),
+            optimization_generator=streams.get_torch_generator(
+                SeedStream.OPTIMIZATION_BATCH_ORDER,
+                device=execution_config.device,
+            ),
+            device=execution_config.device,
+        ),
+    )
+
+
 def _run_training(
     *,
     algorithm: Algorithm,
@@ -312,7 +397,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--algorithm",
-        choices=(Algorithm.REINFORCE.value, Algorithm.A2C.value),
+        choices=tuple(algorithm.value for algorithm in Algorithm),
         default=Algorithm.REINFORCE.value,
     )
     parser.add_argument("--seed", required=True, type=int)
@@ -352,14 +437,22 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "execution_config": replace(ExecutionConfig(), device=parsed.device),
         "run_category": RunCategory(parsed.run_category),
     }
-    if Algorithm(parsed.algorithm) is Algorithm.REINFORCE:
+    algorithm = Algorithm(parsed.algorithm)
+    if algorithm is Algorithm.REINFORCE:
         engine = run_reinforce_training(**common_arguments)
     else:
         if parsed.critic_learning_rate is None:
-            raise ValueError("A2C requires --critic-learning-rate.")
-        engine = run_a2c_training(
-            **common_arguments, critic_learning_rate=parsed.critic_learning_rate
-        )
+            raise ValueError(
+                f"{algorithm.value.upper()} requires --critic-learning-rate."
+            )
+        if algorithm is Algorithm.A2C:
+            engine = run_a2c_training(
+                **common_arguments, critic_learning_rate=parsed.critic_learning_rate
+            )
+        else:
+            engine = run_ppo_training(
+                **common_arguments, critic_learning_rate=parsed.critic_learning_rate
+            )
     print(
         f"{parsed.algorithm.upper()} completed "
         f"{engine.state().counters.training_interactions} training interactions."
@@ -414,6 +507,8 @@ def _write_engine_records(run: RunDirectory, engine: OnPolicyTrainingEngine) -> 
                 explained_variance=_optional_diagnostic(
                     diagnostics, "explained_variance"
                 ),
+                approximate_kl=_optional_diagnostic(diagnostics, "approximate_kl"),
+                clip_fraction=_optional_diagnostic(diagnostics, "clip_fraction"),
                 diagnostics={
                     key: value
                     for key, value in diagnostics.items()
@@ -429,6 +524,8 @@ def _write_engine_records(run: RunDirectory, engine: OnPolicyTrainingEngine) -> 
                         "critic_weight_norm",
                         "critic_update_norm",
                         "explained_variance",
+                        "approximate_kl",
+                        "clip_fraction",
                         "actor_learning_rate",
                         "entropy_proxy",
                         "log_standard_deviation_0",

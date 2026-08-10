@@ -842,3 +842,45 @@ Gymnasium retained only its two existing infinite-bound advisory warnings.
 `docs/LEARNING.md`, `PLAN.md`, and `docs/DIARY.md`.
 
 **Commit**: `feature: implement A2C with GAE [ai]`
+
+## 2026-08-10 — Clipped PPO with deterministic sample reuse
+
+**Task**: Implement Phase-2 Step 8 by extending the fixed-rollout actor-critic
+path with the approved clipped PPO objective and deterministic multi-epoch
+minibatch reuse.
+
+**Result**: Added `PPOAgent` with fixed detached behaviour log-probabilities,
+GAE advantages and critic targets. Every update standardizes advantages once,
+then uses a dedicated seeded permutation to cover every rollout row exactly once
+per epoch. Each minibatch applies the clipped minimum actor objective and the
+unclipped half-squared critic objective through separate Adam optimizers and
+separate gradient-norm clipping. Checkpoints retain both models, optimizers,
+policy-sampling state and minibatch-order state.
+
+Extended the shared training command, run-record writer and CLI with PPO rather
+than introducing a separate environment loop. PPO records actor and critic
+losses, gradient, parameter and update norms, explained variance, sampled
+entropy, importance-ratio statistics, clip fraction and the documented
+nonnegative approximate-KL diagnostic. Unsupported optional objectives are
+rejected when enabled because the approved configuration disables entropy
+bonuses, value clipping, KL early stopping, weight decay and schedulers. Added
+analytical clipping cases for both advantage signs, unit-ratio and zero-KL
+checks, exact epoch coverage, fixed-old-policy evidence, five-seed controlled
+learning, reproducibility and runner integration tests.
+
+**Review**: After delegated implementation, checked the objective and target
+boundaries directly against `docs/LEARNING.md` and the course notation, verified
+that partial minibatches contribute sample-weighted diagnostics, and ran the
+focused PPO, A2C, REINFORCE and shared-runner tests together before the full
+repository gates.
+
+**Validation**: Twenty focused cross-algorithm and runner tests and all 173
+tests passed. Black, Ruff, Pyright, `pip check` and `git diff --check` passed;
+Gymnasium retained only its two existing infinite-bound advisory warnings.
+
+**Files**: `src/agents/ppo.py`, `src/agents/__init__.py`,
+`experiments/train.py`, `tests/agents/test_ppo.py`,
+`tests/experiments/test_train.py`, `docs/LEARNING.md`, `PLAN.md`, and
+`docs/DIARY.md`.
+
+**Commit**: `feature: implement clipped PPO [ai]`

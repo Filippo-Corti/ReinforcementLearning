@@ -1,6 +1,7 @@
 """Project-owned reinforcement-learning agent contracts and implementations."""
 
 from .a2c import A2CAgent
+from .ppo import PPOAgent
 from .reinforce import ReinforceAgent
 from .types import (
     AgentUpdateInput,
@@ -18,6 +19,7 @@ __all__ = [
     "CollectedAction",
     "CollectionMode",
     "OnPolicyAgent",
+    "PPOAgent",
     "ParameterizedOnPolicyAgent",
     "ReinforceAgent",
 ]
