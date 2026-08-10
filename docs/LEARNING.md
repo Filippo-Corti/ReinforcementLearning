@@ -91,6 +91,20 @@ U_t=\boldsymbol\mu_{\mathbf\theta}(O_t)
 \qquad \varepsilon_t\sim\mathcal N(\mathbf0,I),
 $$
 
+where $\odot$ is the componentwise, or Hadamard, product. Thus
+$U_{t,j}=\mu_{\mathbf\theta,j}(O_t)+\sigma_j\varepsilon_{t,j}$ for each action
+component $j$.
+
+This is the **reparametrization trick**: instead of viewing $U_t$ as an opaque
+random draw whose distribution depends on the policy parameters, draw
+$\varepsilon_t$ from a fixed standard Gaussian independent of those parameters,
+then express $U_t$ as a deterministic differentiable function of
+$\boldsymbol\mu_{\mathbf\theta}$, $\boldsymbol\sigma$ and $\varepsilon_t$. It
+separates the source of randomness from the learned transformation. The present
+algorithms still use the score-function gradient, so the sampled $U_t$ is
+detached before the loss is formed; they do not use the pathwise gradient that
+this parametrization could otherwise provide.
+
 $$
 A_t=\tanh(U_t).
 $$
@@ -104,7 +118,7 @@ boundary action.
 For deterministic evaluation, exploration is removed before the transformation:
 
 $$
-A_t^{\mathrm{eval}}=	anh
+A_t^{\mathrm{eval}}=\tanh
 \left(\boldsymbol\mu_{\mathbf\theta}(O_t)\right).
 $$
 
@@ -112,8 +126,22 @@ $$
 
 REINFORCE, A2C and PPO all need
 $\log\pi_{\mathbf\theta}(A_t\mid O_t)$. The Gaussian gives the probability
-density of $U_t$, not of the squashed action $A_t$. Because `tanh` compresses
-space near $-1$ and $1$, the change-of-variables rule adds a Jacobian correction:
+density of $U_t$, not of the squashed action $A_t$. A change of variables asks
+how that density changes when the coordinates change from $U_t$ to
+$A_t=\tanh(U_t)$. A small region around $U_t$ can shrink after `tanh`, especially
+near the action bounds, so the same probability mass occupies a different
+volume. The density must therefore be divided by this local volume change:
+
+$$
+\pi_{\mathbf\theta}(a\mid o)=
+p_U(u\mid o)
+\left|\det\frac{\partial\tanh(u)}{\partial u}\right|^{-1},
+\qquad u=\operatorname{atanh}(a).
+$$
+
+Because `tanh` acts independently on the two components, its Jacobian is
+diagonal with entries $1-\tanh^2(U_{t,j})$. Taking the logarithm turns the
+determinant product into the sum used by every actor loss:
 
 $$
 \log\pi_{\mathbf\theta}(A_t\mid O_t)=
@@ -125,12 +153,7 @@ $$
 $$
 
 The sum makes this the probability of the complete throttle-steering vector,
-not two unrelated loss terms. The Jacobian is evaluated with the stable identity
-
-$$
-\log(1-\tanh^2u)=
-2\left(\log2-u-\operatorname{softplus}(-2u)\right).
-$$
+not two unrelated loss terms.
 
 Sampling retains $U_t$. If only $A_t$ is available, its components are first
 clamped to $[-1+10^{-6},1-10^{-6}]$ before computing
@@ -215,14 +238,33 @@ radians, lateral displacement in metres, speed can approach $70$, and curvature
 is much smaller. Feeding those raw magnitudes into one MLP would let scale alone
 dominate early gradients.
 
-For each component, training maintains its running mean and population variance
-using the stable Welford update. A raw component $x$ becomes
+For simplicity, each component uses naive two-pass-style running sums. After
+$n$ observations, store the sum and squared sum
+
+$$
+S_n=\sum_{k=1}^{n}x_k,
+\qquad
+Q_n=\sum_{k=1}^{n}x_k^2.
+$$
+
+On a new value $x$, update $n\leftarrow n+1$, $S_n\leftarrow S_{n-1}+x$ and
+$Q_n\leftarrow Q_{n-1}+x^2$. The population moments are then
+
+$$
+\mu_n=\frac{S_n}{n},
+\qquad
+\sigma_n^2=\max\left(\frac{Q_n}{n}-\mu_n^2,0\right).
+$$
+
+The maximum only removes a tiny negative value that floating-point cancellation
+can create. Counts and sums are accumulated in 64-bit precision. A raw component
+$x$ becomes
 
 $$
 \widetilde x=
 \operatorname{clip}\left(
-\frac{x-\text{running mean}}
-{\sqrt{\text{running variance}+10^{-8}}},
+\frac{x-\mu_n}
+{\sqrt{\sigma_n^2+10^{-8}}},
 -10,10
 \right).
 $$
@@ -238,7 +280,7 @@ current statistics but does not update them. Rollouts retain the normalized
 values actually given to the networks. Evaluation freezes the statistics, so
 evaluating more often cannot change training.
 
-### Optimizer and gradient clipping
+### Optimizer and gradient-norm clipping
 
 Actor and critic use separate Adam optimizers. The moment parameters
 $\beta_1=0.9$, $\beta_2=0.999$ and numerical constant $10^{-8}$ are the defaults
@@ -250,8 +292,18 @@ After backpropagation and before `optimizer.step()`, compute the global Euclidea
 norm of all gradients belonging to one network. If the norm exceeds $0.5$, scale
 that network's gradients together so their norm becomes $0.5$. Actor and critic
 are clipped separately, and the norm before clipping is logged. This is a
-project stability safeguard for rare destructive updates; it does not clamp
-individual parameters or change the loss equation.
+project stability safeguard: one unusually noisy batch cannot produce an
+arbitrarily large parameter update. It rescales the gradient vector without
+changing the loss equation, clipping individual parameters or clipping actions.
+
+This is distinct from **PPO ratio clipping**. Gradient-norm clipping is applied
+to every algorithm after backpropagation and uses the norm threshold $0.5$.
+PPO ratio clipping appears only inside the PPO actor objective: it limits the
+importance ratio $\omega_t$ to $[1-\epsilon,1+\epsilon]$ in one surrogate branch,
+with $\epsilon=0.2$, so a sample cannot keep rewarding a policy change that has
+moved too far from the behaviour policy. It changes PPO's objective but does not
+directly clip its gradients. PPO value clipping would be a third, separate
+mechanism; it is disabled here.
 
 No entropy bonus, weight decay, learning-rate scheduler, PPO value clipping or
 KL early stop is enabled. The sampled value
@@ -304,10 +356,14 @@ error bootstraps, while GAE does not refer to data outside the collected batch.
 The fixed value target is
 
 $$
-y_t=\operatorname{stop}\left(
+y_t=\operatorname{detach}\left(
 \widehat{\mathbb A}_t+v_{\mathbf w}(O_t)
 \right).
 $$
+
+$\operatorname{detach}(x)$ has the same numerical value as $x$ but no autograd
+path through the expression that produced it. This is the mathematical notation
+used here for PyTorch's `Tensor.detach()` operation.
 
 The raw advantage creates $y_t$. For the actor only, advantages are standardized
 once over the rollout. PPO retains those same standardized values for all
@@ -352,7 +408,7 @@ $$
 \mathcal L_{\mathrm{REINFORCE}}(\mathbf\theta)=
 -\frac1n\sum_{i=1}^{n}\sum_{t=0}^{\tau_i}
 \log\pi_{\mathbf\theta}(A_t^i\mid O_t^i)
-\operatorname{stop}(\widetilde G_t^i),
+\operatorname{detach}(\widetilde G_t^i),
 \qquad n=8.
 $$
 
@@ -449,7 +505,7 @@ $$
 \mathcal L_{\mathrm{actor}}(\mathbf\theta)=
 -\frac1N\sum_{t=0}^{N-1}
 \log\pi_{\mathbf\theta}(A_t\mid O_t)
-\operatorname{stop}(\widetilde{\mathbb A}_t),
+\operatorname{detach}(\widetilde{\mathbb A}_t),
 $$
 
 $$
@@ -652,6 +708,7 @@ The following distinction is intentional:
 | PPO rollout 2048, 10 epochs, minibatch 64 and clip 0.2 | Starting configuration reported for continuous control in the original PPO paper |
 | $\lambda=0.95$ | Conventional GAE/PPO starting value, checked before reported runs |
 | Squashed Gaussian, state-independent dispersion and its bounds | Explicit project policy-class choice required by the bounded action space |
+| Naive running-sum normalization | Explicit project simplicity choice |
 | Initialization gains, observation clipping and gradient norm 0.5 | Explicit project stability choices, not derived from course theory |
 | REINFORCE batch of 8 and A2C rollout of 2048 | Explicit collection trade-offs, checked before reported runs |
 

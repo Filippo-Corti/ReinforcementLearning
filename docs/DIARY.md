@@ -529,3 +529,30 @@ only its existing advisory warnings.
 `README.md`, `docs/DIARY.md`.
 
 **Commit**: `docs: clarify learning and experiment contracts [ai]`
+
+## 2026-08-10 — Clarify learning notation and safeguards
+
+**Task**: Remove the remaining ambiguities in the learning reference around
+squashed-Gaussian sampling, normalization, gradient clipping and autograd
+notation.
+
+**Result**: Defined the Hadamard product componentwise and explained the
+reparametrization trick, including why these score-function estimators detach
+the sampled latent action. Explained change of variables as probability-mass
+preservation under the `tanh` transformation and retained only the mathematical
+Jacobian correction, leaving its numerical evaluation to the implementation.
+Replaced Welford normalization with componentwise running counts, sums and
+squared sums. Distinguished the all-algorithm gradient-norm safeguard from PPO's
+ratio clipping and disabled value clipping. Renamed the mathematical
+`stop` operator to `detach` to match PyTorch.
+
+**Validation**: All scoped Markdown links resolved, display-math delimiters were
+paired, the removed terminology and Jacobian evaluation identity were absent,
+and `git diff --check` passed. `python experiments/phase1_acceptance.py --seed 0`
+passed dependency, Black, Ruff, Pyright, compilation, whitespace, deterministic
+replay, rendering, Gymnasium conformance and all 86 tests. Gymnasium retained
+only its existing advisory warnings.
+
+**Files**: `docs/LEARNING.md`, `docs/DIARY.md`.
+
+**Commit**: `docs: clarify learning implementation notation [ai]`
