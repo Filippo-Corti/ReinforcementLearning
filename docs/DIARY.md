@@ -1386,14 +1386,24 @@ expected to trail PPO's ten epochs per rollout. For reference,
 `notebooks/a2c.ipynb` finished 844,000 interactions at lap fraction 0.030 with
 every episode ending at the time limit.
 
-REINFORCE applies one update per eight complete episodes, so it receives the
-fewest gradient steps of the three and improves slowest. Its mean lap fraction
-still rises monotonically at 0.118, 0.124, 0.146, 0.163 with mean return -3.87,
--3.18, -1.57, +0.61, crossing into positive return by its 256th episode, and the
-time-limit share stays between 0% and 8% instead of the 100%
-recorded in `notebooks/reinforce.ipynb` after 1,325,384 interactions. The stall
-attractor is removed for REINFORCE as well; its remaining slowness is the
-sample efficiency of a Monte Carlo estimator, not the reward pathology.
+REINFORCE applies one update per eight complete episodes, so over 512 episodes
+and 290,184 interactions it receives only 64 gradient steps and improves
+slowest. Its mean lap fraction still rises across every one of its eight
+buckets:
+
+| episodes | 64 | 128 | 192 | 256 | 320 | 384 | 448 | 512 |
+|---|---|---|---|---|---|---|---|---|
+| mean lap fraction | 0.118 | 0.124 | 0.146 | 0.163 | 0.178 | 0.208 | 0.229 | 0.259 |
+| mean return | -3.87 | -3.18 | -1.57 | 0.61 | 1.28 | 4.14 | 6.85 | 9.24 |
+| time limit % | 0 | 0 | 8 | 6 | 5 | 5 | 2 | 14 |
+
+Return crosses zero by the 256th episode and the best episode reaches 0.449 of
+the lap. The time-limit share never approaches the 100% recorded in
+`notebooks/reinforce.ipynb` after 1,325,384 interactions, and those time limits
+are now slow laps in progress rather than a stalled car, since idling is the
+worst-scoring outcome available. The stall attractor is removed for REINFORCE as
+well; its remaining slowness is the sample efficiency of a Monte Carlo estimator
+given 64 updates, not the reward pathology.
 
 The claim being validated is specifically that the stall is no longer an
 attractor for any of the three, and that return now increases with distance
