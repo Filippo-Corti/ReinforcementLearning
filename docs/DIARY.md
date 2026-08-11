@@ -1238,3 +1238,25 @@ notebook unit tests were added.
 `docs/EXPERIMENT.md`, `README.md`, `PLAN.md`, and `docs/DIARY.md`.
 
 **Commit**: `feature: parallelize on-policy rollouts [ai]`
+
+## 2026-08-11 — Smoothed REINFORCE diagnostics and exploration scale
+
+**Task**: Make the noisy REINFORCE training records easier to inspect and show
+the actor's learned Gaussian exploration parameter.
+
+**Result**: The REINFORCE notebook now overlays trailing moving averages with
+window 20 on mean episode speed, mean episode throttle magnitude, and actor loss
+per optimizer update, in addition to the existing return average. Its records
+figure is organized as a 3-by-3 grid and retains all previous metrics. A new
+panel shows the separate throttle and steering exploration scales computed from
+the recorded learned log standard deviations using
+`sigma = exp(log_standard_deviation)`, as specified in `docs/LEARNING.md`.
+
+**Validation**: The notebook's JSON and every Python cell parsed successfully.
+The retained 16-episode execution completed without cell errors and produced
+the revised plot from 8,674 interactions, two optimizer updates and three
+deterministic evaluations. Both sigma series contain one value per update.
+
+**Files**: `notebooks/reinforce.ipynb` and `docs/DIARY.md`.
+
+**Commit**: `docs: extend REINFORCE training plots [ai]`
