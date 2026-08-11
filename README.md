@@ -179,7 +179,9 @@ not replace the shared engine used by `experiments/train.py`.
 [`notebooks/reinforce.ipynb`](notebooks/reinforce.ipynb) walks through a
 REINFORCE run with the readable engine. Its first cell exposes the actor,
 algorithm, seed, episode, rendering and circuit settings, including a switch
-between one generated circuit and several circuits.
+between one generated circuit and several circuits. Its live viewer updates an
+inline notebook figure at every action; set `VIEWER_MODE` to `"window"` for the
+Pygame display when a notebook frontend does not animate inline output.
 
 ## Train REINFORCE
 

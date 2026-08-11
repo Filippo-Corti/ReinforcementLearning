@@ -1003,3 +1003,24 @@ suite, Black, Ruff, Pyright, `pip check` and `git diff --check` passed.
 `PLAN.md`, and `docs/DIARY.md`.
 
 **Commit**: `docs: add guided REINFORCE training notebook [ai]`
+
+## 2026-08-11 — Live REINFORCE policy viewer
+
+**Task**: Replace the notebook's static rollout-frame grid with a view that
+shows the deterministic policy interacting with the racing environment action
+by action.
+
+**Result**: The REINFORCE notebook now offers an `inline` viewer that updates
+one Jupyter figure after every environment action and a `window` fallback that
+uses the environment's Pygame human renderer. The configuration cell exposes
+the viewer mode, maximum visible steps and frame delay. Both the before- and
+after-training views use this live interaction path while retaining the same
+deterministic action and reset convention.
+
+**Validation**: The inline viewer executed against a reduced training notebook,
+and the complete notebook re-executed with its default configuration.
+
+**Files**: `notebooks/reinforce.ipynb`,
+`README.md`, and `docs/DIARY.md`.
+
+**Commit**: `fix: add live notebook policy viewer [ai]`
