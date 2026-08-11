@@ -20,8 +20,8 @@ class ReinforceConfig(SerializableConfig):
         * beta_2: Adam second-moment coefficient.
         * optimizer_epsilon: Adam numerical constant.
         * gradient_norm_limit: Global actor-gradient norm limit.
+        * actor_weight_decay: Adam L2 penalty applied only to actor MLP weights.
         * entropy_bonus_enabled: Whether entropy changes the actor loss.
-        * weight_decay_enabled: Whether Adam weight decay is used.
         * learning_rate_scheduler_enabled: Whether a scheduler changes the rate.
     """
 
@@ -32,8 +32,8 @@ class ReinforceConfig(SerializableConfig):
     beta_2: float = 0.999
     optimizer_epsilon: float = 1e-8
     gradient_norm_limit: float = 0.5
+    actor_weight_decay: float = 0.0
     entropy_bonus_enabled: bool = False
-    weight_decay_enabled: bool = False
     learning_rate_scheduler_enabled: bool = False
 
 

@@ -37,11 +37,11 @@ class ReinforceAgent:
         * collection_mode: Complete-episode collection required by Monte Carlo targets.
         * collection_size: Number of complete trajectories per optimizer update.
         * actor: Trainable bounded Gaussian actor.
-        * optimizer: Adam optimizer over actor parameters only.
+        * optimizer: Adam optimizer with explicit MLP-weight regularization.
         * sampling_generator: Isolated generator used only for policy sampling.
     """
 
-    STATE_VERSION = 3
+    STATE_VERSION = 4
     collection_mode = CollectionMode.COMPLETE_EPISODES
 
     def __init__(
@@ -65,6 +65,8 @@ class ReinforceAgent:
         self.dtype = dtype
         if actor_config.learning_rate is None:
             raise ValueError("ActorConfig requires an explicit learning rate.")
+        if config.actor_weight_decay < 0:
+            raise ValueError("Actor weight decay cannot be negative.")
         self.actor_learning_rate = float(actor_config.learning_rate)
         self.actor = ActorNetwork(
             observation_dimensions,
@@ -73,8 +75,25 @@ class ReinforceAgent:
             device=self.device,
             dtype=dtype,
         )
+        named_parameters = tuple(self.actor.named_parameters())
+        weight_parameters = [
+            parameter
+            for name, parameter in named_parameters
+            if name.endswith(".weight")
+        ]
+        unregularized_parameters = [
+            parameter
+            for name, parameter in named_parameters
+            if not name.endswith(".weight")
+        ]
         self.optimizer = torch.optim.Adam(
-            self.actor.parameters(),
+            (
+                {
+                    "params": weight_parameters,
+                    "weight_decay": config.actor_weight_decay,
+                },
+                {"params": unregularized_parameters, "weight_decay": 0.0},
+            ),
             lr=self.actor_learning_rate,
             betas=(config.beta_1, config.beta_2),
             eps=config.optimizer_epsilon,
@@ -198,6 +217,7 @@ class ReinforceAgent:
                     self.actor.parameters(), parameters_before
                 ),
                 "actor_learning_rate": self.actor_learning_rate,
+                "actor_weight_decay": self.config.actor_weight_decay,
                 "entropy_proxy": entropy_proxy,
                 "return_mean": float(flattened_returns.mean().item()),
                 "return_standard_deviation": float(

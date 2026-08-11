@@ -349,8 +349,13 @@ moved too far from the behaviour policy. It changes PPO's objective but does not
 directly clip its gradients. PPO value clipping would be a third, separate
 mechanism; it is disabled here.
 
-No entropy bonus, weight decay, learning-rate scheduler, PPO value clipping or
-KL early stop is enabled. The sampled value
+REINFORCE optionally applies an explicit Adam L2 penalty to the MLP weight
+matrices only. Biases and the learned log standard deviations are excluded, so
+this regularization cannot directly pull the exploration scale toward
+$\exp(0)=1$. The coefficient is part of `ReinforceConfig`; it defaults to zero,
+while the exploratory setting in `notebooks/reinforce.ipynb` is $10^{-4}$.
+A2C and PPO weight decay remain disabled. No entropy bonus, learning-rate
+scheduler, PPO value clipping or KL early stop is enabled. The sampled value
 $-\log\pi_{\mathbf\theta}(A_t\mid O_t)$ is logged only as a dispersion diagnostic.
 
 ## Episode endings and value bootstrap

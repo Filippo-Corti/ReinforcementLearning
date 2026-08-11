@@ -1260,3 +1260,36 @@ deterministic evaluations. Both sigma series contain one value per update.
 **Files**: `notebooks/reinforce.ipynb` and `docs/DIARY.md`.
 
 **Commit**: `docs: extend REINFORCE training plots [ai]`
+
+## 2026-08-11 — Optional REINFORCE actor-weight decay
+
+**Task**: Add an experimental actor-weight penalty for investigating the
+non-learning REINFORCE notebook policy without directly regularizing its
+exploration parameter.
+
+**Result**: Added the explicit `actor_weight_decay` coefficient to
+`ReinforceConfig`, defaulting to zero so existing runs retain their previous
+optimizer. The REINFORCE Adam optimizer now has two clear parameter groups:
+MLP weight matrices receive the configured L2 penalty, while biases and the
+learned throttle/steering log standard deviations receive zero weight decay.
+The agent records the coefficient with each optimizer update and rejects
+negative values. Its checkpoint state version was advanced because the
+optimizer parameter-group structure changed.
+
+The educational REINFORCE notebook enables `actor_weight_decay=1e-4` and
+explains its scope. Its existing long-run episode, batch, evaluation and reward
+edits were preserved, and the notebook was deliberately not re-executed.
+A2C and PPO continue to disable weight decay.
+
+**Validation**: Focused agent, configuration, educational-engine, shared-engine
+and experiment-runner tests passed all 29 tests. A new optimizer-structure test
+proves that every MLP `weight` parameter is in the `1e-4` group and that every
+bias plus the learned log standard deviation is in the zero-decay group. A
+second test covers rejection of negative coefficients. The notebook remains
+valid JSON and every Python cell parses successfully.
+
+**Files**: `src/configs/algorithms.py`, `src/agents/reinforce.py`,
+`tests/agents/test_reinforce.py`, `notebooks/reinforce.ipynb`,
+`docs/LEARNING.md`, and `docs/DIARY.md`.
+
+**Commit**: `feature: add REINFORCE actor weight decay [ai]`
