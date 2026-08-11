@@ -10,20 +10,18 @@ import numpy as np
 from numpy.typing import NDArray
 
 from configs.training import ObservationNormalizationConfig
-from recording.records import ObservationNormalizerState
+from recording.records import ObservationNormalizerStateRecord
 from utils.vectors import to_vector
 
 
 class RunningObservationNormalizer:
-    r"""
+    """
     Normalize vector observations with componentwise float64 running sums.
 
-    For component $j$ after $n$ training observations, the running mean and
-    variance are
-    $\mu_j = (\sum_i x_{i,j}) / n$ and
-    $\sigma_j^2 = (\sum_i x_{i,j}^2) / n - \mu_j^2$.
-    Each input becomes
-    $\hat{x}_j = (x_j - \mu_j) / \sqrt{\sigma_j^2 + \epsilon}$ and is clipped
+    For component j after n training observations, the running mean is
+    mean_j = sum_i(x_i,j) / n and the variance is
+    variance_j = sum_i(x_i,j^2) / n - mean_j^2. Each input becomes
+    normalized_x_j = (x_j - mean_j) / sqrt(variance_j + epsilon) and is clipped
     to the configured interval. Training observations update both sums before
     this formula is applied. Frozen normalization is used for bootstrap and evaluation
     observations, so those operations cannot change later training inputs.
@@ -70,17 +68,17 @@ class RunningObservationNormalizer:
         """
         return self._apply_normalization(self._to_vector(observation))
 
-    def state(self) -> ObservationNormalizerState:
+    def state(self) -> ObservationNormalizerStateRecord:
         """
         Return an immutable copy of the current running-sum state.
         """
-        return ObservationNormalizerState(
+        return ObservationNormalizerStateRecord(
             count=self.count,
             sums=tuple(float(value) for value in self.sums),
             squared_sums=tuple(float(value) for value in self.squared_sums),
         )
 
-    def restore(self, state: ObservationNormalizerState) -> None:
+    def restore(self, state: ObservationNormalizerStateRecord) -> None:
         """
         Restore a previously saved state for the same observation dimension.
         """

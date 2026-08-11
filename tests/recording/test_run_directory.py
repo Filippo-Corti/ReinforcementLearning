@@ -7,6 +7,7 @@ import json
 import pytest
 
 from recording import (
+    RUN_SCHEMA_VERSION,
     EpisodeOutcome,
     EpisodeRecord,
     IncompleteRunError,
@@ -66,7 +67,7 @@ def test_run_category_and_schema_mismatches_are_rejected(tmp_path) -> None:
     with pytest.raises(RunRecordingError, match="schema"):
         run.append("episodes", {"schema_version": 99})
     with pytest.raises(RunRecordingError, match="category"):
-        run.append("episodes", {"schema_version": 1})
+        run.append("episodes", {"schema_version": RUN_SCHEMA_VERSION})
     with pytest.raises(RunRecordingError, match="category"):
         mismatched = _episode(RunCategory.REPORTED)
         run.append("episodes", mismatched)
@@ -88,7 +89,9 @@ def test_completed_run_round_trips_canonical_jsonl(tmp_path) -> None:
 
 def test_completion_rejects_a_partial_metric_append(tmp_path) -> None:
     run = _create_run(tmp_path)
-    (run.path / "episodes.jsonl").write_text('{"schema_version":1}', encoding="utf-8")
+    (run.path / "episodes.jsonl").write_text(
+        f'{{"schema_version":{RUN_SCHEMA_VERSION}}}', encoding="utf-8"
+    )
 
     with pytest.raises(RunRecordingError, match="partial append"):
         run.complete({"training_interactions": 0})

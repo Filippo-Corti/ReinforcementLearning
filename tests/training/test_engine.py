@@ -16,8 +16,12 @@ from agents import (
 from configs import EnvironmentConfig, ObservationNormalizationConfig, SimulationConfig
 from envs.racing import RacingEnv
 from envs.tracks import Track, TrackWithGeometry
-from recording import RunCategory, TrainingTransition
-from training import OnPolicyTrainingEngine, RunningObservationNormalizer
+from recording import RunCategory
+from training import (
+    OnPolicyTrainingEngine,
+    RunningObservationNormalizer,
+    TrainingTransition,
+)
 
 
 class _FixedAgent:

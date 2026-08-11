@@ -9,12 +9,14 @@ from models import Policy
 from recording.records import (
     EpisodeOutcome,
     EpisodeRecord,
-    LoggedTransition,
+    LoggedTransitionRecord,
     MetricScope,
-    PolicyEvaluation,
+    PolicyEvaluationRecord,
     RunCategory,
-    ScalarSummary,
+    ScalarSummaryRecord,
 )
+
+from .evaluation import circuit_geometry_summary, trajectory_state
 
 
 def evaluate_policy_episode(
@@ -29,14 +31,14 @@ def evaluate_policy_episode(
     circuit_identity: str | None = None,
     root_identity: int | None = None,
     circuit_split: str | None = None,
-) -> PolicyEvaluation:
+) -> PolicyEvaluationRecord:
     """
     Run one baseline-policy episode and retain its summary and raw trajectory.
     """
     observation, _ = environment.reset(seed=reset_seed)
     total_return = 0.0
     maximum_progress = 0.0
-    transitions: list[LoggedTransition] = []
+    transitions: list[LoggedTransitionRecord] = []
     speeds: list[float] = []
     throttles: list[float] = []
     absolute_steering: list[float] = []
@@ -44,6 +46,7 @@ def evaluate_policy_episode(
         environment.track.generation.seed
     )
     for step_index in range(environment.config.simulation.max_episode_steps):
+        current_state = trajectory_state(environment, observation)
         action = policy.action(observation)
         next_observation, reward, terminated, truncated, info = environment.step(action)
         speeds.append(float(observation[2]))
@@ -52,7 +55,7 @@ def evaluate_policy_episode(
         progress = float(info["episode_progress"]) / environment.track.track_length
         maximum_progress = max(maximum_progress, progress)
         transitions.append(
-            LoggedTransition(
+            LoggedTransitionRecord(
                 run_category=run_category,
                 scope=MetricScope.REFERENCE,
                 episode_index=episode_index,
@@ -68,6 +71,12 @@ def evaluate_policy_episode(
                 progress=progress,
                 elapsed_time=float(info["elapsed_time"]),
                 circuit_identity=resolved_circuit_identity,
+                position=current_state.position,
+                heading=current_state.heading,
+                current_curvature=current_state.current_curvature,
+                preview_curvature=current_state.preview_curvature,
+                speed=current_state.speed,
+                lateral_acceleration_proxy=(current_state.lateral_acceleration_proxy),
             )
         )
         total_return += float(reward)
@@ -103,21 +112,30 @@ def evaluate_policy_episode(
                 absolute_steering=_scalar_summary(absolute_steering),
                 positive_throttle_fraction=float(np.mean(np.asarray(throttles) > 0)),
                 braking_fraction=float(np.mean(np.asarray(throttles) < 0)),
+                circuit_geometry=circuit_geometry_summary(environment),
             )
-            return PolicyEvaluation(episode=episode, transitions=tuple(transitions))
+            return PolicyEvaluationRecord(
+                episode=episode, transitions=tuple(transitions)
+            )
     raise RuntimeError("RacingEnv did not end within its configured episode limit.")
 
 
-def _scalar_summary(values: list[float]) -> ScalarSummary:
+def _scalar_summary(values: list[float]) -> ScalarSummaryRecord:
     """
     Summarize one non-empty episode signal using population dispersion.
     """
     array = np.asarray(values, dtype=np.float64)
-    return ScalarSummary(
+    return ScalarSummaryRecord(
         mean=float(np.mean(array)),
         standard_deviation=float(np.std(array)),
         minimum=float(np.min(array)),
         maximum=float(np.max(array)),
+        quantiles={
+            "q25": float(np.quantile(array, 0.25)),
+            "q50": float(np.quantile(array, 0.50)),
+            "q75": float(np.quantile(array, 0.75)),
+            "q90": float(np.quantile(array, 0.90)),
+        },
     )
 
 

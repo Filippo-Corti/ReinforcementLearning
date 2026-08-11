@@ -153,6 +153,8 @@ class LoggingConfig(SerializableConfig):
         * record_evaluation_metrics: Whether every evaluation is recorded.
         * record_hardware_context: Whether machine and dependency context is retained.
         * trajectory_interval: Training interactions between saved trajectories.
+        * near_saturated_steering_threshold: Explicit absolute steering threshold
+          used by reported episode summaries.
     """
 
     record_episode_metrics: bool = True
@@ -160,6 +162,7 @@ class LoggingConfig(SerializableConfig):
     record_evaluation_metrics: bool = True
     record_hardware_context: bool = True
     trajectory_interval: int = 250_000
+    near_saturated_steering_threshold: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

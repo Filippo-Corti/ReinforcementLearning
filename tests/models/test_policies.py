@@ -30,21 +30,21 @@ def test_sample_and_recomputed_probability_support_single_and_batched_inputs() -
     single = actor.sample(torch.zeros(4), torch.Generator().manual_seed(11))
     batch = actor.sample(torch.zeros(3, 4), torch.Generator().manual_seed(11))
 
-    assert single.action.shape == (2,)
-    assert single.pre_squash_action.shape == (2,)
+    assert single.env_action.shape == (2,)
+    assert single.raw_action.shape == (2,)
     assert single.log_probability.shape == ()
-    assert batch.action.shape == (3, 2)
-    assert batch.pre_squash_action.shape == (3, 2)
+    assert batch.env_action.shape == (3, 2)
+    assert batch.raw_action.shape == (3, 2)
     assert batch.log_probability.shape == (3,)
-    assert torch.all(single.action > -1.0)
-    assert torch.all(single.action < 1.0)
-    assert torch.all(batch.action > -1.0)
-    assert torch.all(batch.action < 1.0)
-    assert not single.action.requires_grad
-    assert not single.pre_squash_action.requires_grad
+    assert torch.all(single.env_action > -1.0)
+    assert torch.all(single.env_action < 1.0)
+    assert torch.all(batch.env_action > -1.0)
+    assert torch.all(batch.env_action < 1.0)
+    assert not single.env_action.requires_grad
+    assert not single.raw_action.requires_grad
     assert not single.log_probability.requires_grad
     assert torch.allclose(
-        actor.log_probability(torch.zeros(4), single.pre_squash_action),
+        actor.log_probability(torch.zeros(4), single.raw_action),
         single.log_probability,
     )
 
@@ -128,8 +128,8 @@ def test_initialization_and_sampling_are_seed_reproducible_without_global_rng_ch
     observations = torch.ones(2, 4)
     first_sample = first.sample(observations, torch.Generator().manual_seed(14))
     second_sample = second.sample(observations, torch.Generator().manual_seed(14))
-    assert torch.equal(first_sample.pre_squash_action, second_sample.pre_squash_action)
-    assert torch.equal(first_sample.action, second_sample.action)
+    assert torch.equal(first_sample.raw_action, second_sample.raw_action)
+    assert torch.equal(first_sample.env_action, second_sample.env_action)
 
 
 def test_deterministic_action_does_not_consume_sampling_generator() -> None:

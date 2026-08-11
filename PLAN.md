@@ -589,7 +589,7 @@ data or evaluation contracts.
 
 ### 9. Add Reproducible Analysis and Reporting
 
-**Status:** Pending; depends on Step 8.
+**Status:** Complete.
 
 **Objective:** Derive every table, curve and diagnostic in `docs/EXPERIMENT.md` from
 machine-readable run records.

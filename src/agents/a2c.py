@@ -114,8 +114,8 @@ class A2CAgent:
         with torch.inference_mode():
             current_value = self.critic(observation)[0]
         return CollectedAction(
-            pre_squash_action=sample.pre_squash_action[0].cpu().numpy(),
-            action=sample.action[0].cpu().numpy(),
+            raw_action=sample.raw_action[0].cpu().numpy(),
+            env_action=sample.env_action[0].cpu().numpy(),
             behaviour_log_probability=float(sample.log_probability[0].item()),
             current_value=float(current_value.item()),
         )
@@ -225,6 +225,10 @@ class A2CAgent:
                 "value_target_standard_deviation": float(
                     targets.value_targets.std(unbiased=False).item()
                 ),
+                "value_prediction_mean": float(predictions.detach().mean().item()),
+                "value_prediction_standard_deviation": float(
+                    predictions.detach().std(unbiased=False).item()
+                ),
                 "temporal_difference_error_mean": float(
                     targets.temporal_difference_errors.mean().item()
                 ),
@@ -299,7 +303,7 @@ class A2CAgent:
         tensors = rollout.tensors(device=self.device)
         log_probabilities = self.actor.log_probability(
             tensors.observations.to(dtype=self.dtype),
-            tensors.pre_squash_actions.to(dtype=self.dtype),
+            tensors.raw_actions.to(dtype=self.dtype),
         )
         return -(log_probabilities * advantages.detach()).mean()
 
@@ -322,7 +326,7 @@ class A2CAgent:
         return float(
             -self.actor.log_probability(
                 tensors.observations.to(dtype=self.dtype),
-                tensors.pre_squash_actions.to(dtype=self.dtype),
+                tensors.raw_actions.to(dtype=self.dtype),
             )
             .detach()
             .mean()

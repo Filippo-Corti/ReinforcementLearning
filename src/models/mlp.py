@@ -23,6 +23,9 @@ def make_mlp(
 ) -> nn.Sequential:
     """
     Build an orthogonally initialized fully connected network.
+    That is, a fully connected network with weights initialized such that
+    each layer is an orthogonal matrix, bias initialized to zero, and with
+    a gain factor (multiplier) applied to the weights.
 
     Layers are first created on PyTorch's meta device so their default
     initialization cannot consume the process-wide random stream. Every real

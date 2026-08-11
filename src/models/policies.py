@@ -64,20 +64,32 @@ class ScriptedFrenetPolicy(Policy):
         """
         Apply the documented Frenet feedback and target-speed equations.
         """
+        return self.sample(observation).env_action
+
+    def sample(
+        self, observation: NDArray[np.float32]
+    ) -> PolicySample[NDArray[np.float32], None]:
+        """
+        Return the unbounded controls and the clipped environment action.
+        """
         lateral_distance, heading_error, speed, curvature = map(float, observation)
-        steering = np.clip(
+        raw_steering = (
             -self.lateral_gain * lateral_distance
             - self.heading_gain * heading_error
-            + self.curvature_gain * curvature,
-            -1.0,
-            1.0,
+            + self.curvature_gain * curvature
         )
         target_speed = min(
             self.maximum_target_speed,
             np.sqrt(self.lateral_acceleration_limit / max(abs(curvature), 1e-4)),
         )
-        throttle = np.clip((target_speed - speed) / self.speed_error_scale, -1.0, 1.0)
-        return np.asarray((throttle, steering), dtype=np.float32)
+        raw_throttle = (target_speed - speed) / self.speed_error_scale
+        raw_action = np.asarray((raw_throttle, raw_steering), dtype=np.float32)
+        env_action = np.clip(raw_action, -1.0, 1.0).astype(np.float32, copy=False)
+        return PolicySample(
+            raw_action=raw_action,
+            env_action=env_action,
+            log_probability=None,
+        )
 
 
 @dataclass(slots=True)
@@ -95,43 +107,54 @@ class RandomPolicy(Policy):
         """
         Return one independent uniform action without global randomness.
         """
+        return self.sample(observation).env_action
+
+    def sample(
+        self, observation: NDArray[np.float32]
+    ) -> PolicySample[NDArray[np.float32], float]:
+        """
+        Return one uniform action and its density on the bounded action square.
+        """
         del observation
-        return self.generator.uniform(-1.0, 1.0, size=2).astype(np.float32)
+        env_action = self.generator.uniform(-1.0, 1.0, size=2).astype(np.float32)
+        return PolicySample(
+            raw_action=env_action.copy(),
+            env_action=env_action,
+            log_probability=-2.0 * log(2.0),
+        )
 
 
 @dataclass(frozen=True, slots=True)
-class PolicySample:
-    r"""
+class PolicySample[ActionValue, ProbabilityValue]:
+    """
     Store a sampled bounded action and its behaviour-policy probability.
 
     Fields:
-        * pre_squash_action: Gaussian sample $u$ before the `tanh` transform.
-        * action: Bounded environment action $a = \tanh(u)$.
-        * log_probability: Corrected log probability of the complete action vector.
+        * raw_action: Action before policy-specific clipping or transformation.
+        * env_action: Bounded action after post-processing, sent to the environment.
+        * log_probability: Log probability of the complete action vector, when defined.
     """
 
-    pre_squash_action: Tensor
-    action: Tensor
-    log_probability: Tensor
+    raw_action: ActionValue
+    env_action: ActionValue
+    log_probability: ProbabilityValue
 
 
 class GaussianPolicy(nn.Module, Policy):
-    r"""
+    """
     Map observations to a diagonal Gaussian and bounded continuous actions.
 
-    For normalized observation $x$, the mean network produces
-    $\mu_\theta(x)$. A learned state-independent vector $\ell$ supplies
-    $\sigma = \exp(\operatorname{clamp}(\ell, \ell_{min}, \ell_{max}))$.
-    Training samples an unbounded pre-squash action
-    $u = \mu_\theta(x) + \sigma \odot \epsilon$, with
-    $\epsilon \sim \mathcal{N}(0, I)$, then sends $a = \tanh(u)$ to the
-    environment. `action` and `deterministic_action` instead return
-    $\tanh(\mu_\theta(x))$ without consuming randomness.
+    The policy feeds normalized observations into an MLP that outputs the mean
+    action vector.
+    Then:
+    * If acting deterministically, the mean is bounded via `tanh`.
+    * If acting stochastically, Gaussian noise uses the learned standard
+      deviation, then the sample is bounded via `tanh`.
 
     Fields:
         * mean: MLP representing the observation-dependent Gaussian mean.
         * log_standard_deviation: Learned state-independent log scale.
-        * log_standard_deviation_bounds: Bounds applied before exponentiation.
+        * log_standard_deviation_bounds: [Min, Max] bounds applied before exponentiation.
     """
 
     def __init__(
@@ -184,9 +207,9 @@ class GaussianPolicy(nn.Module, Policy):
 
     def sample(
         self, observations: Tensor, sampling_generator: torch.Generator
-    ) -> PolicySample:
-        r"""
-        Sample $u = \mu_\theta(x) + \sigma \odot \epsilon$ and return `tanh(u)`.
+    ) -> PolicySample[Tensor, Tensor]:
+        """
+        Sample u = mean(x) + standard_deviation * noise and return tanh(u).
 
         Sampling is detached because collection data defines a fixed behaviour
         policy. Optimization later recomputes log probabilities with gradients.
@@ -199,37 +222,33 @@ class GaussianPolicy(nn.Module, Policy):
                 device=mean.device,
                 generator=sampling_generator,
             )
-            pre_squash_action = mean + self.standard_deviation * noise
-            action = torch.tanh(pre_squash_action)
+            raw_action = mean + self.standard_deviation * noise
+            env_action = torch.tanh(raw_action)
             log_probability = self._log_probability_from_pre_squash_action(
-                observations, pre_squash_action
+                observations, raw_action
             )
         return PolicySample(
-            pre_squash_action=pre_squash_action.detach(),
-            action=action.detach(),
+            raw_action=raw_action.detach(),
+            env_action=env_action.detach(),
             log_probability=log_probability.detach(),
         )
 
     def deterministic_action(self, observations: Tensor) -> Tensor:
-        r"""
-        Return $\tanh(\mu_\theta(x))$ without consuming a sampling generator.
+        """
+        Return tanh(mean(x)) without consuming a sampling generator.
         """
         return torch.tanh(self.mean(observations))
 
-    def log_probability(
-        self, observations: Tensor, pre_squash_actions: Tensor
-    ) -> Tensor:
+    def log_probability(self, observations: Tensor, raw_actions: Tensor) -> Tensor:
         """
-        Recompute the corrected log probability of stored pre-squash actions.
+        Recompute the corrected log probability of stored raw Gaussian actions.
         """
-        return self._log_probability_from_pre_squash_action(
-            observations, pre_squash_actions
-        )
+        return self._log_probability_from_pre_squash_action(observations, raw_actions)
 
     @property
     def mean(self) -> nn.Module:
-        r"""
-        Return the MLP $\mu_\theta$ that maps observations to Gaussian means.
+        """
+        Return the MLP mean(x) that maps observations to Gaussian means.
 
         The mean itself cannot be a stored tensor because it depends on the
         observation. Calling this module as `policy.mean(observations)` computes
@@ -239,8 +258,8 @@ class GaussianPolicy(nn.Module, Policy):
 
     @property
     def standard_deviation(self) -> Tensor:
-        r"""
-        Return $\exp(\operatorname{clamp}(\ell, \ell_{min}, \ell_{max}))$.
+        """
+        Return exp(clamp(log_standard_deviation, minimum, maximum)).
 
         Clamping the learned log scale prevents vanishing exploration and
         numerically extreme Gaussian samples while preserving gradients inside
@@ -250,14 +269,14 @@ class GaussianPolicy(nn.Module, Policy):
         return torch.exp(self.log_standard_deviation.clamp(minimum, maximum))
 
     def _log_probability_from_pre_squash_action(
-        self, observations: Tensor, pre_squash_actions: Tensor
+        self, observations: Tensor, raw_actions: Tensor
     ) -> Tensor:
-        r"""
-        Evaluate the bounded vector action density from its pre-squash value.
+        """
+        Evaluate the bounded vector action density from its raw Gaussian value.
 
         For every component, this subtracts the `tanh` change-of-variables term
-        $\log(1 - \tanh^2(u_i))$ from the diagonal Gaussian log density of
-        $u_i$. The stable equivalent below avoids evaluating `log(1-a^2)` near
+        log(1 - tanh(u_i)^2) from the diagonal Gaussian log density of u_i.
+        The stable equivalent below avoids evaluating log(1 - a^2) near
         the action bounds. Components are summed because one environment action
         is a vector-valued joint event.
         """
@@ -265,74 +284,11 @@ class GaussianPolicy(nn.Module, Policy):
         log_standard_deviation = self.log_standard_deviation.clamp(
             *self.log_standard_deviation_bounds
         )
-        standardized = (pre_squash_actions - mean) / torch.exp(log_standard_deviation)
+        standardized = (raw_actions - mean) / torch.exp(log_standard_deviation)
         gaussian_log_density = -0.5 * (
             standardized.square() + 2.0 * log_standard_deviation + _LOG_TWO_PI
         )
         log_jacobian = 2.0 * (
-            log(2.0)
-            - pre_squash_actions
-            - functional.softplus(-2.0 * pre_squash_actions)
+            log(2.0) - raw_actions - functional.softplus(-2.0 * raw_actions)
         )
         return (gaussian_log_density - log_jacobian).sum(dim=-1)
-
-
-class ActorNetwork(nn.Module, Policy):
-    """
-    Own the trainable Gaussian policy used as an agent's actor.
-
-    This explicit actor role keeps algorithm code and parameter accounting from
-    confusing a neural actor with scripted or random policies.
-
-    Fields:
-        * policy: Gaussian policy parametrized by this actor's neural network.
-    """
-
-    def __init__(
-        self,
-        observation_dimensions: int,
-        config: ActorConfig,
-        initialization_generator: torch.Generator,
-        *,
-        device: torch.device | str = "cpu",
-        dtype: torch.dtype | None = None,
-    ) -> None:
-        """
-        Construct the contained Gaussian policy from the actor configuration.
-        """
-        super().__init__()
-        self.policy = GaussianPolicy(
-            observation_dimensions,
-            config,
-            initialization_generator,
-            device=device,
-            dtype=dtype,
-        )
-
-    def action(self, observation: NDArray[np.float32]) -> NDArray[np.float32]:
-        """
-        Return the contained policy's deterministic action for evaluation.
-        """
-        return self.policy.action(observation)
-
-    def sample(
-        self, observations: Tensor, sampling_generator: torch.Generator
-    ) -> PolicySample:
-        """
-        Draw a detached training action from the contained Gaussian policy.
-        """
-        return self.policy.sample(observations, sampling_generator)
-
-    def deterministic_action(self, observations: Tensor) -> Tensor:
-        """
-        Return the bounded Gaussian mean action.
-        """
-        return self.policy.deterministic_action(observations)
-
-    def log_probability(
-        self, observations: Tensor, pre_squash_actions: Tensor
-    ) -> Tensor:
-        """
-        Recompute action log probabilities through the contained policy.
-        """
-        return self.policy.log_probability(observations, pre_squash_actions)

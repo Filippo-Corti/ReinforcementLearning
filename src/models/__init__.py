@@ -6,10 +6,10 @@ from dataclasses import dataclass
 
 from torch import nn
 
+from .actor import ActorNetwork
 from .critic import CriticNetwork
 from .mlp import make_mlp
 from .policies import (
-    ActorNetwork,
     GaussianPolicy,
     Policy,
     PolicySample,

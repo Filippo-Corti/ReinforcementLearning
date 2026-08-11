@@ -11,10 +11,10 @@ from .mlp import make_mlp
 
 
 class CriticNetwork(nn.Module):
-    r"""
-    Approximate the state-value function used by actor-critic algorithms.
+    """
+    Approximate the state-value function V with an MLP.
 
-    A2C and PPO use this critic to estimate $V_\phi(s)$ for bootstrapping,
+    A2C and PPO use this critic to estimate V(s) for bootstrapping,
     advantage estimation, and the value-regression objective. It returns one
     scalar estimate for each normalized observation.
 

@@ -87,8 +87,8 @@ class ReinforceAgent:
         observation = self._observation_tensor(normalized_observation).unsqueeze(0)
         sample = self.actor.sample(observation, self.sampling_generator)
         return CollectedAction(
-            pre_squash_action=sample.pre_squash_action[0].cpu().numpy(),
-            action=sample.action[0].cpu().numpy(),
+            raw_action=sample.raw_action[0].cpu().numpy(),
+            env_action=sample.env_action[0].cpu().numpy(),
             behaviour_log_probability=float(sample.log_probability[0].item()),
             current_value=None,
         )
@@ -227,8 +227,8 @@ class ReinforceAgent:
     def _log_probabilities(self, episode: OnPolicyRollout) -> Tensor:
         tensors = episode.tensors(device=self.device)
         observations = tensors.observations.to(dtype=self.dtype)
-        pre_squash_actions = tensors.pre_squash_actions.to(dtype=self.dtype)
-        return self.actor.log_probability(observations, pre_squash_actions)
+        raw_actions = tensors.raw_actions.to(dtype=self.dtype)
+        return self.actor.log_probability(observations, raw_actions)
 
     def _standardize_returns(self, returns: tuple[Tensor, ...]) -> tuple[Tensor, ...]:
         all_returns = torch.cat(returns)

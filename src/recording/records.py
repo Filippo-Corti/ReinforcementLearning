@@ -6,13 +6,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-import numpy as np
-from numpy.typing import NDArray
-from torch import Tensor
-
-from utils.vectors import optional_scalar, to_vector
-
-METRICS_SCHEMA_VERSION = 1
+METRICS_SCHEMA_VERSION = 2
 
 
 class RunCategory(StrEnum):
@@ -46,7 +40,7 @@ class EpisodeOutcome(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class ScalarSummary:
+class ScalarSummaryRecord:
     """
     Summarize one scalar episode signal without retaining every sample.
 
@@ -66,7 +60,21 @@ class ScalarSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class LoggedTransition:
+class CircuitGeometrySummaryRecord:
+    """
+    Preserve the circuit facts required for geometry-stratified analysis.
+
+    Fields:
+        * track_length: Total centerline length.
+        * absolute_curvature: Distribution of absolute sampled curvature.
+    """
+
+    track_length: float
+    absolute_curvature: ScalarSummaryRecord
+
+
+@dataclass(frozen=True, slots=True)
+class LoggedTransitionRecord:
     """
     Store one environment transition without discarding lifecycle semantics.
 
@@ -86,6 +94,13 @@ class LoggedTransition:
         * progress: Accumulated signed progress after the action.
         * elapsed_time: Simulated time after the action.
         * circuit_identity: Stable logical circuit identity.
+        * position: Pre-action Cartesian vehicle position when retained.
+        * heading: Pre-action vehicle heading when retained.
+        * current_curvature: Centerline curvature at the pre-action projection.
+        * preview_curvature: Curvature preview supplied to a Frenet policy.
+        * speed: Pre-action vehicle speed.
+        * lateral_acceleration_proxy: The diagnostic value speed squared times
+          absolute current curvature.
     """
 
     run_category: RunCategory
@@ -103,6 +118,12 @@ class LoggedTransition:
     progress: float
     elapsed_time: float
     circuit_identity: str
+    position: tuple[float, float] | None = None
+    heading: float | None = None
+    current_curvature: float | None = None
+    preview_curvature: float | None = None
+    speed: float | None = None
+    lateral_acceleration_proxy: float | None = None
     schema_version: int = METRICS_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,104 +131,6 @@ class LoggedTransition:
         Return a deterministic JSON-compatible representation.
         """
         return _record_dict(self)
-
-
-VectorInput = NDArray[np.float32] | Tensor
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingTransition:
-    """
-    Store the detached transition data consumed by on-policy updates.
-
-    This differs from `LoggedTransition`: a logged transition retains raw
-    environment observations and diagnostic outcomes for later analysis, while
-    this checkpointed training record retains normalized network inputs,
-    pre-squash actions, behaviour probabilities, and critic estimates required
-    to reproduce an update.
-
-    Fields:
-        * normalized_observation: Exact network input before the action.
-        * pre_squash_action: Gaussian sample before applying `tanh`.
-        * action: Bounded action sent to the environment.
-        * reward: Environment reward returned after the action.
-        * behaviour_log_probability: Collection-policy log probability.
-        * current_value: Critic value at the current observation, if used.
-        * next_value: Bootstrap value, zero at true termination.
-        * terminated: Whether a genuine MDP ending occurred.
-        * truncated: Whether the external time limit occurred.
-        * next_normalized_observation: Frozen-statistics next-state input.
-        * episode_identity: Stable identity of the environment episode.
-        * episode_step_index: Zero-based position within that episode.
-        * circuit_identity: Stable identity of the episode's circuit.
-    """
-
-    normalized_observation: VectorInput
-    pre_squash_action: VectorInput
-    action: VectorInput
-    reward: float
-    behaviour_log_probability: float | Tensor | None
-    current_value: float | Tensor | None
-    next_value: float | Tensor | None
-    terminated: bool
-    truncated: bool
-    next_normalized_observation: VectorInput
-    episode_identity: int
-    episode_step_index: int
-    circuit_identity: str
-
-    def __post_init__(self) -> None:
-        """
-        Detach scalar tensors and preserve read-only float32 vector copies.
-        """
-        observation = to_vector(
-            self.normalized_observation,
-            name="normalized_observation",
-            readonly=True,
-        )
-        pre_squash_action = to_vector(
-            self.pre_squash_action,
-            name="pre_squash_action",
-            readonly=True,
-        )
-        action = to_vector(self.action, name="action", readonly=True)
-        next_observation = to_vector(
-            self.next_normalized_observation,
-            name="next_normalized_observation",
-            readonly=True,
-        )
-        if observation.shape != next_observation.shape:
-            raise ValueError(
-                "Current and next normalized observations must have one shape."
-            )
-        if pre_squash_action.shape != action.shape:
-            raise ValueError("Pre-squash and bounded actions must have one shape.")
-        if self.terminated and self.truncated:
-            raise ValueError("A transition cannot be both terminated and truncated.")
-        if self.episode_step_index < 0:
-            raise ValueError("Episode step indices cannot be negative.")
-        next_value = optional_scalar(self.next_value)
-        if self.terminated and next_value not in (None, 0.0):
-            raise ValueError("A true termination must store a zero bootstrap value.")
-        object.__setattr__(self, "normalized_observation", observation)
-        object.__setattr__(self, "pre_squash_action", pre_squash_action)
-        object.__setattr__(self, "action", action)
-        object.__setattr__(self, "reward", float(self.reward))
-        object.__setattr__(
-            self,
-            "behaviour_log_probability",
-            optional_scalar(self.behaviour_log_probability),
-        )
-        object.__setattr__(self, "current_value", optional_scalar(self.current_value))
-        object.__setattr__(self, "next_value", next_value)
-        object.__setattr__(self, "next_normalized_observation", next_observation)
-
-    @property
-    def ends_episode(self) -> bool:
-        """
-        Return whether this transition reaches an environment boundary.
-        """
-        return self.terminated or self.truncated
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +163,7 @@ class EpisodeRecord:
         * positive_throttle_fraction: Fraction of actions with positive throttle.
         * braking_fraction: Fraction of actions with negative throttle.
         * near_saturated_steering_fraction: Fraction meeting the configured threshold.
+        * circuit_geometry: Frozen length and curvature summary for this circuit.
     """
 
     run_category: RunCategory
@@ -260,12 +184,13 @@ class EpisodeRecord:
     observation_type: str | None = None
     circuit_seed: int | None = None
     circuit_split: str | None = None
-    speed: ScalarSummary | None = None
-    throttle: ScalarSummary | None = None
-    absolute_steering: ScalarSummary | None = None
+    speed: ScalarSummaryRecord | None = None
+    throttle: ScalarSummaryRecord | None = None
+    absolute_steering: ScalarSummaryRecord | None = None
     positive_throttle_fraction: float | None = None
     braking_fraction: float | None = None
     near_saturated_steering_fraction: float | None = None
+    circuit_geometry: CircuitGeometrySummaryRecord | None = None
     schema_version: int = METRICS_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -346,6 +271,8 @@ class EvaluationRecord:
         * evaluation_interactions: Cumulative isolated evaluation interactions.
         * episode: Complete episode summary.
         * normalizer_checksum: Frozen normalizer state identity when applicable.
+        * collection_duration: Cumulative training collection time at this checkpoint.
+        * optimization_duration: Cumulative optimization time at this checkpoint.
     """
 
     run_category: RunCategory
@@ -355,6 +282,8 @@ class EvaluationRecord:
     evaluation_interactions: int
     episode: EpisodeRecord
     normalizer_checksum: str | None = None
+    collection_duration: float = field(default=0.0, compare=False)
+    optimization_duration: float = field(default=0.0, compare=False)
     schema_version: int = METRICS_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -367,7 +296,11 @@ class EvaluationRecord:
         """
         Return a deterministic JSON-compatible representation.
         """
-        return _record_dict(self)
+        record = _record_dict(self)
+        record["training_duration"] = (
+            self.collection_duration + self.optimization_duration
+        )
+        return record
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,7 +386,7 @@ class ResourceRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class ObservationNormalizerState:
+class ObservationNormalizerStateRecord:
     """
     Store the running sums needed to restore observation normalization.
 
@@ -479,7 +412,7 @@ class ObservationNormalizerState:
 
 
 @dataclass(frozen=True, slots=True)
-class PolicyEvaluation:
+class PolicyEvaluationRecord:
     """
     Store one baseline-policy episode and its logged trajectory.
 
@@ -489,11 +422,11 @@ class PolicyEvaluation:
     """
 
     episode: EpisodeRecord
-    transitions: tuple[LoggedTransition, ...]
+    transitions: tuple[LoggedTransitionRecord, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class DeterministicEvaluation:
+class DeterministicEvaluationRecord:
     """
     Store one learned-policy evaluation and its logged trajectory.
 
@@ -503,7 +436,7 @@ class DeterministicEvaluation:
     """
 
     record: EvaluationRecord
-    transitions: tuple[LoggedTransition, ...]
+    transitions: tuple[LoggedTransitionRecord, ...]
 
 
 def _record_dict(record: Any) -> dict[str, Any]:

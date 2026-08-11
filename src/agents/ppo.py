@@ -119,8 +119,8 @@ class PPOAgent:
         with torch.inference_mode():
             current_value = self.critic(observation)[0]
         return CollectedAction(
-            pre_squash_action=sample.pre_squash_action[0].cpu().numpy(),
-            action=sample.action[0].cpu().numpy(),
+            raw_action=sample.raw_action[0].cpu().numpy(),
+            env_action=sample.env_action[0].cpu().numpy(),
             behaviour_log_probability=float(sample.log_probability[0].item()),
             current_value=float(current_value.item()),
         )
@@ -167,7 +167,7 @@ class PPOAgent:
             device=self.device,
         )
         observations = tensors.observations.to(dtype=self.dtype)
-        pre_squash_actions = tensors.pre_squash_actions.to(dtype=self.dtype)
+        raw_actions = tensors.raw_actions.to(dtype=self.dtype)
         old_log_probabilities = tensors.behaviour_log_probabilities.detach().clone()
         advantages = self._standardize_advantages(targets.raw_advantages)
         value_targets = targets.value_targets.detach().clone()
@@ -206,7 +206,7 @@ class PPOAgent:
                 epoch_batches.append(tuple(int(index) for index in indices.tolist()))
                 minibatch_metrics = self._update_minibatch(
                     observations[indices],
-                    pre_squash_actions[indices],
+                    raw_actions[indices],
                     old_log_probabilities[indices],
                     advantages[indices],
                     value_targets[indices],
@@ -264,6 +264,10 @@ class PPOAgent:
                 "value_target_mean": float(value_targets.mean().item()),
                 "value_target_standard_deviation": float(
                     value_targets.std(unbiased=False).item()
+                ),
+                "value_prediction_mean": float(final_predictions.mean().item()),
+                "value_prediction_standard_deviation": float(
+                    final_predictions.std(unbiased=False).item()
                 ),
                 "temporal_difference_error_mean": float(
                     targets.temporal_difference_errors.mean().item()
@@ -349,14 +353,14 @@ class PPOAgent:
     def _update_minibatch(
         self,
         observations: Tensor,
-        pre_squash_actions: Tensor,
+        raw_actions: Tensor,
         old_log_probabilities: Tensor,
         advantages: Tensor,
         value_targets: Tensor,
     ) -> dict[str, float]:
         actor_loss, ratios, log_ratios = self._actor_loss(
             observations,
-            pre_squash_actions,
+            raw_actions,
             old_log_probabilities,
             advantages,
         )
@@ -405,12 +409,12 @@ class PPOAgent:
     def _actor_loss(
         self,
         observations: Tensor,
-        pre_squash_actions: Tensor,
+        raw_actions: Tensor,
         old_log_probabilities: Tensor,
         advantages: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
         current_log_probabilities = self.actor.log_probability(
-            observations, pre_squash_actions
+            observations, raw_actions
         )
         log_ratios = current_log_probabilities - old_log_probabilities.detach()
         ratios = log_ratios.exp()

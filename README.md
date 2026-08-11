@@ -112,8 +112,8 @@ compilation, the full pytest suite and `git diff --check`. It also generates,
 saves, reloads and RGB-renders a track; compares all outputs from two identical
 action replays; runs Gymnasium's environment checker; and starts then quits the
 manual driver through SDL's dummy video backend. Its pinned dependency set is
-Python 3.12+ with Black 26.5.1, Gymnasium 1.3.0, NumPy 2.4.4, Pygame 2.6.1,
-Pyright 1.1.411, pytest 9.1.1, Ruff 0.16.0, SciPy 1.18.0 and setuptools
+Python 3.12+ with Black 26.5.1, Gymnasium 1.3.0, Matplotlib 3.10, NumPy 2.4.4,
+Pygame 2.6.1, Pyright 1.1.411, pytest 9.1.1, Ruff 0.16.0, SciPy 1.18.0 and setuptools
 80.10.2 (see `requirements.txt` for the authoritative manifest).
 
 Version 0 deliberately uses a point-car kinematic bicycle model. It has no
@@ -181,6 +181,27 @@ The run directory records complete training episodes, REINFORCE updates,
 deterministic evaluations when enabled, and a final checkpoint. A partial final
 eight-episode batch remains counted in the interaction budget but is not used
 for an optimizer update, as required by the Monte Carlo target.
+
+## Analyze recorded results
+
+Regenerate Experiment 1 tables and figures only from complete reported run
+directories:
+
+```bash
+python experiments/analyze_results.py --experiment 1 --results-root results/reported_experiments/experiment_1 --output results/reported_experiments/experiment_1_analysis
+```
+
+Use `--experiment 2` for the observation-generalization study. Its optional
+`--geometry-specification` JSON supplies the frozen length and curvature bin
+edges; the analysis command never invents those experimental thresholds.
+
+The output contains canonical JSON and CSV tables, figures, and an
+`analysis_manifest.json` that identifies every input run and checksum. Runs are
+aggregated by training root, paired by recorded root/circuit identity, and
+processed in canonical order. Re-running the command produces byte-identical
+data tables. Reported training commands must also provide
+`--near-saturated-steering-threshold`; this protocol value has no implicit
+default.
 
 ## Final suggestions
 

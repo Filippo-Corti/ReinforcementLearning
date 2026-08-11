@@ -6,8 +6,8 @@ import torch
 
 from agents import AgentUpdateInput, CollectedAction, CollectionMode, ReinforceAgent
 from configs import ActorConfig, ReinforceConfig
-from recording import TrainingTransition
 from tests.fixtures.envs.continuous_control import PositiveThrottleEnvironment
+from training import TrainingTransition
 from training.buffers import OnPolicyRollout
 
 
@@ -35,8 +35,8 @@ def _episode(
     else:
         pre_squash = np.asarray(pre_squash_action, dtype=np.float32)
         choice = CollectedAction(
-            pre_squash_action=pre_squash,
-            action=np.tanh(pre_squash).astype(np.float32),
+            raw_action=pre_squash,
+            env_action=np.tanh(pre_squash).astype(np.float32),
             behaviour_log_probability=None,
             current_value=None,
         )
@@ -44,8 +44,8 @@ def _episode(
         (
             TrainingTransition(
                 normalized_observation=observation,
-                pre_squash_action=choice.pre_squash_action,
-                action=choice.action,
+                raw_action=choice.raw_action,
+                env_action=choice.env_action,
                 reward=reward,
                 behaviour_log_probability=choice.behaviour_log_probability,
                 current_value=None,
@@ -67,14 +67,14 @@ def _batch(agent: ReinforceAgent) -> AgentUpdateInput:
     for identity in range(agent.collection_size):
         observation = environment.reset()
         decision = agent.collect_action(observation)
-        _, reward = environment.step(decision.action)
+        _, reward = environment.step(decision.env_action)
         episodes.append(
             OnPolicyRollout(
                 (
                     TrainingTransition(
                         normalized_observation=observation,
-                        pre_squash_action=decision.pre_squash_action,
-                        action=decision.action,
+                        raw_action=decision.raw_action,
+                        env_action=decision.env_action,
                         reward=reward,
                         behaviour_log_probability=decision.behaviour_log_probability,
                         current_value=None,

@@ -884,3 +884,48 @@ Gymnasium retained only its two existing infinite-bound advisory warnings.
 `docs/DIARY.md`.
 
 **Commit**: `feature: implement clipped PPO [ai]`
+
+## 2026-08-11 — Reproducible experiment analysis and reporting
+
+**Task**: Implement Phase-2 Step 9 so every reported experiment result can be
+reconstructed from run records, and resolve the inline code-review TODOs before
+committing the work as one change.
+
+**Result**: Extended schema-versioned run records with cumulative collection
+and optimization times, resource and parameter counts, circuit geometry,
+signal quantiles, value diagnostics, and deterministic trajectory checkpoints.
+Reported runs require an explicit near-saturated steering threshold. Added a
+deterministic analysis command that validates complete runs, inventories input
+checksums, exports flattened and aggregated JSON/CSV tables, computes
+seed-level learning AUC, convergence with right-censoring, final outcomes,
+resource trade-offs, exact small-sample bootstrap intervals, identity-matched
+paired differences, held-out circuit gaps and geometry strata. Added plots for
+learning, outcomes, convergence/resources, optimization and
+curvature-conditioned controls, retaining failed and incomplete episodes.
+
+Resolved the review TODOs by giving every persisted record dataclass a
+`Record` suffix, moving `TrainingTransition` into the buffer module, separating
+`ActorNetwork` into `models/actor.py`, and replacing the sampled-action fields
+with the policy-neutral `raw_action` and explicit `env_action`. Scripted,
+random and Gaussian policies now all return `PolicySample`; mathematical code
+docstrings use plain-text equations that render directly in editors. The
+checkpoint schema was advanced because buffered transition field names changed.
+
+**Review**: Verified that aggregation treats a root seed—not a checkpoint or
+circuit—as the training replicate; that paired results join on declared
+identities; that completion denominators and censored convergence remain
+visible; and that every analysis output is regenerated only from the selected
+recorded run directories. Synthetic fixtures cover known aggregates, ties,
+failed roots, per-circuit pairing, trajectory selection and discovery-order
+independence.
+
+**Validation**: Black, Ruff, Pyright, `pip check`, `git diff --check`, the full
+test suite and the Phase-1 acceptance runner passed. Gymnasium retained only
+its two existing advisory warnings about unbounded observation-space limits.
+
+**Files**: `src/recording/`, `src/training/`, `src/models/`, `src/agents/`,
+`src/utils/analysis.py`, `src/utils/plotting.py`, `experiments/train.py`,
+`experiments/analyze_results.py`, analysis and affected API tests, `README.md`,
+`docs/EXPERIMENT.md`, `PLAN.md`, `requirements.txt`, and `docs/DIARY.md`.
+
+**Commit**: `feature: add reproducible experiment analysis [ai]`

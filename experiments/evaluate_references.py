@@ -15,7 +15,7 @@ from models import RandomPolicy, ScriptedFrenetPolicy
 from recording import (
     EvaluationRecord,
     MetricScope,
-    PolicyEvaluation,
+    PolicyEvaluationRecord,
     RunCategory,
     RunDirectory,
     TimingRecord,
@@ -30,7 +30,7 @@ def run_reference_evaluation(
     seed: int,
     run_path: str | Path,
     references: Sequence[str] = ("random", "scripted"),
-) -> tuple[PolicyEvaluation, ...]:
+) -> tuple[PolicyEvaluationRecord, ...]:
     """
     Generate, save, and evaluate references without consuming training counters.
     """
@@ -70,7 +70,7 @@ def run_reference_evaluation(
     track_path = run.path / "reference_track.json"
     track = generate_track_file(track_path, seed=track_seed)
     environment = RacingEnv(TrackWithGeometry(track), config=environment_config)
-    evaluations: list[PolicyEvaluation] = []
+    evaluations: list[PolicyEvaluationRecord] = []
     evaluation_interactions = 0
     evaluation_duration = 0.0
     persistence_duration = 0.0

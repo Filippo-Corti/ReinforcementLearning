@@ -20,24 +20,24 @@ from envs.racing import RacingEnv, RacingEnvState
 from envs.racing.lifecycle import EpisodeLifecycleState
 from envs.vehicle import VehicleState
 from recording.records import (
-    DeterministicEvaluation,
+    DeterministicEvaluationRecord,
     EpisodeOutcome,
     EpisodeRecord,
     MetricScope,
-    ObservationNormalizerState,
+    ObservationNormalizerStateRecord,
     RunCategory,
-    ScalarSummary,
+    ScalarSummaryRecord,
     TimingRecord,
-    TrainingTransition,
 )
 
 from .buffers import (
     FixedRolloutBuffer,
     OnPolicyRollout,
     ReinforceEpisodeBuffer,
+    TrainingTransition,
 )
 from .checkpoints import load_checkpoint, save_checkpoint
-from .evaluation import evaluate_deterministic
+from .evaluation import circuit_geometry_summary, evaluate_deterministic
 from .normalization import RunningObservationNormalizer
 
 
@@ -153,6 +153,7 @@ class OnPolicyTrainingEngine:
         root_identity: int | None = None,
         circuit_identity: str | None = None,
         circuit_split: str | None = None,
+        near_saturated_steering_threshold: float | None = None,
     ) -> None:
         """
         Initialize a fresh training episode and the buffer implied by the agent mode.
@@ -161,6 +162,10 @@ class OnPolicyTrainingEngine:
             raise ValueError("An on-policy agent collection size must be positive.")
         if evaluation_interval is not None and evaluation_interval <= 0:
             raise ValueError("Evaluation interval must be positive when enabled.")
+        if near_saturated_steering_threshold is not None and not (
+            0.0 < near_saturated_steering_threshold <= 1.0
+        ):
+            raise ValueError("Near-saturated steering threshold must be in (0, 1].")
         self.agent = agent
         self.environment = environment
         self.normalizer = normalizer
@@ -178,6 +183,7 @@ class OnPolicyTrainingEngine:
             environment.track.generation.seed
         )
         self.circuit_split = circuit_split
+        self.near_saturated_steering_threshold = near_saturated_steering_threshold
         self.counters = TrainingCounters()
         self._collection_seconds = 0.0
         self._optimization_seconds = 0.0
@@ -185,7 +191,7 @@ class OnPolicyTrainingEngine:
         self._persistence_seconds = 0.0
         self._started_at = perf_counter()
         self.episode_records: list[EpisodeRecord] = []
-        self.evaluations: list[DeterministicEvaluation] = []
+        self.evaluations: list[DeterministicEvaluationRecord] = []
         self.updates: list[TrainingUpdate] = []
         self._episode_buffer = (
             ReinforceEpisodeBuffer()
@@ -259,15 +265,15 @@ class OnPolicyTrainingEngine:
         normalized = self.normalizer.update_and_normalize(self._current_observation)
         decision = self.agent.collect_action(normalized)
         next_observation, reward, terminated, truncated, raw_info = (
-            self.environment.step(decision.action)
+            self.environment.step(decision.env_action)
         )
         info = cast(dict[str, Any], raw_info)
         next_normalized = self.normalizer.normalize(next_observation)
         next_value = 0.0 if terminated else self.agent.bootstrap_value(next_normalized)
         transition = TrainingTransition(
             normalized_observation=normalized,
-            pre_squash_action=decision.pre_squash_action,
-            action=decision.action,
+            raw_action=decision.raw_action,
+            env_action=decision.env_action,
             reward=float(reward),
             behaviour_log_probability=decision.behaviour_log_probability,
             current_value=decision.current_value,
@@ -280,7 +286,7 @@ class OnPolicyTrainingEngine:
             circuit_identity=self._active_episode.circuit_identity,
         )
         self._append_transition(transition)
-        self._record_active_step(decision.action, reward, info)
+        self._record_active_step(decision.env_action, reward, info)
         self.counters.training_interactions += 1
         self._collection_seconds += perf_counter() - started
 
@@ -364,6 +370,9 @@ class OnPolicyTrainingEngine:
             root_identity=self.root_identity,
             circuit_identity=self.circuit_identity,
             circuit_split=self.circuit_split,
+            collection_duration=self._collection_seconds,
+            optimization_duration=self._optimization_seconds,
+            near_saturated_steering_threshold=(self.near_saturated_steering_threshold),
         )
         self._evaluation_seconds += perf_counter() - started
         self.evaluations.append(evaluation)
@@ -431,6 +440,17 @@ class OnPolicyTrainingEngine:
                     np.mean(np.asarray(active.throttles) > 0)
                 ),
                 braking_fraction=float(np.mean(np.asarray(active.throttles) < 0)),
+                near_saturated_steering_fraction=(
+                    None
+                    if self.near_saturated_steering_threshold is None
+                    else float(
+                        np.mean(
+                            np.asarray(active.absolute_steering)
+                            >= self.near_saturated_steering_threshold
+                        )
+                    )
+                ),
+                circuit_geometry=circuit_geometry_summary(self.environment),
             )
         )
         self.counters.finished_episodes += 1
@@ -474,7 +494,7 @@ class OnPolicyTrainingEngine:
         self.agent.load_state_dict(_mapping(state, "agent"))
         normalizer_state = _mapping(state, "normalizer")
         self.normalizer.restore(
-            ObservationNormalizerState(
+            ObservationNormalizerStateRecord(
                 count=int(normalizer_state["count"]),
                 sums=tuple(float(value) for value in normalizer_state["sums"]),
                 squared_sums=tuple(
@@ -492,7 +512,9 @@ class OnPolicyTrainingEngine:
         self._restore_collector(_mapping(state, "collector"))
         history = _mapping(state, "history")
         self.episode_records = _typed_list(history, "episode_records", EpisodeRecord)
-        self.evaluations = _typed_list(history, "evaluations", DeterministicEvaluation)
+        self.evaluations = _typed_list(
+            history, "evaluations", DeterministicEvaluationRecord
+        )
         self.updates = _typed_list(history, "updates", TrainingUpdate)
         timing = _mapping(state, "timing")
         self._collection_seconds = float(timing["collection"])
@@ -517,6 +539,9 @@ class OnPolicyTrainingEngine:
             "root_identity": self.root_identity,
             "circuit_identity": self.circuit_identity,
             "circuit_split": self.circuit_split,
+            "near_saturated_steering_threshold": (
+                self.near_saturated_steering_threshold
+            ),
             "environment_config": self.environment.config.to_dict(),
             "track_seed": self.environment.track.generation.seed,
             "track_length": self.environment.track.track_length,
@@ -575,16 +600,22 @@ class OnPolicyTrainingEngine:
         self._rollout_buffer.restore(transitions, previous_transition)
 
 
-def _summary(values: list[float]) -> ScalarSummary:
+def _summary(values: list[float]) -> ScalarSummaryRecord:
     """
     Summarize one non-empty recorded training signal with population dispersion.
     """
     array = np.asarray(values, dtype=np.float64)
-    return ScalarSummary(
+    return ScalarSummaryRecord(
         mean=float(np.mean(array)),
         standard_deviation=float(np.std(array)),
         minimum=float(np.min(array)),
         maximum=float(np.max(array)),
+        quantiles={
+            "q25": float(np.quantile(array, 0.25)),
+            "q50": float(np.quantile(array, 0.50)),
+            "q75": float(np.quantile(array, 0.75)),
+            "q90": float(np.quantile(array, 0.90)),
+        },
     )
 
 
@@ -607,8 +638,8 @@ def _transition_to_dict(row: TrainingTransition) -> dict[str, Any]:
     """
     return {
         "normalized_observation": row.normalized_observation.tolist(),
-        "pre_squash_action": row.pre_squash_action.tolist(),
-        "action": row.action.tolist(),
+        "raw_action": row.raw_action.tolist(),
+        "env_action": row.env_action.tolist(),
         "reward": row.reward,
         "behaviour_log_probability": row.behaviour_log_probability,
         "current_value": row.current_value,

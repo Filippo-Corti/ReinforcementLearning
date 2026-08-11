@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import torch
 
-CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 2
 
 
 class CheckpointError(RuntimeError):

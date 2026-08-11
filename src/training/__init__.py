@@ -6,6 +6,7 @@ from .buffers import (
     OnPolicyRollout,
     OnPolicyTensors,
     ReinforceEpisodeBuffer,
+    TrainingTransition,
     compute_gae_targets,
     monte_carlo_return_to_go,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "RunningObservationNormalizer",
     "TrainingCounters",
     "TrainingRunState",
+    "TrainingTransition",
     "TrainingUpdate",
     "compute_gae_targets",
     "evaluate_deterministic",

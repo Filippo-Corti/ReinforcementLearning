@@ -18,7 +18,7 @@ version-0 physics needs a grip constraint. Those runs are development evidence,
 not observations in either reported experiment, and their results are never
 pooled with the reported results.
 
-**Protocol revision:** 2026-08-10 explanatory learning-contract revision.
+**Protocol revision:** 2026-08-11 reproducible-analysis contract.
 
 ## Before either experiment
 
@@ -351,6 +351,10 @@ The following are the actual tracked quantities for Experiment 1.
 - mean and extrema of throttle/brake and absolute steering; and
 - fractions of positive throttle, braking and near-saturated steering.
 
+The absolute-steering threshold defining “near-saturated” is an explicit
+reported-run configuration value. The training command refuses to start a
+reported run when it is absent; Step 10 freezes the value before data collection.
+
 **Every optimizer update**
 
 - actor loss, learning rate, entropy proxy and learned log-standard-deviation;
@@ -398,6 +402,15 @@ standard deviation, median and interquartile range, minimum/maximum, and a 95%
 bootstrap interval resampling roots. Actor-size and secondary algorithm
 comparisons use paired within-root differences. With only five roots, intervals
 are descriptive; conclusions emphasize magnitudes and raw outcomes.
+
+Normalized curve area is the trapezoidal area from the first recorded
+evaluation to the final evaluation divided by that recorded interaction span.
+The five-root confidence interval exhaustively evaluates all $5^5$ root
+bootstrap resamples, so it has no sampling seed. Final-window diagnostics use
+the last three evaluations and report the change, range and final-minus-best
+value; no undeclared binary instability threshold is introduced. A
+representative final trajectory is the root closest to its cell median final
+return, with lower root identity breaking an exact tie.
 
 Non-converged runs receive the full budget only in the explicitly named
 restricted-time summary and remain marked as censored. Lap time is never
@@ -668,6 +681,10 @@ trajectories/
 completion.json
 ```
 
+The analysis-complete recording contract is schema version 2. Earlier
+development runs are intentionally rejected because they lack checkpoint timing,
+circuit geometry, resource summaries or retained learned-policy trajectories.
+
 The schema rejects loading pre-experiment or reduced-budget results as reported
 experiment data. Aggregated tables record input run identifiers and checksums.
 Routine result trees and large checkpoints are not committed; frozen manifests,
@@ -693,3 +710,11 @@ compact validation fixtures and final summary tables may be.
 
 Every table and figure is regenerated from raw run records. Console output and
 manually copied summary values are not authoritative.
+
+Each evaluation record stores cumulative collection and optimization time, so
+time to convergence is read at the first qualifying checkpoint rather than
+estimated from final runtime. Completion records contain the full resource and
+timing summary. Circuit outcomes carry frozen length and curvature summaries,
+and selected trajectory documents carry pose, speed, controls, current and
+preview curvature, outcome and $v^2|\kappa|$. Consequently, analysis needs no
+checkpoint loading, console output or directory-name inference.

@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from .records import RunCategory
 
-RUN_SCHEMA_VERSION = 1
+RUN_SCHEMA_VERSION = 2
 _JSONL_NAMES = ("episodes", "updates", "evaluations")
 
 

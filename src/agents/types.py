@@ -28,14 +28,14 @@ class CollectedAction:
     Store the detached action quantities required by all project algorithms.
 
     Fields:
-        * pre_squash_action: Gaussian action sampled before applying `tanh`.
-        * action: Bounded action sent to the environment.
+        * raw_action: Action sampled before policy-specific post-processing.
+        * env_action: Bounded action sent to the environment.
         * behaviour_log_probability: Collection-policy action log probability.
         * current_value: Critic estimate at the acted-on observation, if present.
     """
 
-    pre_squash_action: NDArray[np.float32]
-    action: NDArray[np.float32]
+    raw_action: NDArray[np.float32]
+    env_action: NDArray[np.float32]
     behaviour_log_probability: float | None
     current_value: float | None
 
@@ -43,22 +43,20 @@ class CollectedAction:
         """
         Preserve private float32 action copies with one shared vector shape.
         """
-        pre_squash_action = np.asarray(self.pre_squash_action, dtype=np.float32)
-        action = np.asarray(self.action, dtype=np.float32)
+        raw_action = np.asarray(self.raw_action, dtype=np.float32)
+        env_action = np.asarray(self.env_action, dtype=np.float32)
         if (
-            pre_squash_action.ndim != 1
-            or action.ndim != 1
-            or pre_squash_action.shape != action.shape
+            raw_action.ndim != 1
+            or env_action.ndim != 1
+            or raw_action.shape != env_action.shape
         ):
-            raise ValueError(
-                "Collected pre-squash and bounded actions must be matching vectors."
-            )
-        pre_squash_action = pre_squash_action.copy()
-        action = action.copy()
-        pre_squash_action.setflags(write=False)
-        action.setflags(write=False)
-        object.__setattr__(self, "pre_squash_action", pre_squash_action)
-        object.__setattr__(self, "action", action)
+            raise ValueError("Collected raw and environment actions must match.")
+        raw_action = raw_action.copy()
+        env_action = env_action.copy()
+        raw_action.setflags(write=False)
+        env_action.setflags(write=False)
+        object.__setattr__(self, "raw_action", raw_action)
+        object.__setattr__(self, "env_action", env_action)
         if self.behaviour_log_probability is not None:
             object.__setattr__(
                 self, "behaviour_log_probability", float(self.behaviour_log_probability)

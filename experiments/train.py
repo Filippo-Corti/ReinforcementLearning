@@ -8,6 +8,8 @@ from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
+import torch
+
 from agents import A2CAgent, ParameterizedOnPolicyAgent, PPOAgent, ReinforceAgent
 from configs import (
     FIXED_CRITIC_CONFIG,
@@ -28,6 +30,7 @@ from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry
 from recording import (
     MetricScope,
+    ResourceRecord,
     RunCategory,
     RunDirectory,
     TimingRecord,
@@ -60,6 +63,7 @@ def run_reinforce_training(
     environment_config: EnvironmentConfig | None = None,
     reinforce_config: ReinforceConfig | None = None,
     evaluation_interval: int | None = None,
+    near_saturated_steering_threshold: float | None = None,
     execution_config: ExecutionConfig | None = None,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
@@ -87,6 +91,10 @@ def run_reinforce_training(
         evaluation=replace(
             base_training_config.evaluation,
             evaluation_interval=resolved_evaluation_interval,
+        ),
+        logging=replace(
+            base_training_config.logging,
+            near_saturated_steering_threshold=near_saturated_steering_threshold,
         ),
         execution=execution_config,
     )
@@ -131,6 +139,7 @@ def run_a2c_training(
     a2c_config: A2CConfig | None = None,
     critic_config: CriticConfig = FIXED_CRITIC_CONFIG,
     evaluation_interval: int | None = None,
+    near_saturated_steering_threshold: float | None = None,
     execution_config: ExecutionConfig | None = None,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
@@ -158,6 +167,10 @@ def run_a2c_training(
         evaluation=replace(
             base_training_config.evaluation,
             evaluation_interval=resolved_evaluation_interval,
+        ),
+        logging=replace(
+            base_training_config.logging,
+            near_saturated_steering_threshold=near_saturated_steering_threshold,
         ),
         execution=execution_config,
     )
@@ -211,6 +224,7 @@ def run_ppo_training(
     ppo_config: PPOConfig | None = None,
     critic_config: CriticConfig = FIXED_CRITIC_CONFIG,
     evaluation_interval: int | None = None,
+    near_saturated_steering_threshold: float | None = None,
     execution_config: ExecutionConfig | None = None,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
@@ -238,6 +252,10 @@ def run_ppo_training(
         evaluation=replace(
             base_training_config.evaluation,
             evaluation_interval=resolved_evaluation_interval,
+        ),
+        logging=replace(
+            base_training_config.logging,
+            near_saturated_steering_threshold=near_saturated_steering_threshold,
         ),
         execution=execution_config,
     )
@@ -299,6 +317,12 @@ def _run_training(
     Train one selected on-policy agent through the common run lifecycle.
     """
     execution_config = training_config.execution
+    steering_threshold = training_config.logging.near_saturated_steering_threshold
+    if run_category is RunCategory.REPORTED and steering_threshold is None:
+        raise ValueError(
+            "Reported runs require an explicit near-saturated steering threshold."
+        )
+    _reset_peak_gpu_memory(execution_config.device)
     streams = RunSeedStreams(_seed_namespace(run_category), seed)
     track = TrackWithGeometry.load(
         track_path,
@@ -357,15 +381,35 @@ def _run_training(
         root_identity=seed,
         circuit_identity=str(track.track.generation.seed),
         circuit_split="development",
+        near_saturated_steering_threshold=steering_threshold,
     )
     started = perf_counter()
     try:
         _train_with_checkpoints(engine, training_config, run.path / "checkpoints")
         engine.save(run.path / "checkpoints" / "final.pt")
         persistence_started = perf_counter()
-        _write_engine_records(run, engine)
+        _write_engine_records(
+            run,
+            engine,
+            trajectory_interval=training_config.logging.trajectory_interval,
+            final_interactions=training_config.training_interaction_budget,
+        )
         record_persistence = perf_counter() - persistence_started
         state = engine.state()
+        resources = ResourceRecord(
+            run_category=run_category,
+            scope=MetricScope.TRAINING,
+            training_interactions=state.counters.training_interactions,
+            evaluation_interactions=state.counters.evaluation_interactions,
+            completed_episodes=sum(
+                record.outcome.value == "completed" for record in engine.episode_records
+            ),
+            optimizer_updates=state.counters.optimizer_updates,
+            actor_parameters=agent.actor_parameter_count,
+            critic_parameters=agent.critic_parameter_count,
+            peak_process_memory=None,
+            peak_gpu_memory=_peak_gpu_memory(execution_config.device),
+        )
         run.complete(
             {
                 "training_interactions": state.counters.training_interactions,
@@ -374,6 +418,7 @@ def _run_training(
                 "optimizer_updates": state.counters.optimizer_updates,
                 "actor_parameters": agent.actor_parameter_count,
                 "critic_parameters": agent.critic_parameter_count,
+                "resources": resources.to_dict(),
                 "timing": TimingRecord(
                     run_category=run_category,
                     scope=MetricScope.TRAINING,
@@ -408,6 +453,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--critic-learning-rate", type=float)
     parser.add_argument("--interaction-budget", required=True, type=int)
     parser.add_argument("--evaluation-interval", type=int)
+    parser.add_argument("--near-saturated-steering-threshold", type=float)
     parser.add_argument(
         "--device",
         choices=("cpu", "cuda"),
@@ -434,6 +480,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "actor_learning_rate": parsed.actor_learning_rate,
         "training_interaction_budget": parsed.interaction_budget,
         "evaluation_interval": parsed.evaluation_interval,
+        "near_saturated_steering_threshold": (parsed.near_saturated_steering_threshold),
         "execution_config": replace(ExecutionConfig(), device=parsed.device),
         "run_category": RunCategory(parsed.run_category),
     }
@@ -460,7 +507,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _write_engine_records(run: RunDirectory, engine: OnPolicyTrainingEngine) -> None:
+def _write_engine_records(
+    run: RunDirectory,
+    engine: OnPolicyTrainingEngine,
+    *,
+    trajectory_interval: int,
+    final_interactions: int,
+) -> None:
     """
     Persist shared episode/evaluation records and algorithm diagnostics.
     """
@@ -468,6 +521,17 @@ def _write_engine_records(run: RunDirectory, engine: OnPolicyTrainingEngine) -> 
         run.append("episodes", record)
     for evaluation in engine.evaluations:
         run.append("evaluations", evaluation.record)
+        boundary = evaluation.record.training_interactions
+        if boundary == final_interactions or boundary % trajectory_interval == 0:
+            run.write_trajectory(
+                f"evaluation_{evaluation.record.evaluation_index}_interaction_{boundary}",
+                {
+                    "evaluation": evaluation.record.to_dict(),
+                    "transitions": [
+                        transition.to_dict() for transition in evaluation.transitions
+                    ],
+                },
+            )
     for update in engine.updates:
         diagnostics = update.output.diagnostics
         run.append(
@@ -583,6 +647,23 @@ def _optional_diagnostic(
     Return one algorithm-specific diagnostic when the active agent records it.
     """
     return diagnostics.get(key)
+
+
+def _reset_peak_gpu_memory(device: str) -> None:
+    """
+    Start one run-scoped CUDA peak-memory measurement when CUDA is selected.
+    """
+    if device == "cuda" and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+
+def _peak_gpu_memory(device: str) -> int | None:
+    """
+    Return run-scoped peak allocated CUDA memory when the selected device has it.
+    """
+    if device != "cuda" or not torch.cuda.is_available():
+        return None
+    return int(torch.cuda.max_memory_allocated())
 
 
 def _first_seed(streams: RunSeedStreams, stream: SeedStream) -> int:

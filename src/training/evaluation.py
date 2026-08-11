@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -10,14 +11,15 @@ import torch
 from agents.types import OnPolicyAgent
 from envs.racing import RacingEnv
 from recording.records import (
-    DeterministicEvaluation,
+    CircuitGeometrySummaryRecord,
+    DeterministicEvaluationRecord,
     EpisodeOutcome,
     EpisodeRecord,
     EvaluationRecord,
-    LoggedTransition,
+    LoggedTransitionRecord,
     MetricScope,
     RunCategory,
-    ScalarSummary,
+    ScalarSummaryRecord,
 )
 
 from .normalization import RunningObservationNormalizer
@@ -36,7 +38,10 @@ def evaluate_deterministic(
     root_identity: int | None = None,
     circuit_identity: str | None = None,
     circuit_split: str | None = None,
-) -> DeterministicEvaluation:
+    collection_duration: float = 0.0,
+    optimization_duration: float = 0.0,
+    near_saturated_steering_threshold: float | None = None,
+) -> DeterministicEvaluationRecord:
     """
     Evaluate a policy on a fresh environment using only frozen observation statistics.
     """
@@ -55,6 +60,9 @@ def evaluate_deterministic(
             root_identity=root_identity,
             circuit_identity=circuit_identity,
             circuit_split=circuit_split,
+            collection_duration=collection_duration,
+            optimization_duration=optimization_duration,
+            near_saturated_steering_threshold=near_saturated_steering_threshold,
         )
     finally:
         environment.close()
@@ -73,18 +81,22 @@ def _evaluate_episode(
     root_identity: int | None,
     circuit_identity: str | None,
     circuit_split: str | None,
-) -> DeterministicEvaluation:
+    collection_duration: float,
+    optimization_duration: float,
+    near_saturated_steering_threshold: float | None,
+) -> DeterministicEvaluationRecord:
     total_return = 0.0
     maximum_progress = 0.0
     speeds: list[float] = []
     throttles: list[float] = []
     steering: list[float] = []
-    transitions: list[LoggedTransition] = []
+    transitions: list[LoggedTransitionRecord] = []
     resolved_circuit_identity = circuit_identity or str(
         environment.track.generation.seed
     )
 
     for step_index in range(environment.config.simulation.max_episode_steps):
+        current_state = trajectory_state(environment, observation)
         normalized = normalizer.normalize(observation)
         with torch.inference_mode():
             action = agent.deterministic_action(normalized)
@@ -95,7 +107,7 @@ def _evaluate_episode(
         throttles.append(float(action[0]))
         steering.append(abs(float(action[1])))
         transitions.append(
-            LoggedTransition(
+            LoggedTransitionRecord(
                 run_category=run_category,
                 scope=MetricScope.EVALUATION,
                 episode_index=evaluation_index,
@@ -111,6 +123,12 @@ def _evaluate_episode(
                 progress=progress,
                 elapsed_time=float(info["elapsed_time"]),
                 circuit_identity=resolved_circuit_identity,
+                position=current_state.position,
+                heading=current_state.heading,
+                current_curvature=current_state.current_curvature,
+                preview_curvature=current_state.preview_curvature,
+                speed=current_state.speed,
+                lateral_acceleration_proxy=current_state.lateral_acceleration_proxy,
             )
         )
         total_return += float(reward)
@@ -146,8 +164,18 @@ def _evaluate_episode(
                 absolute_steering=_summary(steering),
                 positive_throttle_fraction=float(np.mean(np.asarray(throttles) > 0)),
                 braking_fraction=float(np.mean(np.asarray(throttles) < 0)),
+                near_saturated_steering_fraction=(
+                    None
+                    if near_saturated_steering_threshold is None
+                    else float(
+                        np.mean(
+                            np.asarray(steering) >= near_saturated_steering_threshold
+                        )
+                    )
+                ),
+                circuit_geometry=circuit_geometry_summary(environment),
             )
-            return DeterministicEvaluation(
+            return DeterministicEvaluationRecord(
                 record=EvaluationRecord(
                     run_category=run_category,
                     scope=MetricScope.EVALUATION,
@@ -156,22 +184,107 @@ def _evaluate_episode(
                     evaluation_interactions=evaluation_interactions_before + count,
                     episode=episode,
                     normalizer_checksum=normalizer.checksum(),
+                    collection_duration=collection_duration,
+                    optimization_duration=optimization_duration,
                 ),
                 transitions=tuple(transitions),
             )
     raise RuntimeError("RacingEnv did not end within its configured episode limit.")
 
 
-def _summary(values: list[float]) -> ScalarSummary:
+@dataclass(frozen=True, slots=True)
+class TrajectoryState:
+    """
+    Preserve pre-action geometry and vehicle state for one retained trajectory row.
+
+    Fields:
+        * position: Cartesian vehicle position.
+        * heading: Vehicle heading in radians.
+        * current_curvature: Centerline curvature at the closest projection.
+        * preview_curvature: Frenet preview curvature when present.
+        * speed: Vehicle speed.
+        * lateral_acceleration_proxy: Speed squared times absolute curvature.
+    """
+
+    position: tuple[float, float]
+    heading: float
+    current_curvature: float
+    preview_curvature: float | None
+    speed: float
+    lateral_acceleration_proxy: float
+
+
+def circuit_geometry_summary(environment: RacingEnv) -> CircuitGeometrySummaryRecord:
+    """
+    Summarize one frozen sampled circuit for later stratified analysis.
+    """
+    absolute_curvature = np.abs(environment.track.curvature)
+    return CircuitGeometrySummaryRecord(
+        track_length=float(environment.track.track_length),
+        absolute_curvature=ScalarSummaryRecord(
+            mean=float(np.mean(absolute_curvature)),
+            standard_deviation=float(np.std(absolute_curvature)),
+            minimum=float(np.min(absolute_curvature)),
+            maximum=float(np.max(absolute_curvature)),
+            quantiles={
+                "q25": float(np.quantile(absolute_curvature, 0.25)),
+                "q50": float(np.quantile(absolute_curvature, 0.50)),
+                "q75": float(np.quantile(absolute_curvature, 0.75)),
+                "q90": float(np.quantile(absolute_curvature, 0.90)),
+            },
+        ),
+    )
+
+
+def trajectory_state(
+    environment: RacingEnv, observation: np.ndarray
+) -> TrajectoryState:
+    """
+    Read the current vehicle and projected circuit geometry before an action.
+    """
+    if environment.state is None:
+        raise RuntimeError(
+            "RacingEnv must have active vehicle state during evaluation."
+        )
+    state = environment.state
+    projection = environment.track_with_geometry.centerline_projector.project(
+        state.position()
+    )
+    s = float(
+        environment.track.s[projection.segment_index]
+        + projection.fraction
+        * environment.track_with_geometry.centerline_projector.lengths[
+            projection.segment_index
+        ]
+    )
+    current_curvature = environment.track_with_geometry.curvature(s)
+    preview_curvature = float(observation[3]) if observation.shape == (4,) else None
+    return TrajectoryState(
+        position=(float(state.x), float(state.y)),
+        heading=float(state.heading),
+        current_curvature=current_curvature,
+        preview_curvature=preview_curvature,
+        speed=float(state.speed),
+        lateral_acceleration_proxy=float(state.speed**2 * abs(current_curvature)),
+    )
+
+
+def _summary(values: list[float]) -> ScalarSummaryRecord:
     """
     Return a population scalar summary for one non-empty action-level signal.
     """
     array = np.asarray(values, dtype=np.float64)
-    return ScalarSummary(
+    return ScalarSummaryRecord(
         mean=float(np.mean(array)),
         standard_deviation=float(np.std(array)),
         minimum=float(np.min(array)),
         maximum=float(np.max(array)),
+        quantiles={
+            "q25": float(np.quantile(array, 0.25)),
+            "q50": float(np.quantile(array, 0.50)),
+            "q75": float(np.quantile(array, 0.75)),
+            "q90": float(np.quantile(array, 0.90)),
+        },
     )
 
 

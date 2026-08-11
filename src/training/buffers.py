@@ -1,4 +1,9 @@
-"""Semantic on-policy records, collection buffers, and fixed learning targets."""
+"""
+Semantic on-policy records, collection buffers, and fixed learning targets.
+
+
+
+"""
 
 from __future__ import annotations
 
@@ -7,10 +12,101 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from numpy.typing import NDArray
 from torch import Tensor
 
-from recording.records import TrainingTransition
-from utils.vectors import optional_tensor, to_vector
+from utils.vectors import optional_scalar, optional_tensor, to_vector
+
+VectorInput = NDArray[np.float32] | Tensor
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingTransition:
+    """
+    Store the detached transition data consumed by on-policy updates.
+
+    The training buffer retains normalized network inputs, raw policy actions,
+    behaviour probabilities, and critic estimates required to reproduce an
+    update. It is checkpoint state, not an experiment log record.
+
+    Fields:
+        * normalized_observation: Exact network input before the action.
+        * raw_action: Action before policy-specific post-processing.
+        * env_action: Bounded action sent to the environment.
+        * reward: Environment reward returned after the action.
+        * behaviour_log_probability: Collection-policy log probability.
+        * current_value: Critic value at the current observation, if used.
+        * next_value: Bootstrap value, zero at true termination.
+        * terminated: Whether a genuine MDP ending occurred.
+        * truncated: Whether the external time limit occurred.
+        * next_normalized_observation: Frozen-statistics next-state input.
+        * episode_identity: Stable identity of the environment episode.
+        * episode_step_index: Zero-based position within that episode.
+        * circuit_identity: Stable identity of the episode's circuit.
+    """
+
+    normalized_observation: VectorInput
+    raw_action: VectorInput
+    env_action: VectorInput
+    reward: float
+    behaviour_log_probability: float | Tensor | None
+    current_value: float | Tensor | None
+    next_value: float | Tensor | None
+    terminated: bool
+    truncated: bool
+    next_normalized_observation: VectorInput
+    episode_identity: int
+    episode_step_index: int
+    circuit_identity: str
+
+    def __post_init__(self) -> None:
+        """
+        Detach scalar tensors and preserve read-only float32 vector copies.
+        """
+        observation = to_vector(
+            self.normalized_observation,
+            name="normalized_observation",
+            readonly=True,
+        )
+        raw_action = to_vector(self.raw_action, name="raw_action", readonly=True)
+        env_action = to_vector(self.env_action, name="env_action", readonly=True)
+        next_observation = to_vector(
+            self.next_normalized_observation,
+            name="next_normalized_observation",
+            readonly=True,
+        )
+        if observation.shape != next_observation.shape:
+            raise ValueError(
+                "Current and next normalized observations must have one shape."
+            )
+        if raw_action.shape != env_action.shape:
+            raise ValueError("Raw and environment actions must have one shape.")
+        if self.terminated and self.truncated:
+            raise ValueError("A transition cannot be both terminated and truncated.")
+        if self.episode_step_index < 0:
+            raise ValueError("Episode step indices cannot be negative.")
+        next_value = optional_scalar(self.next_value)
+        if self.terminated and next_value not in (None, 0.0):
+            raise ValueError("A true termination must store a zero bootstrap value.")
+        object.__setattr__(self, "normalized_observation", observation)
+        object.__setattr__(self, "raw_action", raw_action)
+        object.__setattr__(self, "env_action", env_action)
+        object.__setattr__(self, "reward", float(self.reward))
+        object.__setattr__(
+            self,
+            "behaviour_log_probability",
+            optional_scalar(self.behaviour_log_probability),
+        )
+        object.__setattr__(self, "current_value", optional_scalar(self.current_value))
+        object.__setattr__(self, "next_value", next_value)
+        object.__setattr__(self, "next_normalized_observation", next_observation)
+
+    @property
+    def ends_episode(self) -> bool:
+        """
+        Return whether this transition reaches an environment boundary.
+        """
+        return self.terminated or self.truncated
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,8 +116,8 @@ class OnPolicyTensors:
 
     Fields:
         * observations: Float32 normalized observations with shape `(rows, features)`.
-        * pre_squash_actions: Gaussian samples before `tanh`, shape `(rows, actions)`.
-        * actions: Float32 bounded actions with shape `(rows, actions)`.
+        * raw_actions: Actions before policy-specific post-processing.
+        * env_actions: Float32 bounded environment actions.
         * rewards: Float32 environment rewards with shape `(rows,)`.
         * behaviour_log_probabilities: Detached collection values when every row has one.
         * current_values: Detached critic values when every row has one.
@@ -34,8 +130,8 @@ class OnPolicyTensors:
     """
 
     observations: Tensor
-    pre_squash_actions: Tensor
-    actions: Tensor
+    raw_actions: Tensor
+    env_actions: Tensor
     rewards: Tensor
     behaviour_log_probabilities: Tensor | None
     current_values: Tensor | None
@@ -83,17 +179,16 @@ class OnPolicyRollout:
                 ),
                 device=device,
             ),
-            pre_squash_actions=torch.as_tensor(
+            raw_actions=torch.as_tensor(
                 np.stack(
-                    [
-                        to_vector(row.pre_squash_action, name="pre_squash_action")
-                        for row in rows
-                    ]
+                    [to_vector(row.raw_action, name="raw_action") for row in rows]
                 ),
                 device=device,
             ),
-            actions=torch.as_tensor(
-                np.stack([to_vector(row.action, name="action") for row in rows]),
+            env_actions=torch.as_tensor(
+                np.stack(
+                    [to_vector(row.env_action, name="env_action") for row in rows]
+                ),
                 device=device,
             ),
             rewards=torch.tensor(

@@ -4,6 +4,9 @@ A single global generator makes unrelated sources of randomness sensitive to
 each other's call order. Here, a run is identified by a namespace and local
 identity, while each purpose receives its own stable child stream. Requesting
 one generator therefore never consumes or changes another stream.
+
+Additionally, this module provides a function to configure PyTorch's deterministic
+execution policy.
 """
 
 from __future__ import annotations

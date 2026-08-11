@@ -6,8 +6,8 @@ import torch
 
 from agents import A2CAgent, AgentUpdateInput, CollectedAction, CollectionMode
 from configs import A2CConfig, ActorConfig, CriticConfig
-from recording import TrainingTransition
 from tests.fixtures.envs.continuous_control import PositiveThrottleEnvironment
+from training import TrainingTransition
 from training.buffers import OnPolicyRollout, compute_gae_targets
 
 
@@ -51,15 +51,15 @@ def _transition(
     else:
         pre_squash = np.asarray(pre_squash_action, dtype=np.float32)
         choice = CollectedAction(
-            pre_squash_action=pre_squash,
-            action=np.tanh(pre_squash).astype(np.float32),
+            raw_action=pre_squash,
+            env_action=np.tanh(pre_squash).astype(np.float32),
             behaviour_log_probability=None,
             current_value=value,
         )
     return TrainingTransition(
         normalized_observation=observation,
-        pre_squash_action=choice.pre_squash_action,
-        action=choice.action,
+        raw_action=choice.raw_action,
+        env_action=choice.env_action,
         reward=reward,
         behaviour_log_probability=choice.behaviour_log_probability,
         current_value=value,
@@ -79,12 +79,12 @@ def _rollout(agent: A2CAgent) -> OnPolicyRollout:
     for identity in range(agent.collection_size):
         observation = environment.reset()
         decision = agent.collect_action(observation)
-        _, reward = environment.step(decision.action)
+        _, reward = environment.step(decision.env_action)
         rows.append(
             TrainingTransition(
                 normalized_observation=observation,
-                pre_squash_action=decision.pre_squash_action,
-                action=decision.action,
+                raw_action=decision.raw_action,
+                env_action=decision.env_action,
                 reward=reward,
                 behaviour_log_probability=decision.behaviour_log_probability,
                 current_value=decision.current_value,
@@ -129,7 +129,7 @@ def test_a2c_losses_match_the_documented_mean_reductions() -> None:
     advantages = agent._standardize_advantages(targets.raw_advantages)
     tensors = rollout.tensors()
     log_probabilities = agent.actor.log_probability(
-        tensors.observations, tensors.pre_squash_actions
+        tensors.observations, tensors.raw_actions
     )
     expected_actor_loss = -(log_probabilities * advantages).mean()
     predictions = agent.critic(tensors.observations)
