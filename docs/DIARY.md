@@ -1164,3 +1164,22 @@ restore of the next transition.
 `requirements.txt`, `docs/LEARNING.md`, and `docs/DIARY.md`.
 
 **Commit**: `feature: add persistent racing workers [ai]`
+
+## 2026-08-11 — Short-circuit scripted baseline
+
+**Task**: Preserve the deterministic scripted-policy environment check after
+reducing the default circuit geometry to one fifth of its previous scale.
+
+**Result**: Scaled the scripted controller's curvature feed-forward gain from
+`50` to `10` with the circuit geometry. This controller is a non-learning
+reference and does not change the reward formula or any learning equation. It
+now completes the deterministic shortened baseline circuit within the new
+episode cap.
+
+**Validation**: The formula reference test was updated for the scaled gain, and
+the end-to-end scripted baseline completed one lap in 306 interactions.
+
+**Files**: `src/models/policies.py`,
+`tests/training/test_policy_evaluation.py`, and `docs/DIARY.md`.
+
+**Commit**: `fix: scale scripted baseline for short circuit [ai]`

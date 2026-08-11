@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import log
 
@@ -55,7 +56,7 @@ class ScriptedFrenetPolicy(Policy):
 
     lateral_gain: float = 0.15
     heading_gain: float = 0.8
-    curvature_gain: float = 50.0
+    curvature_gain: float = 10.0
     lateral_acceleration_limit: float = 20.0
     maximum_target_speed: float = 50.0
     speed_error_scale: float = 10.0
@@ -221,6 +222,42 @@ class GaussianPolicy(nn.Module, Policy):
                 dtype=mean.dtype,
                 device=mean.device,
                 generator=sampling_generator,
+            )
+            raw_action = mean + self.standard_deviation * noise
+            env_action = torch.tanh(raw_action)
+            log_probability = self._log_probability_from_pre_squash_action(
+                observations, raw_action
+            )
+        return PolicySample(
+            raw_action=raw_action.detach(),
+            env_action=env_action.detach(),
+            log_probability=log_probability.detach(),
+        )
+
+    def sample_with_generators(
+        self,
+        observations: Tensor,
+        sampling_generators: Sequence[torch.Generator],
+    ) -> PolicySample[Tensor, Tensor]:
+        """
+        Sample a batched mean with one independent generator per environment row.
+        """
+        if observations.ndim != 2:
+            raise ValueError("Batched policy sampling requires a rank-two input.")
+        if observations.shape[0] != len(sampling_generators):
+            raise ValueError("One sampling generator is required per observation row.")
+        with torch.no_grad():
+            mean = self.mean(observations)
+            noise = torch.stack(
+                [
+                    torch.randn(
+                        mean.shape[1:],
+                        dtype=mean.dtype,
+                        device=mean.device,
+                        generator=generator,
+                    )
+                    for generator in sampling_generators
+                ]
             )
             raw_action = mean + self.standard_deviation * noise
             env_action = torch.tanh(raw_action)

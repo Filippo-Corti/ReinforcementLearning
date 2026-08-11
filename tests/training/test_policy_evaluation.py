@@ -21,8 +21,8 @@ def test_scripted_policy_uses_the_documented_frenet_formula() -> None:
     assert isinstance(policy, Policy)
     sample = policy.sample(observation)
     assert sample.raw_action[0] > 1.0
-    assert np.isclose(sample.raw_action[1], -0.2)
-    assert np.allclose(sample.env_action, np.asarray((1.0, -0.2), dtype=np.float32))
+    assert np.isclose(sample.raw_action[1], -0.6)
+    assert np.allclose(sample.env_action, np.asarray((1.0, -0.6), dtype=np.float32))
     assert sample.log_probability is None
     assert np.array_equal(policy.action(observation), sample.env_action)
 
