@@ -54,6 +54,30 @@ def test_named_streams_are_independent_and_do_not_consume_each_other() -> None:
     assert len(first_values) == len(SeedStream)
 
 
+def test_indexed_worker_substreams_are_reproducible_and_independent() -> None:
+    streams = RunSeedStreams(SeedNamespace.EXPERIMENT_1_REPORTED, 2)
+
+    first = streams.get_numpy_generator(
+        SeedStream.ENVIRONMENT_RESETS,
+        substream_identity=0,
+    ).integers(0, 2**32, size=8, dtype=np.uint32)
+    repeated = streams.get_numpy_generator(
+        SeedStream.ENVIRONMENT_RESETS,
+        substream_identity=0,
+    ).integers(0, 2**32, size=8, dtype=np.uint32)
+    second_worker = streams.get_numpy_generator(
+        SeedStream.ENVIRONMENT_RESETS,
+        substream_identity=1,
+    ).integers(0, 2**32, size=8, dtype=np.uint32)
+    parent = streams.get_numpy_generator(SeedStream.ENVIRONMENT_RESETS).integers(
+        0, 2**32, size=8, dtype=np.uint32
+    )
+
+    assert np.array_equal(first, repeated)
+    assert not np.array_equal(first, second_worker)
+    assert not np.array_equal(first, parent)
+
+
 def test_different_run_and_track_identities_change_their_streams() -> None:
     first = RunSeedStreams(SeedNamespace.EXPERIMENT_1_REPORTED, 0)
     second = RunSeedStreams(SeedNamespace.EXPERIMENT_1_REPORTED, 1)

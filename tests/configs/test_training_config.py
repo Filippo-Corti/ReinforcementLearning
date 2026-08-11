@@ -18,6 +18,7 @@ from configs import (
     PPOConfig,
     ReinforceConfig,
     TrainingConfig,
+    physical_cpu_count,
 )
 
 
@@ -35,6 +36,7 @@ def test_training_configuration_serializes_stably_with_literal_actor_widths() ->
     assert first["training_interaction_budget"] == 2_000_000
     assert first["checkpoint_interval"] == 250_000
     assert first["evaluation"]["evaluation_interval"] == 50_000
+    assert first["execution"]["environment_workers"] == physical_cpu_count()
     assert not first["ppo"]["learning_rate_scheduler_enabled"]
     assert json.loads(json.dumps(first, sort_keys=True)) == first
 

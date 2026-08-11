@@ -28,8 +28,12 @@ For a run with namespace $n$ and local identity $i$, seed derivation starts from
 `SeedSequence([0, n, i], spawn_key=(stream,))`. Eight immutable stream identities
 separate actor initialization, critic initialization, policy-action sampling,
 environment resets, training-track selection, optimization-batch order,
-evaluation, and track generation, at indices `1..8` respectively. Deriving a
-stream never mutates another stream, so evaluation cannot change training.
+evaluation, and track generation, at indices `1..8` respectively. A parallel
+environment with worker identity $j$ derives the corresponding indexed child as
+`spawn_key=(stream, j)`. Each worker therefore advances its own reset,
+track-selection, and policy-sampling state. Deriving a stream never mutates
+another stream or indexed child, so worker scheduling and evaluation cannot
+consume one another's randomness.
 Saved tracks use their split namespace and track index as their logical identity;
 their integer generator seed is the first `uint32` from the track-generation
 stream. A run's training-track-selection stream chooses among those identities.
@@ -40,10 +44,13 @@ sequential draws. Environment and track seeds are drawn from their named NumPy
 generators rather than through a separate seed API.
 At run startup, a separate explicit operation configures PyTorch for one
 intra-op and one inter-op thread, deterministic algorithms with errors, and
-disabled cuDNN benchmarking. That operation intentionally changes process-wide
-PyTorch settings and must run before parallel PyTorch work. It cannot guarantee
-bitwise equality across PyTorch versions, platforms, CPU versus GPU, or kernels
-without deterministic implementations.
+disabled cuDNN benchmarking. The same operation runs inside every persistent
+environment-worker process because process-wide settings are not inherited
+reliably under multiprocessing. Workers are spawned once and reused for the
+training run. That operation intentionally changes process-wide PyTorch settings
+and must run before parallel PyTorch work. It cannot guarantee bitwise equality
+across PyTorch versions, platforms, CPU versus GPU, or kernels without
+deterministic implementations.
 
 ## Problem-specific notation
 

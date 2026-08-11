@@ -1135,3 +1135,32 @@ weakening explicit generation-time validation.
 `tests/envs/test_reward.py`, `docs/MDP.md`, `docs/TRACK.md`, and `docs/DIARY.md`.
 
 **Commit**: `config: shorten the training task [ai]`
+
+## 2026-08-11 — Persistent deterministic racing workers
+
+**Task**: Establish the process and random-stream foundation for concurrent CPU
+environment collection without moving neural-network training to another device.
+
+**Result**: Added indexed children beneath each existing named seed stream, so
+every environment index owns reproducible policy-sampling, reset, and
+track-selection identities without consuming a shared generator. Added a
+persistent Gymnasium asynchronous vector environment that spawns its workers
+once, steps enabled environments concurrently, parks inactive workers without
+advancing their dynamics, and resets only a selected boundary mask. Every worker
+applies the configured one-thread deterministic PyTorch policy for itself.
+Vector state includes worker dynamics plus all scheduling-generator states for
+later checkpoint integration. The default configured worker count now reflects
+available physical CPU cores.
+
+**Validation**: Focused tests verified indexed-stream independence, distinct and
+stable worker process IDs across steps, worker-local deterministic PyTorch
+settings, selective reset with parked environments, and exact vector-state
+restore of the next transition.
+
+**Files**: `src/utils/random.py`, `src/configs/training.py`,
+`src/configs/__init__.py`, `src/training/vector_environment.py`,
+`src/training/__init__.py`, `tests/utils/test_random.py`,
+`tests/configs/test_training_config.py`, `tests/training/test_vector_environment.py`,
+`requirements.txt`, `docs/LEARNING.md`, and `docs/DIARY.md`.
+
+**Commit**: `feature: add persistent racing workers [ai]`

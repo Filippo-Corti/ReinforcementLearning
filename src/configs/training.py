@@ -5,8 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+import psutil
+
 from .algorithms import A2CConfig, PPOConfig, ReinforceConfig
 from .serialization import SerializableConfig
+
+
+def physical_cpu_count() -> int:
+    """
+    Return the available physical CPU count, falling back to one worker.
+    """
+    return psutil.cpu_count(logical=False) or 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +194,7 @@ class ExecutionConfig(SerializableConfig):
 
     device: Literal["cuda", "cpu"] = "cuda"
     dtype: Literal["float32"] = "float32"
-    environment_workers: int = 1
+    environment_workers: int = field(default_factory=physical_cpu_count)
     intraop_threads: int = 1
     interop_threads: int = 1
     deterministic_algorithms: bool = True

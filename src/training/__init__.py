@@ -25,6 +25,11 @@ from .engines.shared_engine import (
 from .evaluation import evaluate_deterministic
 from .normalization import RunningObservationNormalizer
 from .policy_evaluation import evaluate_policy_episode
+from .vector_environment import (
+    PersistentRacingVectorEnv,
+    RacingWorkerState,
+    VectorRacingState,
+)
 
 __all__ = [
     "CHECKPOINT_SCHEMA_VERSION",
@@ -34,12 +39,15 @@ __all__ = [
     "OnPolicyRollout",
     "OnPolicyTensors",
     "OnPolicyTrainingEngine",
+    "PersistentRacingVectorEnv",
+    "RacingWorkerState",
     "ReinforceEpisodeBuffer",
     "RunningObservationNormalizer",
     "TrainingCounters",
     "TrainingRunState",
     "TrainingTransition",
     "TrainingUpdate",
+    "VectorRacingState",
     "compute_gae_targets",
     "evaluate_deterministic",
     "evaluate_policy_episode",

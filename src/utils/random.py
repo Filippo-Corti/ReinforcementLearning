@@ -77,32 +77,64 @@ class RunSeedStreams:
     namespace: SeedNamespace
     local_identity: int
 
-    def get_numpy_generator(self, stream: SeedStream) -> np.random.Generator:
+    def get_numpy_generator(
+        self,
+        stream: SeedStream,
+        *,
+        substream_identity: int | None = None,
+    ) -> np.random.Generator:
         """
-        Return a fresh NumPy generator for one named source of randomness.
+        Return a fresh NumPy generator for one named source or indexed child.
         """
-        return np.random.default_rng(self._seed_sequence(stream))
+        return np.random.default_rng(
+            self._seed_sequence(stream, substream_identity=substream_identity)
+        )
 
     def get_torch_generator(
-        self, stream: SeedStream, device: str = "cpu"
+        self,
+        stream: SeedStream,
+        device: str = "cpu",
+        *,
+        substream_identity: int | None = None,
     ) -> torch.Generator:
         """
-        Return a fresh local PyTorch generator without changing global state.
+        Return a fresh local PyTorch generator for one named source or child.
         """
         import torch
 
         generator = torch.Generator(device=device)
-        generator.manual_seed(self._integer_seed(stream))
+        generator.manual_seed(
+            self._integer_seed(stream, substream_identity=substream_identity)
+        )
         return generator
 
-    def _seed_sequence(self, stream: SeedStream) -> np.random.SeedSequence:
+    def _seed_sequence(
+        self,
+        stream: SeedStream,
+        *,
+        substream_identity: int | None = None,
+    ) -> np.random.SeedSequence:
+        if substream_identity is not None and substream_identity < 0:
+            raise ValueError("Seed substream identities cannot be negative.")
+        spawn_key = (int(stream),)
+        if substream_identity is not None:
+            spawn_key = (int(stream), substream_identity)
         return np.random.SeedSequence(
             entropy=[ROOT_PROTOCOL_KEY, int(self.namespace), self.local_identity],
-            spawn_key=(int(stream),),
+            spawn_key=spawn_key,
         )
 
-    def _integer_seed(self, stream: SeedStream) -> int:
-        return int(self._seed_sequence(stream).generate_state(1, dtype=np.uint32)[0])
+    def _integer_seed(
+        self,
+        stream: SeedStream,
+        *,
+        substream_identity: int | None = None,
+    ) -> int:
+        sequence = self._seed_sequence(
+            stream,
+            substream_identity=substream_identity,
+        )
+        return int(sequence.generate_state(1, dtype=np.uint32)[0])
 
 
 @dataclass(frozen=True, slots=True)

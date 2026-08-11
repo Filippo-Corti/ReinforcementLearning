@@ -27,6 +27,7 @@ from .training import (
     LoggingConfig,
     ObservationNormalizationConfig,
     TrainingConfig,
+    physical_cpu_count,
 )
 
 __all__ = [
@@ -55,4 +56,5 @@ __all__ = [
     "SimulationConfig",
     "TrackGenerationConfig",
     "TrainingConfig",
+    "physical_cpu_count",
 ]
