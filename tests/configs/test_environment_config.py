@@ -42,10 +42,10 @@ def test_defaults_match_the_environment_specification() -> None:
         nonlocal_centerline_margin=2.0,
     )
     assert config.reward == RewardConfig(
-        finish_reward=10.0,
-        crash_penalty=20.0,
-        time_penalty_rate=0.05,
-        progress_coefficient=1.0,
+        finish_reward=100.0,
+        crash_penalty=5.0,
+        time_penalty_rate=0.5,
+        progress_coefficient=100.0,
     )
     assert config.observation == FrenetObservationConfig(
         lookahead_base=5.0,

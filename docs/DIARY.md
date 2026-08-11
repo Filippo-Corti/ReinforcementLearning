@@ -1293,3 +1293,120 @@ valid JSON and every Python cell parses successfully.
 `docs/LEARNING.md`, and `docs/DIARY.md`.
 
 **Commit**: `feature: add REINFORCE actor weight decay [ai]`
+
+## 2026-08-11 — Reward rebalance: why all three algorithms learned to stall
+
+**Task**: Diagnose why REINFORCE, A2C and PPO all converge to a stalled policy
+on the fixed development circuit, and fix the shared cause rather than tuning
+each algorithm.
+
+**Result**: The cause is the reward coefficients, not the learning code. The
+implementations of the score-function estimator, the tanh change-of-variables
+correction, the GAE recursion, the truncation-versus-termination bootstrap and
+the seed contract were all checked against `docs/LEARNING.md` and are correct.
+The return landscape they were asked to climb was not.
+
+Measured on the seed-0 circuit under the previous coefficients
+($R_{\text{finish}}=10$, $R_{\text{crash}}=20$, $c_{\text{prog}}=1$):
+
+| behaviour | lap fraction | return |
+|---|---|---|
+| never leave the start line | 0.000 | **-0.30** |
+| drive, crash immediately | 0.110 | -19.91 |
+| drive, crash after a third of the lap | 0.400 | -19.65 |
+| complete the lap | 1.001 | +10.91 |
+
+The whole competence ladder from "cannot steer" to "drives a third of the lap"
+spans 0.26 return units, and all of it sits 19 units *below* doing nothing. Two
+orderings were inverted at once:
+
+1. $R_{\text{crash}}=20$ exceeded the $c_{\text{step}}T_{\max}=0.3$ cost of
+   idling to the time limit, so standing still strictly dominated every attempt
+   to drive. Taking the measured partial-lap and full-lap returns, a policy had
+   to already complete **63%** of its laps before attempting the lap beat
+   standing still in expectation — unreachable from a 0% completion rate.
+2. $c_{\text{prog}}=1$ against $R_{\text{crash}}=20$ made the dense shaping term
+   worth 5% of one terminal event, so the return carried almost no information
+   about *where* an episode ended, only *whether* it crashed.
+
+The start state makes the resulting attractor absorbing. The car starts at
+$v_0=0$, and the kinematic kernel freezes pose and heading at zero speed, so a
+policy with negative mean throttle receives a constant observation and a
+constant reward forever. Sampling 16 rollouts from the documented initial policy,
+the standardized Monte Carlo return correlates $-0.31$ with instantaneous speed
+(a slope of $-0.21$ standard deviations per m/s): the estimator was explicitly
+telling every algorithm to slow down. A2C and PPO reach the same place through a
+critic that learns $v(o)\approx-20\gamma^{\text{steps to crash}}$.
+
+New coefficients are $R_{\text{finish}}=100$, $R_{\text{crash}}=5$,
+$\rho=0.5s^{-1}$ and $c_{\text{prog}}=100$. Both inequalities now hold
+($5 < 20$ and $100 \gg 5$). Idling to truncation becomes the worst available
+outcome at $-20$; crashing after a third of a lap returns $+31$; a complete lap
+returns $+194$. The return is monotone in distance covered and decreasing in
+time taken, which is the shortest-time objective the project set out to encode.
+The same rollout sample now shows a speed correlation of $-0.03$, and return
+gained per unit lap fraction rises from $0.90$ to $92.81$.
+
+Nothing else changed: the reward *formula*, the observation, the action mapping,
+$\gamma=0.9995$, $\Delta_{t_{agent}}=0.04$, the episode cap, the physics version,
+the seed contract and every learning equation are untouched. Only the four
+`RewardConfig` scalars moved. This also restores the reward reference tests,
+which the previous ad-hoc `0.05 -> 0.0075` time-penalty edit had left failing.
+
+**Validation**: Two new invariant tests replace the previous fixed-total checks
+as the real regression guard: crashing anywhere on the circuit must outscore
+idling to the time limit, and driving further before crashing must score
+strictly higher. A third asserts the two coefficient inequalities directly, so a
+future retune cannot silently reintroduce the inversion. Reference totals were
+updated to $-9$ over a target lap, $-20$ for a stationary timeout, $+100$ for a
+finish and $-5$ for a crash.
+
+End-to-end, the algorithms were retrained headlessly on the seed-0 circuit
+across eight workers. The comparison is controlled: identical actor and critic
+architectures, learning rates, $\gamma$, $\lambda$, gradient-norm limit, seed
+namespace and worker count. Only the four reward scalars differ.
+
+PPO, in 64-episode buckets, mean lap fraction and outcome mix:
+
+| bucket | previous coefficients | new coefficients |
+|---|---|---|
+| 64 | 0.076, 80% time limit | 0.414, 11% laps completed |
+| 128 | 0.067, 86% time limit | 0.956, 84% laps completed |
+| 192 | 0.008, **100% time limit** | 0.991, **98% laps completed** |
+
+At 192 episodes the new run averages 258 agent steps per episode, below the 306
+steps the scripted Frenet reference needs for the same circuit. The previous
+coefficients produce a permanent stall, matching `notebooks/ppo.ipynb`.
+
+A2C over 384 episodes and 220,039 interactions climbs monotonically and never
+stalls: mean lap fraction 0.127, 0.180, 0.214, 0.279, 0.290, 0.340 with mean
+return -3.13, 1.93, 5.21, 11.67, 13.00, 18.76 and a best episode reaching 0.686
+of the lap. A2C applies one gradient step per 2,048-transition rollout, so it is
+expected to trail PPO's ten epochs per rollout. For reference,
+`notebooks/a2c.ipynb` finished 844,000 interactions at lap fraction 0.030 with
+every episode ending at the time limit.
+
+REINFORCE applies one update per eight complete episodes, so it receives the
+fewest gradient steps of the three and improves slowest. Its mean lap fraction
+still rises monotonically at 0.118, 0.124, 0.146, 0.163 with mean return -3.87,
+-3.18, -1.57, +0.61, crossing into positive return by its 256th episode, and the
+time-limit share stays between 0% and 8% instead of the 100%
+recorded in `notebooks/reinforce.ipynb` after 1,325,384 interactions. The stall
+attractor is removed for REINFORCE as well; its remaining slowness is the
+sample efficiency of a Monte Carlo estimator, not the reward pathology.
+
+The claim being validated is specifically that the stall is no longer an
+attractor for any of the three, and that return now increases with distance
+covered. Reaching a reported-experiment level of performance for A2C and
+REINFORCE needs the full interaction budget, not these short diagnostic runs.
+
+The complete suite passes 201 tests. The two `tests/experiments/test_train.py`
+failures present afterwards were verified to fail identically on `main` before
+this change; they depend on the host's physical core count and are unrelated.
+Black and Ruff pass. The three notebooks were deliberately not re-executed.
+
+**Files**: `src/configs/environment.py`, `tests/envs/test_reward.py`,
+`tests/envs/test_episode_lifecycle.py`,
+`tests/configs/test_environment_config.py`, `docs/MDP.md`, and `docs/DIARY.md`.
+
+**Commit**: `fix: rebalance reward coefficients [ai]`

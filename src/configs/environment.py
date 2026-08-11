@@ -109,6 +109,18 @@ class RewardConfig:
     """
     Configuration of the reward function.
 
+    The coefficients are chosen so that the dense progress term dominates the
+    return. A policy that drives further before crashing must always score
+    higher than one that crashes earlier, and both must score higher than one
+    that never leaves the start line. This requires two orderings that the
+    original coefficients inverted:
+
+    * ``crash_penalty`` must stay below the cost of idling to the time limit
+      (``time_penalty_rate * agent_timestep * max_episode_steps``), otherwise
+      standing still strictly dominates every attempt to drive.
+    * ``progress_coefficient`` must stay well above ``crash_penalty``, otherwise
+      reaching further along the track is invisible next to the terminal event.
+
     Fields:
         * finish_reward: The reward given to the agent for successfully completing the track.
         * crash_penalty: The penalty given to the agent for crashing into an obstacle or going off-track.
@@ -116,10 +128,10 @@ class RewardConfig:
         * progress_coefficient: The coefficient applied to the agent's reward based on its progress along the track.
     """
 
-    finish_reward: float = 10.0
-    crash_penalty: float = 20.0
-    time_penalty_rate: float = 0.0075
-    progress_coefficient: float = 1.0
+    finish_reward: float = 100.0
+    crash_penalty: float = 5.0
+    time_penalty_rate: float = 0.5
+    progress_coefficient: float = 100.0
 
 
 @dataclass(frozen=True, slots=True)

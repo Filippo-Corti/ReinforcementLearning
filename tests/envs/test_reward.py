@@ -7,6 +7,7 @@ from math import pi
 import numpy as np
 import pytest
 
+from configs import RewardConfig, SimulationConfig
 from envs import (
     EpisodeLifecycle,
     KinematicTransition,
@@ -74,36 +75,95 @@ def _transition(*states: VehicleState) -> KinematicTransition:
     )
 
 
-def test_target_lap_step_cost_matches_documented_total(circle_geometry) -> None:
+def _stationary_total(circle_geometry, steps: int) -> float:
     """
-    Eighteen seconds of non-terminal stationary steps costs minus 0.9.
+    Return the accumulated reward of remaining stationary for some agent steps.
     """
     lifecycle = EpisodeLifecycle(circle_geometry)
     state = _state(circle_geometry.position(0.0))
     lifecycle.reset(state)
-
-    total = sum(
+    return sum(
         lifecycle.process_transition(_transition(state, state, state, state)).reward
-        for _ in range(450)
+        for _ in range(steps)
     )
 
-    assert total == pytest.approx(-0.9)
+
+def _partial_lap_total(circle_geometry, distance: float) -> float:
+    """
+    Return the accumulated reward of driving a distance and then leaving the track.
+    """
+    lifecycle = EpisodeLifecycle(circle_geometry)
+    lifecycle.reset(_state(circle_geometry.position(0.0)))
+    total = 0.0
+    for travelled in np.arange(10.0, distance + 10.0, 10.0):
+        state = _state(circle_geometry.position(float(travelled)))
+        total += lifecycle.process_transition(_transition(state)).reward
+    crashed = _state(
+        circle_geometry.position(distance) + 7.0 * circle_geometry.normal(distance)
+    )
+    return total + lifecycle.process_transition(_transition(crashed)).reward
+
+
+def test_target_lap_step_cost_matches_documented_total(circle_geometry) -> None:
+    """
+    Eighteen seconds of non-terminal stationary steps costs minus nine.
+    """
+    assert _stationary_total(circle_geometry, 450) == pytest.approx(-9.0)
 
 
 def test_stationary_timeout_matches_documented_total(circle_geometry) -> None:
     """
-    Remaining stationary through 1,000 agent steps returns minus two.
+    Remaining stationary through 1,000 agent steps returns minus twenty.
     """
-    lifecycle = EpisodeLifecycle(circle_geometry)
-    state = _state(circle_geometry.position(0.0))
-    lifecycle.reset(state)
+    assert _stationary_total(circle_geometry, 1_000) == pytest.approx(-20.0)
 
-    total = sum(
-        lifecycle.process_transition(_transition(state, state, state, state)).reward
-        for _ in range(1_000)
+
+def test_crashing_anywhere_beats_never_leaving_the_start_line(circle_geometry) -> None:
+    """
+    Trying to drive must outscore idling, or standing still is the only optimum.
+
+    The crash penalty has to stay below the cost of idling to the time limit.
+    When it does not, every exploratory attempt to drive is a losing bet against
+    doing nothing, and every policy-gradient method collapses onto a stalled
+    policy regardless of its own update rule.
+    """
+    idling = _stationary_total(circle_geometry, 1_000)
+
+    assert _partial_lap_total(circle_geometry, 10.0) > idling
+    assert _partial_lap_total(circle_geometry, 320.0) > idling
+
+
+def test_driving_further_before_crashing_scores_strictly_higher(
+    circle_geometry,
+) -> None:
+    """
+    The dense progress term must dominate the one-off terminal penalty.
+
+    Without this ordering the return is effectively a function of "did I crash"
+    alone, so no algorithm can learn to reach further along the circuit.
+    """
+    totals = [
+        _partial_lap_total(circle_geometry, distance)
+        for distance in (40.0, 160.0, 320.0, 480.0)
+    ]
+
+    assert totals == sorted(totals)
+    assert totals[-1] - totals[0] > abs(-5.0)
+
+
+def test_normalized_progress_dominates_the_crash_penalty() -> None:
+    """
+    One lap of shaping must be worth far more than one terminal event.
+    """
+    reward = RewardConfig()
+    idling_cost = (
+        reward.time_penalty_rate
+        * SimulationConfig().agent_timestep
+        * SimulationConfig().max_episode_steps
     )
 
-    assert total == pytest.approx(-2.0)
+    assert reward.crash_penalty < idling_cost
+    assert reward.progress_coefficient > 10.0 * reward.crash_penalty
 
 
 def test_normalized_progress_still_sums_to_one_lap(circle_geometry) -> None:
@@ -133,4 +193,4 @@ def test_immediate_crash_matches_documented_penalty(circle_geometry) -> None:
 
     result = lifecycle.process_transition(_transition(crashed))
 
-    assert result.reward == pytest.approx(-20.0)
+    assert result.reward == pytest.approx(-5.0)

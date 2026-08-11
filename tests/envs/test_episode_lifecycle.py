@@ -158,7 +158,7 @@ def test_forward_full_lap_crossing_terminates(
 
     assert result.lap_completed
     assert result.terminated
-    assert result.reward == pytest.approx(10.0)
+    assert result.reward == pytest.approx(100.0)
 
 
 def test_collision_takes_precedence_over_finish(
@@ -177,7 +177,7 @@ def test_collision_takes_precedence_over_finish(
 
     assert result.collision
     assert not result.lap_completed
-    assert result.reward == pytest.approx(-20.0)
+    assert result.reward == pytest.approx(-5.0)
 
 
 def test_time_limit_truncates_without_termination(
@@ -197,4 +197,4 @@ def test_time_limit_truncates_without_termination(
 
     assert result.truncated
     assert not result.terminated
-    assert result.reward == pytest.approx(-0.002)
+    assert result.reward == pytest.approx(-0.02)

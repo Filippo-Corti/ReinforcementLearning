@@ -151,11 +151,49 @@ Collision is checked before finish so crossing the gate while off-track cannot
 receive the finish reward.
 
 Where:
-* $R_{\text{finish}} = 10$
-* $R_{\text{crash}} = 20$
-* $c_{\text{step}}= \rho \cdot \Delta_{t_{agent}} = 0.0003$, with $\rho = 0.0075s^{-1}$ representing the cost over one agent step.
-* $c_{\text{prog}}=1$
+* $R_{\text{finish}} = 100$
+* $R_{\text{crash}} = 5$
+* $c_{\text{step}}= \rho \cdot \Delta_{t_{agent}} = 0.02$, with $\rho = 0.5s^{-1}$ representing the cost over one agent step.
+* $c_{\text{prog}}=100$
 * $\Delta \tilde{s}_t$ is the progress term, computed as a normalized difference between the current and next locations (see [`TRACK.md`](TRACK.md)).
+
+### Why these magnitudes
+
+The coefficients are not free. They must preserve two orderings, or the task
+becomes unlearnable by any policy-gradient method regardless of its update rule.
+
+**Trying must beat doing nothing.** The car starts at $v_0=0$, and $v=0$ is an
+absorbing state of the transition kernel: with zero speed the pose and heading
+cannot change, so a policy with negative mean throttle receives a constant
+observation and a constant reward until truncation. That stalled policy earns
+$-c_{\text{step}}T_{\max}$. Any exploratory attempt to drive risks
+$-R_{\text{crash}}$. If $R_{\text{crash}} > c_{\text{step}}T_{\max}$, the stall
+strictly dominates every attempt, and the stall is exactly the behaviour that
+gradient ascent can reach from a neutral initialization. The requirement is
+therefore
+
+$$ R_{\text{crash}} < c_{\text{step}} \cdot T_{\max}, $$
+
+here $5 < 20$.
+
+**Reaching further must be measurably better.** The shaped term is the only
+signal that distinguishes a policy which crashes at 10% of the lap from one that
+crashes at 90%. Its total authority over an episode is $c_{\text{prog}}$, against
+a one-off $R_{\text{crash}}$. When $c_{\text{prog}} \ll R_{\text{crash}}$ the
+return is, to within estimator noise, a function of *whether* the episode ended
+in a crash and not of *where*, so there is no gradient toward driving further.
+The requirement is
+
+$$ c_{\text{prog}} \gg R_{\text{crash}}, $$
+
+here $100 \gg 5$.
+
+An earlier version of this document used $R_{\text{finish}}=10$,
+$R_{\text{crash}}=20$, $\rho=0.05s^{-1}$ and $c_{\text{prog}}=1$. Both
+inequalities ran the wrong way. Under those values a policy had to already
+complete roughly two thirds of its laps before attempting the lap beat standing
+still in expectation, which no algorithm can bootstrap from a $0\%$ completion
+rate. REINFORCE, A2C and PPO all converged to the stall.
 
 The maximum episode length is $T_{\max}=1000$ agent steps, corresponding to
 $40s$. The training circuit is approximately one fifth of the original circuit
@@ -167,14 +205,20 @@ configuration values and can be increased together for a longer task.
 The signs and approximate undiscounted totals are:
 
 * The step penalty over an $18s$ lap is
-  $-c_{\text{step}}\times 18/\Delta_{t_{agent}}=-0.9$.
-* The normalized progress accumulated over one forward lap is approximately $+1$.
+  $-c_{\text{step}}\times 18/\Delta_{t_{agent}}=-9$.
+* The normalized progress accumulated over one forward lap is approximately
+  $+100$.
 * Including the finish reward, an $18s$ lap therefore returns approximately
-  $10+1-0.9=10.1$. The exact value differs by at most one shaped transition
+  $100+100-9=191$. The exact value differs by at most one shaped transition
   because the terminal branch replaces the normal step reward.
 * Remaining stationary until truncation returns
-  $-c_{\text{step}}\times T_{\max}=-2$.
-* An immediate crash returns $-R_{\text{crash}}=-20$.
+  $-c_{\text{step}}\times T_{\max}=-20$, the worst outcome available.
+* An immediate crash returns $-R_{\text{crash}}=-5$.
+* Crashing after one quarter of the lap returns approximately
+  $100\times0.25-5-c_{\text{step}}\times T_{\text{crash}}\approx+18$, which is
+  above both the stall and the immediate crash. The return is monotone in
+  distance covered and decreasing in time taken, which is the intended
+  shortest-time objective.
 
 These reference values must be covered by reward tests when the environment is
 implemented.
