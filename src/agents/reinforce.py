@@ -47,7 +47,7 @@ class ReinforceAgent:
         observation_dimensions: int,
         actor_config: ActorConfig,
         config: ReinforceConfig,
-        actor_learning_rate: float,
+        actor_learning_rate: float, # TODO: this should be moved into the actor config, shouldn't it?
         initialization_generator: torch.Generator,
         sampling_generator: torch.Generator,
         *,
@@ -122,11 +122,16 @@ class ReinforceAgent:
                 f"{self.collection_size} complete trajectories."
             )
 
+        # 1. Compute the returns-to-go G for each trajectory in the batch, then
+        # apply a standardization to reduce variance.
         returns = tuple(
             monte_carlo_return_to_go(episode, self.config.discount, device=self.device)
             for episode in update_input.episodes
         )
         standardized_returns = self._standardize_returns(returns)
+        
+        # 2. Compute the REINFORCE loss for each trajectory, as log probs * G_standardize, then
+        # average across the batch. 
         trajectory_losses = tuple(
             self._trajectory_loss(episode, targets)
             for episode, targets in zip(
@@ -134,12 +139,15 @@ class ReinforceAgent:
             )
         )
         actor_loss = torch.stack(trajectory_losses).mean()
+        
+        # [Compute diagnostics for recording training progress.]
         entropy_proxy = self._entropy_proxy(update_input.episodes)
         actor_weight_norm = parameter_norm(self.actor.parameters())
         parameters_before = tuple(
             parameter.detach().clone() for parameter in self.actor.parameters()
         )
 
+        # 3. Perform the optimizer step, making sure to clip gradients to avoid exploding updates.
         self.optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
         actor_gradient_norm = float(
