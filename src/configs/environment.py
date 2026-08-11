@@ -118,7 +118,7 @@ class RewardConfig:
 
     finish_reward: float = 10.0
     crash_penalty: float = 20.0
-    time_penalty_rate: float = 0.05
+    time_penalty_rate: float = 0.0075
     progress_coefficient: float = 1.0
 
 

@@ -153,7 +153,7 @@ receive the finish reward.
 Where:
 * $R_{\text{finish}} = 10$
 * $R_{\text{crash}} = 20$
-* $c_{\text{step}}= \rho \cdot \Delta_{t_{agent}} = 0.002$, with $\rho = 0.05s^{-1}$ representing the cost over one agent step.
+* $c_{\text{step}}= \rho \cdot \Delta_{t_{agent}} = 0.0003$, with $\rho = 0.0075s^{-1}$ representing the cost over one agent step.
 * $c_{\text{prog}}=1$
 * $\Delta \tilde{s}_t$ is the progress term, computed as a normalized difference between the current and next locations (see [`TRACK.md`](TRACK.md)).
 
