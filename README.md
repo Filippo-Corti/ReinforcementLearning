@@ -189,7 +189,9 @@ actor-critic engines. Both show raw and 20-episode moving-average returns,
 actor/critic weight norms at optimizer steps, and deterministic evaluations at
 an episode cadence configured at the start of the notebook. The A2C notebook
 focuses on GAE and critic diagnostics; the PPO notebook additionally exposes
-clipping and approximate-KL diagnostics.
+clipping and approximate-KL diagnostics. Like the REINFORCE notebook, both have
+live deterministic viewers before and after training, with inline updates and a
+Pygame-window fallback.
 
 ## Train REINFORCE
 

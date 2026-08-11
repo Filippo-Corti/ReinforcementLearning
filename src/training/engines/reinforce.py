@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from tqdm.auto import tqdm
@@ -64,9 +64,17 @@ class ReinforceTrainingEngine:
         self.history = EducationalTrainingHistory()
         self._episode_batch: list[OnPolicyRollout] = []
 
-    def train(self, episode_count: int) -> EducationalTrainingHistory:
+    def train(
+        self,
+        episode_count: int,
+        *,
+        on_episode_end: (
+            Callable[[EducationalEpisodeRecord, EducationalTrainingHistory], None]
+            | None
+        ) = None,
+    ) -> EducationalTrainingHistory:
         """
-        Collect the requested complete episodes and update after each full batch.
+        Collect episodes and optionally report each one after its possible update.
         """
         if episode_count <= 0:
             raise ValueError("Episode count must be positive.")
@@ -144,21 +152,20 @@ class ReinforceTrainingEngine:
                     maximum_progress = max(maximum_progress, progress)
 
                     if terminated or truncated:
-                        self.history.episodes.append(
-                            EducationalEpisodeRecord(
-                                episode_index=episode_index,
-                                circuit_identity=circuit_identity,
-                                interactions=len(episode_transitions),
-                                undiscounted_return=episode_return,
-                                outcome=racing_outcome(terminated, truncated, info),
-                                final_progress=progress,
-                                maximum_progress=maximum_progress,
-                                mean_speed=speed_total / len(episode_transitions),
-                                mean_throttle_magnitude=(
-                                    throttle_magnitude_total / len(episode_transitions)
-                                ),
-                            )
+                        episode_record = EducationalEpisodeRecord(
+                            episode_index=episode_index,
+                            circuit_identity=circuit_identity,
+                            interactions=len(episode_transitions),
+                            undiscounted_return=episode_return,
+                            outcome=racing_outcome(terminated, truncated, info),
+                            final_progress=progress,
+                            maximum_progress=maximum_progress,
+                            mean_speed=speed_total / len(episode_transitions),
+                            mean_throttle_magnitude=(
+                                throttle_magnitude_total / len(episode_transitions)
+                            ),
                         )
+                        self.history.episodes.append(episode_record)
                         break
                     observation = next_observation
             finally:
@@ -186,5 +193,10 @@ class ReinforceTrainingEngine:
                     )
                 )
                 self._episode_batch = []
+
+            # Evaluation at a batch boundary observes the policy after the update
+            # built from the episode that has just finished.
+            if on_episode_end is not None:
+                on_episode_end(episode_record, self.history)
 
         return self.history

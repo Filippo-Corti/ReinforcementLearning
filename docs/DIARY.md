@@ -1076,3 +1076,32 @@ added.
 `docs/DIARY.md`.
 
 **Commit**: `feature: add educational A2C and PPO notebooks [ai]`
+
+## 2026-08-11 — Aligned educational policy notebooks
+
+**Task**: Bring the REINFORCE notebook's records and scheduled evaluation in
+line with the A2C and PPO notebooks, and give the actor-critic notebooks the
+same dynamic before/after policy view.
+
+**Result**: REINFORCE now runs isolated deterministic evaluation before
+training and after every configurable episode interval. Its episode callback
+runs after any optimizer update triggered by the completed trajectory, so the
+evaluation observes the updated actor at an eight-episode batch boundary. Its
+records figure now combines raw and trailing 20-episode mean returns, greedy
+evaluation return and progress, speed, throttle magnitude, actor loss and actor
+weight norm. A2C and PPO now include the same inline live viewer and Pygame
+fallback before and after training.
+
+**Validation**: The focused educational-engine tests passed all three tests.
+The REINFORCE notebook executed for 16 episodes, 11,041 interactions, two
+updates and three greedy evaluations. The four-episode A2C and PPO notebooks
+re-executed with three greedy evaluations each. All three retained their plots
+and initial/final viewer output without cell errors. Black, Ruff, targeted
+Pyright and `git diff --check` passed; no notebook unit tests were added.
+
+**Files**: `src/training/engines/reinforce.py`,
+`tests/training/test_algorithm_engines.py`, `notebooks/reinforce.ipynb`,
+`notebooks/a2c.ipynb`, `notebooks/ppo.ipynb`, `README.md`, and
+`docs/DIARY.md`.
+
+**Commit**: `feature: align educational policy notebooks [ai]`

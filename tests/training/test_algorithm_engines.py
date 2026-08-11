@@ -53,6 +53,7 @@ def _actor_config() -> ActorConfig:
 def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
     tracks = _tracks()
     selection_seed = 19
+    completed_episodes: list[tuple[int, int]] = []
     agent = ReinforceAgent(
         observation_dimensions=4,
         actor_config=_actor_config(),
@@ -69,7 +70,12 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
         np.random.default_rng(selection_seed),
     )
 
-    history = engine.train(5)
+    history = engine.train(
+        5,
+        on_episode_end=lambda record, current_history: completed_episodes.append(
+            (record.episode_index, len(current_history.updates))
+        ),
+    )
 
     expected_generator = np.random.default_rng(selection_seed)
     expected_circuits = tuple(
@@ -86,6 +92,7 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
     assert history.training_interactions == 5
     assert len(history.updates) == 2
     assert [record.transition_count for record in history.updates] == [2, 2]
+    assert completed_episodes == [(0, 0), (1, 1), (2, 1), (3, 2), (4, 2)]
 
 
 def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
