@@ -46,7 +46,7 @@ class A2CAgent:
         * sampling_generator: Isolated generator used only for policy sampling.
     """
 
-    STATE_VERSION = 1
+    STATE_VERSION = 2
     collection_mode = CollectionMode.FIXED_ROLLOUT
 
     def __init__(
@@ -55,7 +55,6 @@ class A2CAgent:
         actor_config: ActorConfig,
         critic_config: CriticConfig,
         config: A2CConfig,
-        actor_learning_rate: float,
         critic_learning_rate: float,
         actor_initialization_generator: torch.Generator,
         critic_initialization_generator: torch.Generator,
@@ -73,7 +72,9 @@ class A2CAgent:
         self.collection_size = config.transitions_per_rollout
         self.device = torch.device(device)
         self.dtype = dtype
-        self.actor_learning_rate = float(actor_learning_rate)
+        if actor_config.learning_rate is None:
+            raise ValueError("ActorConfig requires an explicit learning rate.")
+        self.actor_learning_rate = float(actor_config.learning_rate)
         self.critic_learning_rate = float(critic_learning_rate)
         self.actor = ActorNetwork(
             observation_dimensions,

@@ -929,3 +929,24 @@ its two existing advisory warnings about unbounded observation-space limits.
 `docs/EXPERIMENT.md`, `PLAN.md`, `requirements.txt`, and `docs/DIARY.md`.
 
 **Commit**: `feature: add reproducible experiment analysis [ai]`
+
+## 2026-08-11 — Explicit per-run actor learning rates
+
+**Task**: Resolve the actor-learning-rate review TODO while retaining the
+learning contract's requirement that calibration, rather than a preset, selects
+the final rate.
+
+**Result**: Added an optional learning rate to `ActorConfig`. Named actor-size
+presets leave it unset, runners copy their required explicit command input into
+a per-run actor configuration, and all three on-policy agents read the selected
+rate from that configuration. Agent checkpoints were versioned because their
+immutable actor configuration now includes the rate.
+
+**Validation**: Focused configuration, agent and shared-runner tests passed;
+Black, Ruff, Pyright and `git diff --check` passed.
+
+**Files**: `src/configs/training.py`, `src/agents/reinforce.py`,
+`src/agents/a2c.py`, `src/agents/ppo.py`, `experiments/train.py`, affected agent
+and configuration tests, `docs/LEARNING.md`, and `docs/DIARY.md`.
+
+**Commit**: `refactor: store actor learning rate in its config [ai]`

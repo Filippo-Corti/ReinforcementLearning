@@ -23,7 +23,9 @@ def _agent(
 ) -> PPOAgent:
     return PPOAgent(
         observation_dimensions=1,
-        actor_config=ActorConfig(name="small", hidden_sizes=(4, 4)),
+        actor_config=ActorConfig(
+            name="small", hidden_sizes=(4, 4), learning_rate=actor_learning_rate
+        ),
         critic_config=CriticConfig(hidden_sizes=(4, 4)),
         config=PPOConfig(
             discount=0.9,
@@ -32,7 +34,6 @@ def _agent(
             optimization_epochs=optimization_epochs,
             minibatch_size=minibatch_size,
         ),
-        actor_learning_rate=actor_learning_rate,
         critic_learning_rate=critic_learning_rate,
         actor_initialization_generator=torch.Generator().manual_seed(seed),
         critic_initialization_generator=torch.Generator().manual_seed(seed + 50),
@@ -253,10 +254,11 @@ def test_ppo_rejects_disabled_optional_objectives() -> None:
     with pytest.raises(ValueError, match="value clipping"):
         PPOAgent(
             observation_dimensions=1,
-            actor_config=ActorConfig(name="small", hidden_sizes=(4, 4)),
+            actor_config=ActorConfig(
+                name="small", hidden_sizes=(4, 4), learning_rate=0.01
+            ),
             critic_config=CriticConfig(hidden_sizes=(4, 4)),
             config=PPOConfig(value_clipping_enabled=True),
-            actor_learning_rate=0.01,
             critic_learning_rate=0.01,
             actor_initialization_generator=torch.Generator().manual_seed(1),
             critic_initialization_generator=torch.Generator().manual_seed(2),

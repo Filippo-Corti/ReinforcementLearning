@@ -39,7 +39,7 @@ class ReinforceAgent:
         * sampling_generator: Isolated generator used only for policy sampling.
     """
 
-    STATE_VERSION = 1
+    STATE_VERSION = 2
     collection_mode = CollectionMode.COMPLETE_EPISODES
 
     def __init__(
@@ -47,7 +47,6 @@ class ReinforceAgent:
         observation_dimensions: int,
         actor_config: ActorConfig,
         config: ReinforceConfig,
-        actor_learning_rate: float, # TODO: this should be moved into the actor config, shouldn't it?
         initialization_generator: torch.Generator,
         sampling_generator: torch.Generator,
         *,
@@ -62,7 +61,9 @@ class ReinforceAgent:
         self.collection_size = config.completed_episodes_per_update
         self.device = torch.device(device)
         self.dtype = dtype
-        self.actor_learning_rate = float(actor_learning_rate)
+        if actor_config.learning_rate is None:
+            raise ValueError("ActorConfig requires an explicit learning rate.")
+        self.actor_learning_rate = float(actor_config.learning_rate)
         self.actor = ActorNetwork(
             observation_dimensions,
             actor_config,
@@ -129,9 +130,9 @@ class ReinforceAgent:
             for episode in update_input.episodes
         )
         standardized_returns = self._standardize_returns(returns)
-        
+
         # 2. Compute the REINFORCE loss for each trajectory, as log probs * G_standardize, then
-        # average across the batch. 
+        # average across the batch.
         trajectory_losses = tuple(
             self._trajectory_loss(episode, targets)
             for episode, targets in zip(
@@ -139,7 +140,7 @@ class ReinforceAgent:
             )
         )
         actor_loss = torch.stack(trajectory_losses).mean()
-        
+
         # [Compute diagnostics for recording training progress.]
         entropy_proxy = self._entropy_proxy(update_input.episodes)
         actor_weight_norm = parameter_norm(self.actor.parameters())

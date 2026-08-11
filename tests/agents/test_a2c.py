@@ -19,14 +19,15 @@ def _agent(
 ) -> A2CAgent:
     return A2CAgent(
         observation_dimensions=1,
-        actor_config=ActorConfig(name="small", hidden_sizes=(4, 4)),
+        actor_config=ActorConfig(
+            name="small", hidden_sizes=(4, 4), learning_rate=learning_rate
+        ),
         critic_config=CriticConfig(hidden_sizes=(4, 4)),
         config=A2CConfig(
             discount=0.9,
             gae_lambda=gae_lambda,
             transitions_per_rollout=8,
         ),
-        actor_learning_rate=learning_rate,
         critic_learning_rate=learning_rate,
         actor_initialization_generator=torch.Generator().manual_seed(seed),
         critic_initialization_generator=torch.Generator().manual_seed(seed + 50),

@@ -29,6 +29,7 @@ def test_training_configuration_serializes_stably_with_literal_actor_widths() ->
 
     assert first == second
     assert first["actor"]["hidden_sizes"] == [32, 32]
+    assert first["actor"]["learning_rate"] is None
     assert first["critic"]["hidden_sizes"] == [64, 64]
     assert first["critic"]["hidden_initialization_gain"] == 2**0.5
     assert first["training_interaction_budget"] == 2_000_000
@@ -62,6 +63,10 @@ def test_agent_configs_expose_only_documented_learning_rate_candidates() -> None
     assert not hasattr(reinforce, "actor_learning_rate")
     assert not hasattr(a2c, "actor_learning_rate")
     assert not hasattr(ppo, "critic_learning_rate")
+
+
+def test_actor_learning_rate_is_unset_in_size_presets() -> None:
+    assert SMALL_ACTOR_CONFIG.learning_rate is None
 
 
 def test_experiment_matrices_cover_approved_choices() -> None:

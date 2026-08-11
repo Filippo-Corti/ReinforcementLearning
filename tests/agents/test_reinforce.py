@@ -14,9 +14,10 @@ from training.buffers import OnPolicyRollout
 def _agent(seed: int, *, learning_rate: float = 0.02) -> ReinforceAgent:
     return ReinforceAgent(
         observation_dimensions=1,
-        actor_config=ActorConfig(name="small", hidden_sizes=(4, 4)),
+        actor_config=ActorConfig(
+            name="small", hidden_sizes=(4, 4), learning_rate=learning_rate
+        ),
         config=ReinforceConfig(discount=0.9),
-        actor_learning_rate=learning_rate,
         initialization_generator=torch.Generator().manual_seed(seed),
         sampling_generator=torch.Generator().manual_seed(seed + 100),
     )
@@ -90,6 +91,17 @@ def _batch(agent: ReinforceAgent) -> AgentUpdateInput:
             )
         )
     return AgentUpdateInput(CollectionMode.COMPLETE_EPISODES, tuple(episodes))
+
+
+def test_reinforce_requires_an_explicit_actor_learning_rate() -> None:
+    with pytest.raises(ValueError, match="explicit learning rate"):
+        ReinforceAgent(
+            observation_dimensions=1,
+            actor_config=ActorConfig(name="small", hidden_sizes=(4, 4)),
+            config=ReinforceConfig(discount=0.9),
+            initialization_generator=torch.Generator().manual_seed(1),
+            sampling_generator=torch.Generator().manual_seed(2),
+        )
 
 
 def test_reinforce_loss_matches_the_documented_per_trajectory_reduction() -> None:

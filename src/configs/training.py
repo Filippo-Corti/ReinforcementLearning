@@ -60,6 +60,7 @@ class ActorConfig(SerializableConfig):
     Fields:
         * name: Human-readable actor-size identity.
         * hidden_sizes: Width of each hidden layer.
+        * learning_rate: Explicit per-run actor optimizer learning rate.
         * activation: Hidden-layer activation.
         * action_dimensions: Number of bounded control outputs.
         * hidden_initialization_gain: Orthogonal gain for hidden layers.
@@ -70,6 +71,7 @@ class ActorConfig(SerializableConfig):
 
     name: Literal["small", "medium", "large"]
     hidden_sizes: tuple[int, int]
+    learning_rate: float | None = None
     activation: Literal["tanh"] = "tanh"
     action_dimensions: int = 2
     hidden_initialization_gain: float = 2**0.5

@@ -19,7 +19,10 @@ plain JSON-compatible dictionaries. Actor sizes are named `small`, `medium` and
 `[32, 32]`, `[64, 64]` or `[256, 256]`. The critic always serializes as
 `[64, 64]`. The learning rates remain deliberately unresolved until the
 pre-experiment rule in [`EXPERIMENT.md`](EXPERIMENT.md) selects from its finite
-candidates; no agent configuration supplies a silent final rate.
+candidates. The named actor-size configurations therefore keep
+`learning_rate=None`; a runner must copy the selected rate into its per-run
+`ActorConfig` before constructing an agent. This keeps the selected actor rate
+beside the actor settings without giving any network size a silent final rate.
 
 For a run with namespace $n$ and local identity $i$, seed derivation starts from
 `SeedSequence([0, n, i], spawn_key=(stream,))`. Eight immutable stream identities
