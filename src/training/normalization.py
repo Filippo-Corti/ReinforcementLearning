@@ -68,6 +68,37 @@ class RunningObservationNormalizer:
         """
         return self._apply_normalization(self._to_vector(observation))
 
+    def update_and_normalize_batch(
+        self,
+        observations: Sequence[Sequence[float]] | NDArray[np.floating],
+        active: Sequence[bool] | NDArray[np.bool_] | None = None,
+    ) -> NDArray[np.float32]:
+        """
+        Update from active synchronous observations, then normalize the batch.
+
+        All active rows enter the running sums before any row is normalized, so
+        changing worker iteration order cannot change network inputs.
+        """
+        vectors = np.asarray(observations, dtype=np.float64)
+        if vectors.ndim != 2 or vectors.shape[1] != self.observation_dimensions:
+            raise ValueError(
+                "Observation batches must have shape (rows, observation_dimensions)."
+            )
+        active_mask = (
+            np.ones(vectors.shape[0], dtype=np.bool_)
+            if active is None
+            else np.asarray(active, dtype=np.bool_)
+        )
+        if active_mask.shape != (vectors.shape[0],):
+            raise ValueError("The active mask must contain one value per batch row.")
+        selected = vectors[active_mask]
+        self.count += int(selected.shape[0])
+        self.sums += np.sum(selected, axis=0)
+        self.squared_sums += np.sum(np.square(selected), axis=0)
+        return np.stack(
+            [self._apply_normalization(vector) for vector in vectors]
+        ).astype(np.float32, copy=False)
+
     def state(self) -> ObservationNormalizerStateRecord:
         """
         Return an immutable copy of the current running-sum state.

@@ -1,8 +1,8 @@
-"""Shared collection, update, evaluation, timing, and resume lifecycle."""
+"""Shared parallel collection, update, evaluation, timing, and resume lifecycle."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from time import perf_counter
@@ -13,12 +13,12 @@ import numpy as np
 from agents.types import (
     AgentUpdateInput,
     AgentUpdateOutput,
+    CollectedActionBatch,
     CollectionMode,
     OnPolicyAgent,
 )
-from envs.racing import RacingEnv, RacingEnvState
-from envs.racing.lifecycle import EpisodeLifecycleState
-from envs.vehicle import VehicleState
+from configs import ExecutionConfig
+from envs.racing import RacingEnv
 from recording.records import (
     DeterministicEvaluationRecord,
     EpisodeOutcome,
@@ -31,14 +31,19 @@ from recording.records import (
 )
 
 from ..buffers import (
-    FixedRolloutBuffer,
     OnPolicyRollout,
-    ReinforceEpisodeBuffer,
     TrainingTransition,
+    VectorRolloutBuffer,
 )
 from ..checkpoints import load_checkpoint, save_checkpoint
 from ..evaluation import circuit_geometry_summary, evaluate_deterministic
 from ..normalization import RunningObservationNormalizer
+from ..vector_environment import (
+    PersistentRacingVectorEnv,
+    VectorRacingState,
+    vector_info,
+    vector_worker_info,
+)
 
 
 @dataclass(slots=True)
@@ -66,11 +71,11 @@ class TrainingCounters:
 @dataclass(slots=True)
 class _ActiveEpisode:
     """
-    Accumulate semantic metrics for the training episode currently being acted on.
+    Accumulate semantic metrics for one worker's active training episode.
 
     Fields:
         * identity: Stable episode identity used by rollout records.
-        * circuit_identity: Stable logical identity of the active track.
+        * circuit_identity: Stable logical identity of the selected track.
         * step_index: Zero-based action position for the next transition.
         * undiscounted_return: Reward sum accumulated through the prior action.
         * maximum_progress: Greatest normalized progress observed so far.
@@ -123,21 +128,25 @@ class TrainingUpdate:
 
 class OnPolicyTrainingEngine:
     """
-    Run one on-policy agent while preserving shared collection and resume semantics.
+    Run one on-policy agent through persistent parallel racing workers.
 
-    The engine updates observations only when they become current training inputs,
-    isolates deterministic evaluation in a fresh environment, and holds only
-    semantic environment state for checkpoint resume.
+    Neural inference is batched in the parent process. Environment dynamics run
+    in separately spawned CPU processes that persist across rollouts, updates,
+    evaluations, checkpoints, and repeated calls to `train`. The engine keeps
+    complete REINFORCE trajectories separate and fixed actor-critic rollouts in
+    time-by-worker form.
 
     Fields:
-        * agent: Owner of policy/value models, optimizers, and agent random streams.
-        * environment: Training-only environment whose episode can span updates.
+        * agent: Owner of policy/value models, optimizers, and sampling streams.
+        * environment: Unstepped prototype used for fixed configuration and geometry.
+        * environments: Persistent process-based training environment pool.
         * normalizer: Training-updated and evaluation-frozen observation normalizer.
+        * execution_config: Device, worker, threading, and deterministic settings.
         * run_category: Run namespace carried by emitted metric summaries.
         * counters: Independent training, evaluation, episode, and update counts.
     """
 
-    STATE_VERSION = 1
+    STATE_VERSION = 2
 
     def __init__(
         self,
@@ -149,6 +158,9 @@ class OnPolicyTrainingEngine:
         evaluation_environment_factory: Callable[[], RacingEnv] | None = None,
         evaluation_interval: int | None = None,
         environment_reset_generator: np.random.Generator | None = None,
+        environment_reset_generators: Sequence[np.random.Generator] | None = None,
+        track_selection_generators: Sequence[np.random.Generator] | None = None,
+        execution_config: ExecutionConfig | None = None,
         evaluation_seed: int = 0,
         root_identity: int | None = None,
         circuit_identity: str | None = None,
@@ -156,7 +168,7 @@ class OnPolicyTrainingEngine:
         near_saturated_steering_threshold: float | None = None,
     ) -> None:
         """
-        Initialize a fresh training episode and the buffer implied by the agent mode.
+        Spawn workers once and initialize one active episode in every process.
         """
         if agent.collection_size <= 0:
             raise ValueError("An on-policy agent collection size must be positive.")
@@ -166,17 +178,42 @@ class OnPolicyTrainingEngine:
             0.0 < near_saturated_steering_threshold <= 1.0
         ):
             raise ValueError("Near-saturated steering threshold must be in (0, 1].")
+        self.execution_config = execution_config or ExecutionConfig(
+            device="cpu", environment_workers=1
+        )
+        worker_count = self.execution_config.environment_workers
+        if worker_count <= 0:
+            raise ValueError("Training requires a positive environment-worker count.")
+        sampling_generators = getattr(agent, "sampling_generators", None)
+        if sampling_generators is not None and len(sampling_generators) != worker_count:
+            raise ValueError("One policy-sampling stream is required per worker.")
+        if (
+            agent.collection_mode is CollectionMode.COMPLETE_EPISODES
+            and worker_count != agent.collection_size
+        ):
+            raise ValueError(
+                "REINFORCE requires one worker per complete trajectory in its batch."
+            )
+
+        reset_generators = _resolve_generators(
+            environment_reset_generators,
+            environment_reset_generator,
+            worker_count,
+            "reset",
+        )
+        selection_generators = _resolve_generators(
+            track_selection_generators,
+            None,
+            worker_count,
+            "track-selection",
+        )
         self.agent = agent
         self.environment = environment
         self.normalizer = normalizer
         self.run_category = run_category
         self.evaluation_environment_factory = evaluation_environment_factory
         self.evaluation_interval = evaluation_interval
-        self.environment_reset_generator = (
-            environment_reset_generator
-            if environment_reset_generator is not None
-            else np.random.default_rng(0)
-        )
+        self.environment_reset_generator = reset_generators[0]
         self.evaluation_seed = evaluation_seed
         self.root_identity = root_identity
         self.circuit_identity = circuit_identity or str(
@@ -193,30 +230,62 @@ class OnPolicyTrainingEngine:
         self.episode_records: list[EpisodeRecord] = []
         self.evaluations: list[DeterministicEvaluationRecord] = []
         self.updates: list[TrainingUpdate] = []
-        self._episode_buffer = (
-            ReinforceEpisodeBuffer()
-            if agent.collection_mode is CollectionMode.COMPLETE_EPISODES
-            else None
+        self.environments = PersistentRacingVectorEnv(
+            (environment.track_with_geometry,),
+            environment.config,
+            self.execution_config,
+            reset_generators,
+            selection_generators,
         )
-        self._rollout_buffer = (
-            FixedRolloutBuffer(agent.collection_size)
-            if agent.collection_mode is CollectionMode.FIXED_ROLLOUT
-            else None
-        )
-        self._current_observation: np.ndarray
-        self._active_episode: _ActiveEpisode
-        self._reset_training_episode()
+        self._current_observations, reset_infos = self.environments.reset()
+        self._active_episodes: list[_ActiveEpisode] = []
+        for environment_index in range(worker_count):
+            self._active_episodes.append(
+                self._new_episode(
+                    str(vector_info(reset_infos, "circuit_identity", environment_index))
+                )
+            )
+        self._reinforce_active: list[list[TrainingTransition]] | None = None
+        self._reinforce_completed: list[OnPolicyRollout | None] | None = None
+        self._parked = np.zeros(worker_count, dtype=np.bool_)
+        self._rollout_buffer: VectorRolloutBuffer | None = None
+        if agent.collection_mode is CollectionMode.COMPLETE_EPISODES:
+            self._reinforce_active = [[] for _ in range(worker_count)]
+            self._reinforce_completed = [
+                cast(OnPolicyRollout | None, None) for _ in range(worker_count)
+            ]
+        else:
+            self._rollout_buffer = VectorRolloutBuffer(
+                agent.collection_size, worker_count
+            )
 
     def train(
         self, interaction_budget: int, *, finalize: bool = True
     ) -> TrainingRunState:
         """
-        Collect and optimize until the exact requested training-step budget is reached.
+        Collect and optimize until the exact requested interaction budget is reached.
         """
         if interaction_budget < self.counters.training_interactions:
             raise ValueError("Training budget cannot be below consumed interactions.")
         while self.counters.training_interactions < interaction_budget:
-            self._collect_one()
+            available = ~self._parked
+            maximum_rows = interaction_budget - self.counters.training_interactions
+            if self._rollout_buffer is not None:
+                maximum_rows = min(
+                    maximum_rows, self._rollout_buffer.remaining_capacity
+                )
+            if self.evaluation_interval is not None:
+                distance = self.evaluation_interval - (
+                    self.counters.training_interactions % self.evaluation_interval
+                )
+                maximum_rows = min(maximum_rows, distance)
+            active_indices = np.flatnonzero(available)[:maximum_rows]
+            if active_indices.size == 0:
+                self._update_ready_collection(final=False)
+                continue
+            active = np.zeros(self.execution_config.environment_workers, dtype=np.bool_)
+            active[active_indices] = True
+            self._collect_step(active)
             self._update_ready_collection(final=False)
             self._evaluate_if_due()
         self._update_ready_collection(final=finalize)
@@ -226,8 +295,10 @@ class OnPolicyTrainingEngine:
         """
         Return copied counters and accumulated non-overlapping timing categories.
         """
-        counters = TrainingCounters(**asdict(self.counters))
-        return TrainingRunState(counters=counters, timing=self.timing())
+        return TrainingRunState(
+            counters=TrainingCounters(**asdict(self.counters)),
+            timing=self.timing(),
+        )
 
     def timing(self) -> TimingRecord:
         """
@@ -245,7 +316,7 @@ class OnPolicyTrainingEngine:
 
     def save(self, path: str | Path) -> None:
         """
-        Atomically save enough semantic state to resume within an active episode.
+        Atomically save every worker and collector state for exact resume.
         """
         started = perf_counter()
         save_checkpoint(path, self._state_dict())
@@ -253,75 +324,167 @@ class OnPolicyTrainingEngine:
 
     def restore(self, path: str | Path, *, map_location: str = "cpu") -> None:
         """
-        Restore an engine checkpoint onto equivalent agent and environment instances.
+        Restore a checkpoint onto equivalent agent and worker instances.
         """
         started = perf_counter()
-        state = load_checkpoint(path, map_location=map_location)
-        self._restore_state_dict(state)
+        self._restore_state_dict(load_checkpoint(path, map_location=map_location))
         self._persistence_seconds += perf_counter() - started
 
-    def _collect_one(self) -> None:
+    def close(self) -> None:
+        """
+        Close the persistent worker processes and prototype environment.
+        """
+        self.environments.close()
+        self.environment.close()
+
+    def _collect_step(self, active: np.ndarray) -> None:
         started = perf_counter()
-        normalized = self.normalizer.update_and_normalize(self._current_observation)
-        decision = self.agent.collect_action(normalized)
-        next_observation, reward, terminated, truncated, raw_info = (
-            self.environment.step(decision.env_action)
+        normalized = self.normalizer.update_and_normalize_batch(
+            self._current_observations, active
         )
-        info = cast(dict[str, Any], raw_info)
-        next_normalized = self.normalizer.normalize(next_observation)
-        next_value = 0.0 if terminated else self.agent.bootstrap_value(next_normalized)
-        transition = TrainingTransition(
-            normalized_observation=normalized,
-            raw_action=decision.raw_action,
-            env_action=decision.env_action,
-            reward=float(reward),
-            behaviour_log_probability=decision.behaviour_log_probability,
-            current_value=decision.current_value,
-            next_value=next_value,
-            terminated=terminated,
-            truncated=truncated,
-            next_normalized_observation=next_normalized,
-            episode_identity=self._active_episode.identity,
-            episode_step_index=self._active_episode.step_index,
-            circuit_identity=self._active_episode.circuit_identity,
+        active_indices = np.flatnonzero(active)
+        decisions = self._collect_actions(normalized, active_indices)
+        actions = np.zeros(
+            (self.execution_config.environment_workers, 2), dtype=np.float32
         )
-        self._append_transition(transition)
-        self._record_active_step(decision.env_action, reward, info)
-        self.counters.training_interactions += 1
+        actions[active_indices] = decisions.env_actions
+        next_observations, rewards, terminated, truncated, infos = (
+            self.environments.step(actions, active)
+        )
+        next_normalized = np.stack(
+            [
+                self.normalizer.normalize(next_observations[index])
+                for index in active_indices
+            ]
+        )
+        next_values = self._bootstrap_values(next_normalized)
+        transition_step: list[TrainingTransition | None] = [
+            None
+        ] * self.execution_config.environment_workers
+        reset_mask = np.zeros(self.execution_config.environment_workers, dtype=np.bool_)
+
+        for decision_index, environment_index_value in enumerate(active_indices):
+            environment_index = int(environment_index_value)
+            info = vector_worker_info(infos, environment_index)
+            is_terminated = bool(terminated[environment_index])
+            is_truncated = bool(truncated[environment_index])
+            active_episode = self._active_episodes[environment_index]
+            transition = TrainingTransition(
+                normalized_observation=normalized[environment_index],
+                raw_action=decisions.raw_actions[decision_index],
+                env_action=decisions.env_actions[decision_index],
+                reward=float(rewards[environment_index]),
+                behaviour_log_probability=float(
+                    decisions.behaviour_log_probabilities[decision_index]
+                ),
+                current_value=(
+                    None
+                    if decisions.current_values is None
+                    else float(decisions.current_values[decision_index])
+                ),
+                next_value=(
+                    None
+                    if next_values is None
+                    else (0.0 if is_terminated else float(next_values[decision_index]))
+                ),
+                terminated=is_terminated,
+                truncated=is_truncated,
+                next_normalized_observation=next_normalized[decision_index],
+                episode_identity=active_episode.identity,
+                episode_step_index=active_episode.step_index,
+                circuit_identity=active_episode.circuit_identity,
+                environment_index=environment_index,
+            )
+            transition_step[environment_index] = transition
+            self._append_transition(environment_index, transition)
+            self._record_active_step(
+                environment_index,
+                decisions.env_actions[decision_index],
+                float(rewards[environment_index]),
+                info,
+            )
+            self.counters.training_interactions += 1
+            if is_terminated or is_truncated:
+                self._finish_training_episode(
+                    environment_index, is_terminated, is_truncated, info
+                )
+                if self.agent.collection_mode is CollectionMode.COMPLETE_EPISODES:
+                    self._finish_reinforce_trajectory(environment_index)
+                else:
+                    reset_mask[environment_index] = True
+
+        if self._rollout_buffer is not None:
+            self._rollout_buffer.append_step(transition_step)
+        self._current_observations = next_observations
+        if np.any(reset_mask):
+            self._reset_workers(reset_mask)
         self._collection_seconds += perf_counter() - started
 
-        if terminated or truncated:
-            self._finish_training_episode(terminated, truncated, info)
-            self._reset_training_episode()
-        else:
-            self._current_observation = np.asarray(
-                next_observation, dtype=np.float32
-            ).copy()
+    def _collect_actions(
+        self, normalized: np.ndarray, active_indices: np.ndarray
+    ) -> CollectedActionBatch:
+        batch_method = getattr(self.agent, "collect_actions", None)
+        if callable(batch_method):
+            return cast(Callable[..., CollectedActionBatch], batch_method)(
+                normalized[active_indices],
+                environment_indices=[int(index) for index in active_indices],
+            )
+        rows = [
+            self.agent.collect_action(normalized[index]) for index in active_indices
+        ]
+        return CollectedActionBatch(
+            raw_actions=np.stack([row.raw_action for row in rows]),
+            env_actions=np.stack([row.env_action for row in rows]),
+            behaviour_log_probabilities=np.asarray(
+                [row.behaviour_log_probability or 0.0 for row in rows],
+                dtype=np.float32,
+            ),
+            current_values=(
+                None
+                if any(row.current_value is None for row in rows)
+                else np.asarray([row.current_value for row in rows], dtype=np.float32)
+            ),
+        )
 
-    def _append_transition(self, transition: TrainingTransition) -> None:
-        if self._episode_buffer is not None:
-            self._episode_buffer.append(transition)
-            if transition.ends_episode:
-                self._episode_buffer.finalize_episode()
-            return
-        if self._rollout_buffer is None:
-            raise RuntimeError("Training engine has no buffer for its collection mode.")
-        self._rollout_buffer.append(transition)
+    def _bootstrap_values(self, next_normalized: np.ndarray) -> np.ndarray | None:
+        batch_method = getattr(self.agent, "bootstrap_values", None)
+        if callable(batch_method):
+            return cast(Callable[[np.ndarray], np.ndarray | None], batch_method)(
+                next_normalized
+            )
+        values = [self.agent.bootstrap_value(row) for row in next_normalized]
+        if any(value is None for value in values):
+            return None
+        return np.asarray(values, dtype=np.float32)
+
+    def _append_transition(
+        self, environment_index: int, transition: TrainingTransition
+    ) -> None:
+        if self._reinforce_active is not None:
+            self._reinforce_active[environment_index].append(transition)
+
+    def _finish_reinforce_trajectory(self, environment_index: int) -> None:
+        if self._reinforce_active is None or self._reinforce_completed is None:
+            raise RuntimeError("REINFORCE collector was not constructed.")
+        episode = OnPolicyRollout(tuple(self._reinforce_active[environment_index]))
+        self._reinforce_completed[environment_index] = episode
+        self._reinforce_active[environment_index] = []
+        self._parked[environment_index] = True
 
     def _update_ready_collection(self, *, final: bool) -> None:
         update_input: AgentUpdateInput | None = None
-        if self._episode_buffer is not None:
-            episodes = self._episode_buffer.take_completed_batch(
-                self.agent.collection_size
+        if self._reinforce_completed is not None and all(
+            episode is not None for episode in self._reinforce_completed
+        ):
+            episodes = tuple(
+                episode for episode in self._reinforce_completed if episode is not None
             )
-            if episodes is not None:
-                update_input = AgentUpdateInput(
-                    mode=CollectionMode.COMPLETE_EPISODES,
-                    episodes=episodes,
-                )
+            update_input = AgentUpdateInput(
+                mode=CollectionMode.COMPLETE_EPISODES, episodes=episodes
+            )
         elif self._rollout_buffer is not None and (
-            len(self._rollout_buffer.transitions) == self.agent.collection_size
-            or (final and self._rollout_buffer.transitions)
+            self._rollout_buffer.transition_count == self.agent.collection_size
+            or (final and self._rollout_buffer.transition_count)
         ):
             update_input = AgentUpdateInput(
                 mode=CollectionMode.FIXED_ROLLOUT,
@@ -342,6 +505,15 @@ class OnPolicyTrainingEngine:
             )
         )
         self.counters.optimizer_updates += 1
+        if self._reinforce_completed is not None:
+            self._reinforce_completed = [
+                cast(OnPolicyRollout | None, None)
+                for _ in range(self.execution_config.environment_workers)
+            ]
+            self._parked[:] = False
+            self._reset_workers(
+                np.ones(self.execution_config.environment_workers, dtype=np.bool_)
+            )
 
     def _evaluate_if_due(self) -> None:
         if (
@@ -372,43 +544,52 @@ class OnPolicyTrainingEngine:
             circuit_split=self.circuit_split,
             collection_duration=self._collection_seconds,
             optimization_duration=self._optimization_seconds,
-            near_saturated_steering_threshold=(self.near_saturated_steering_threshold),
+            near_saturated_steering_threshold=self.near_saturated_steering_threshold,
         )
         self._evaluation_seconds += perf_counter() - started
         self.evaluations.append(evaluation)
         self.counters.evaluation_interactions += evaluation.record.episode.interactions
         self.counters.next_evaluation_identity += 1
 
-    def _reset_training_episode(self) -> None:
-        reset_seed = int(
-            self.environment_reset_generator.integers(0, 2**32, dtype=np.uint32)
-        )
-        observation, _ = self.environment.reset(seed=reset_seed)
+    def _reset_workers(self, reset_mask: np.ndarray) -> None:
+        observations, infos = self.environments.reset(reset_mask)
+        self._current_observations = observations
+        for environment_index_value in np.flatnonzero(reset_mask):
+            environment_index = int(environment_index_value)
+            self._active_episodes[environment_index] = self._new_episode(
+                str(vector_info(infos, "circuit_identity", environment_index))
+            )
+
+    def _new_episode(self, circuit_identity: str) -> _ActiveEpisode:
         identity = self.counters.next_episode_identity
         self.counters.next_episode_identity += 1
-        self._current_observation = np.asarray(observation, dtype=np.float32).copy()
-        self._active_episode = _ActiveEpisode(identity, self.circuit_identity)
+        return _ActiveEpisode(identity, circuit_identity)
 
     def _record_active_step(
-        self, action: np.ndarray, reward: float, info: dict[str, Any]
+        self,
+        environment_index: int,
+        action: np.ndarray,
+        reward: float,
+        info: dict[str, Any],
     ) -> None:
-        active = self._active_episode
-        active.speeds.append(float(self._current_observation[2]))
+        active = self._active_episodes[environment_index]
+        active.speeds.append(float(self._current_observations[environment_index, 2]))
         active.throttles.append(float(action[0]))
         active.absolute_steering.append(abs(float(action[1])))
         active.step_index += 1
-        active.undiscounted_return += float(reward)
-        progress = float(info["episode_progress"]) / self.environment.track.track_length
+        active.undiscounted_return += reward
+        progress = float(info["episode_progress"]) / float(info["track_length"])
         active.maximum_progress = max(active.maximum_progress, progress)
 
     def _finish_training_episode(
-        self, terminated: bool, truncated: bool, info: dict[str, Any]
+        self,
+        environment_index: int,
+        terminated: bool,
+        truncated: bool,
+        info: dict[str, Any],
     ) -> None:
-        active = self._active_episode
+        active = self._active_episodes[environment_index]
         outcome = _outcome(terminated, truncated, info)
-        final_progress = (
-            float(info["episode_progress"]) / self.environment.track.track_length
-        )
         self.episode_records.append(
             EpisodeRecord(
                 run_category=self.run_category,
@@ -419,7 +600,8 @@ class OnPolicyTrainingEngine:
                 training_target_total=None,
                 interactions=active.step_index,
                 simulated_time=float(info["elapsed_time"]),
-                final_progress=final_progress,
+                final_progress=float(info["episode_progress"])
+                / float(info["track_length"]),
                 maximum_progress=active.maximum_progress,
                 lap_time=(
                     float(info["elapsed_time"])
@@ -431,7 +613,7 @@ class OnPolicyTrainingEngine:
                 circuit_identity=active.circuit_identity,
                 root_identity=self.root_identity,
                 observation_type="frenet",
-                circuit_seed=self.environment.track.generation.seed,
+                circuit_seed=int(info["track_seed"]),
                 circuit_split=self.circuit_split,
                 speed=_summary(active.speeds),
                 throttle=_summary(active.throttles),
@@ -462,9 +644,10 @@ class OnPolicyTrainingEngine:
             "agent": self.agent.state_dict(),
             "normalizer": self.normalizer.state().to_dict(),
             "counters": asdict(self.counters),
-            "current_observation": self._current_observation.tolist(),
-            "active_episode": asdict(self._active_episode),
-            "environment": _environment_to_dict(self.environment.snapshot()),
+            "current_observations": self._current_observations.tolist(),
+            "active_episodes": [asdict(episode) for episode in self._active_episodes],
+            "vector_environment": self.environments.state(),
+            "parked": self._parked.tolist(),
             "collector": self._collector_state(),
             "history": {
                 "episode_records": self.episode_records,
@@ -476,9 +659,6 @@ class OnPolicyTrainingEngine:
                 "optimization": self._optimization_seconds,
                 "evaluation": self._evaluation_seconds,
                 "persistence": self._persistence_seconds,
-            },
-            "random_generators": {
-                "environment_reset": self.environment_reset_generator.bit_generator.state,
             },
         }
 
@@ -503,12 +683,17 @@ class OnPolicyTrainingEngine:
             )
         )
         self.counters = TrainingCounters(**_mapping(state, "counters"))
-        self._current_observation = np.asarray(
-            state["current_observation"], dtype=np.float32
+        self._current_observations = np.asarray(
+            state["current_observations"], dtype=np.float32
         )
-        active = _mapping(state, "active_episode")
-        self._active_episode = _ActiveEpisode(**active)
-        self.environment.restore(_environment_from_dict(_mapping(state, "environment")))
+        self._active_episodes = [
+            _ActiveEpisode(**episode) for episode in state["active_episodes"]
+        ]
+        vector_state = state["vector_environment"]
+        if not isinstance(vector_state, VectorRacingState):
+            raise TypeError("checkpoint vector environment state is invalid.")
+        self.environments.restore(vector_state)
+        self._parked = np.asarray(state["parked"], dtype=np.bool_)
         self._restore_collector(_mapping(state, "collector"))
         history = _mapping(state, "history")
         self.episode_records = _typed_list(history, "episode_records", EpisodeRecord)
@@ -521,19 +706,13 @@ class OnPolicyTrainingEngine:
         self._optimization_seconds = float(timing["optimization"])
         self._evaluation_seconds = float(timing["evaluation"])
         self._persistence_seconds = float(timing["persistence"])
-        random_state = _mapping(state, "random_generators")
-        self.environment_reset_generator.bit_generator.state = random_state[
-            "environment_reset"
-        ]
 
     def _engine_configuration(self) -> dict[str, Any]:
-        """
-        Return immutable run facts that must match before checkpoint restoration.
-        """
         return {
             "run_category": self.run_category.value,
             "collection_mode": self.agent.collection_mode.value,
             "collection_size": self.agent.collection_size,
+            "environment_workers": self.execution_config.environment_workers,
             "evaluation_interval": self.evaluation_interval,
             "evaluation_seed": self.evaluation_seed,
             "root_identity": self.root_identity,
@@ -550,30 +729,36 @@ class OnPolicyTrainingEngine:
         }
 
     def _collector_state(self) -> dict[str, Any]:
-        if self._episode_buffer is not None:
+        if self._reinforce_active is not None:
+            if self._reinforce_completed is None:
+                raise RuntimeError("REINFORCE completed collector is missing.")
             return {
                 "mode": CollectionMode.COMPLETE_EPISODES.value,
-                "completed": [
-                    [_transition_to_dict(row) for row in episode.transitions]
-                    for episode in self._episode_buffer.completed_episodes
-                ],
                 "active": [
-                    _transition_to_dict(row)
-                    for row in self._episode_buffer.active_episode
+                    [_transition_to_dict(row) for row in episode]
+                    for episode in self._reinforce_active
+                ],
+                "completed": [
+                    (
+                        None
+                        if episode is None
+                        else [_transition_to_dict(row) for row in episode.transitions]
+                    )
+                    for episode in self._reinforce_completed
                 ],
             }
         if self._rollout_buffer is None:
             raise RuntimeError("Training engine has no collection buffer.")
         return {
             "mode": CollectionMode.FIXED_ROLLOUT.value,
-            "transitions": [
-                _transition_to_dict(row) for row in self._rollout_buffer.transitions
+            "steps": [
+                [None if row is None else _transition_to_dict(row) for row in step]
+                for step in self._rollout_buffer.transition_steps
             ],
-            "previous": (
-                None
-                if self._rollout_buffer.previous_transition is None
-                else _transition_to_dict(self._rollout_buffer.previous_transition)
-            ),
+            "previous": [
+                None if row is None else _transition_to_dict(row)
+                for row in self._rollout_buffer.previous_transitions
+            ],
         }
 
     def _restore_collector(self, state: dict[str, Any]) -> None:
@@ -581,23 +766,51 @@ class OnPolicyTrainingEngine:
         if mode is not self.agent.collection_mode:
             raise ValueError("checkpoint collection mode does not match the agent.")
         if mode is CollectionMode.COMPLETE_EPISODES:
-            if self._episode_buffer is None:
-                raise RuntimeError("complete-episode buffer was not constructed.")
-            completed = [
-                OnPolicyRollout(tuple(_transition_from_dict(row) for row in episode))
+            if self._reinforce_active is None or self._reinforce_completed is None:
+                raise RuntimeError("REINFORCE collector was not constructed.")
+            self._reinforce_active = [
+                [_transition_from_dict(row) for row in episode]
+                for episode in state["active"]
+            ]
+            self._reinforce_completed = [
+                (
+                    None
+                    if episode is None
+                    else OnPolicyRollout(
+                        tuple(_transition_from_dict(row) for row in episode)
+                    )
+                )
                 for episode in state["completed"]
             ]
-            active = [_transition_from_dict(row) for row in state["active"]]
-            self._episode_buffer.restore(completed, active)
             return
         if self._rollout_buffer is None:
-            raise RuntimeError("fixed-rollout buffer was not constructed.")
-        transitions = [_transition_from_dict(row) for row in state["transitions"]]
-        previous = state["previous"]
-        previous_transition = (
-            None if previous is None else _transition_from_dict(previous)
-        )
-        self._rollout_buffer.restore(transitions, previous_transition)
+            raise RuntimeError("Vector rollout collector was not constructed.")
+        steps = [
+            [None if row is None else _transition_from_dict(row) for row in step]
+            for step in state["steps"]
+        ]
+        previous = [
+            None if row is None else _transition_from_dict(row)
+            for row in state["previous"]
+        ]
+        self._rollout_buffer.restore(steps, previous)
+
+
+def _resolve_generators(
+    generators: Sequence[np.random.Generator] | None,
+    single_generator: np.random.Generator | None,
+    worker_count: int,
+    role: str,
+) -> tuple[np.random.Generator, ...]:
+    if generators is not None:
+        values = tuple(generators)
+    elif single_generator is not None:
+        values = (single_generator,)
+    else:
+        values = tuple(np.random.default_rng(index) for index in range(worker_count))
+    if len(values) != worker_count:
+        raise ValueError(f"One {role} generator is required per environment worker.")
+    return values
 
 
 def _summary(values: list[float]) -> ScalarSummaryRecord:
@@ -650,6 +863,7 @@ def _transition_to_dict(row: TrainingTransition) -> dict[str, Any]:
         "episode_identity": row.episode_identity,
         "episode_step_index": row.episode_step_index,
         "circuit_identity": row.circuit_identity,
+        "environment_index": row.environment_index,
     }
 
 
@@ -658,44 +872,6 @@ def _transition_from_dict(data: dict[str, Any]) -> TrainingTransition:
     Reconstruct one immutable rollout row from checkpoint-safe primitives.
     """
     return TrainingTransition(**data)
-
-
-def _environment_to_dict(state: RacingEnvState) -> dict[str, Any]:
-    """
-    Serialize focused dynamics state while deliberately omitting rendering state.
-    """
-    return {
-        "vehicle": None if state.vehicle_state is None else asdict(state.vehicle_state),
-        "lifecycle": (
-            None if state.lifecycle_state is None else asdict(state.lifecycle_state)
-        ),
-        "episode_finished": state.episode_finished,
-        "numpy_random_state": state.numpy_random_state,
-    }
-
-
-def _environment_from_dict(data: dict[str, Any]) -> RacingEnvState:
-    """
-    Reconstruct focused dynamics state for an equivalent RacingEnv instance.
-    """
-    vehicle_data = data["vehicle"]
-    lifecycle_data = data["lifecycle"]
-    return RacingEnvState(
-        vehicle_state=None if vehicle_data is None else VehicleState(**vehicle_data),
-        lifecycle_state=(
-            None
-            if lifecycle_data is None
-            else EpisodeLifecycleState(
-                wrapped_progress=float(lifecycle_data["wrapped_progress"]),
-                episode_progress=float(lifecycle_data["episode_progress"]),
-                agent_steps=int(lifecycle_data["agent_steps"]),
-                previous_position=tuple(lifecycle_data["previous_position"]),
-                previous_segment_index=lifecycle_data["previous_segment_index"],
-            )
-        ),
-        episode_finished=bool(data["episode_finished"]),
-        numpy_random_state=data["numpy_random_state"],
-    )
 
 
 def _mapping(state: dict[str, Any], name: str) -> dict[str, Any]:

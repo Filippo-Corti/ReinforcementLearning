@@ -9,7 +9,10 @@ from training.buffers import (
     FixedRolloutBuffer,
     OnPolicyRollout,
     ReinforceEpisodeBuffer,
+    VectorOnPolicyRollout,
+    VectorRolloutBuffer,
     compute_gae_targets,
+    compute_vector_gae_targets,
     monte_carlo_return_to_go,
 )
 
@@ -24,6 +27,7 @@ def _transition(
     next_value: float | None = 0.0,
     terminated: bool = False,
     truncated: bool = False,
+    environment: int = 0,
 ) -> TrainingTransition:
     return TrainingTransition(
         normalized_observation=np.array([step, step + 0.5], dtype=np.float32),
@@ -45,6 +49,7 @@ def _transition(
         episode_identity=episode,
         episode_step_index=step,
         circuit_identity=circuit,
+        environment_index=environment,
     )
 
 
@@ -283,3 +288,74 @@ def test_fixed_rollout_rejects_cross_episode_without_boundary_and_overflow() -> 
     buffer.append(_transition(0))
     with pytest.raises(ValueError, match="environment boundary"):
         buffer.append(_transition(0, episode=1))
+
+
+def test_vector_rollout_preserves_time_environment_shape_and_valid_mask() -> None:
+    buffer = VectorRolloutBuffer(capacity=3, environment_count=2)
+    first = _transition(0, environment=0)
+    second = _transition(0, episode=1, environment=1)
+    third = _transition(1, environment=0, terminated=True)
+    buffer.append_step((first, second))
+    buffer.append_step((third, None))
+
+    rollout = buffer.finalize()
+    tensors = rollout.tensors()
+
+    assert tensors.observations.shape == (2, 2, 2)
+    assert tensors.rewards.shape == (2, 2)
+    assert tensors.valid.tolist() == [[True, True], [True, False]]
+    assert rollout.transitions == (first, second, third)
+
+
+def test_vector_gae_recurses_independently_down_environment_columns() -> None:
+    rollout = VectorOnPolicyRollout(
+        (
+            (
+                _transition(
+                    0,
+                    reward=1.0,
+                    value=0.5,
+                    next_value=0.6,
+                    environment=0,
+                ),
+                _transition(
+                    0,
+                    episode=1,
+                    reward=10.0,
+                    value=1.0,
+                    next_value=2.0,
+                    environment=1,
+                ),
+            ),
+            (
+                _transition(
+                    1,
+                    reward=2.0,
+                    value=0.6,
+                    next_value=0.0,
+                    terminated=True,
+                    environment=0,
+                ),
+                _transition(
+                    1,
+                    episode=1,
+                    reward=20.0,
+                    value=2.0,
+                    next_value=4.0,
+                    truncated=True,
+                    environment=1,
+                ),
+            ),
+        )
+    )
+
+    targets = compute_vector_gae_targets(rollout, discount=0.5, gae_lambda=0.5)
+
+    torch.testing.assert_close(
+        targets.temporal_difference_errors,
+        torch.tensor([[0.8, 10.0], [1.4, 20.0]]),
+    )
+    torch.testing.assert_close(
+        targets.raw_advantages,
+        torch.tensor([[1.15, 15.0], [1.4, 20.0]]),
+    )

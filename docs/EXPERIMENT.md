@@ -222,14 +222,19 @@ exact resume on the supported hardware and software stack.
 ## Execution hardware and timing
 
 Neural-network training and evaluation use the available NVIDIA GeForce RTX
-2060 with CUDA and PyTorch `float32`. The racing environment and its geometry
-queries execute on CPU with one environment worker. PyTorch uses one intra-op
-thread and one inter-op thread so thread scheduling is fixed. CPU-only execution
-remains valid for unit tests and reduced development checks, but it is not
-comparable reported timing data.
+2060 with CUDA and PyTorch `float32`. Racing environments and their geometry
+queries execute in persistent CPU worker processes: REINFORCE uses eight workers
+to collect its eight complete episodes concurrently, while A2C and PPO start
+with the number of physical CPU cores and store a pooled 2048-transition
+rollout. The selected worker count is configurable and recorded. The main
+process and every worker apply one PyTorch intra-op thread, one inter-op thread,
+deterministic algorithms and disabled cuDNN benchmarking. CPU-only neural
+execution remains valid for unit tests and reduced development checks, but it
+is not comparable reported timing data.
 
-All reported runs use the same physical GPU, CUDA/PyTorch build, driver, worker
-count and thread configuration. PyTorch deterministic algorithms are enabled
+All reported runs use the same physical GPU, CUDA/PyTorch build, driver, and
+the same algorithm-specific worker and thread configuration. PyTorch
+deterministic algorithms are enabled
 with errors rather than warnings, and cuDNN benchmarking is disabled. PyTorch
 does not guarantee identical results across releases, platforms or CPU/GPU
 execution, which is why the exact stack is retained with every run. See the

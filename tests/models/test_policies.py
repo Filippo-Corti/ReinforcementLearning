@@ -49,6 +49,30 @@ def test_sample_and_recomputed_probability_support_single_and_batched_inputs() -
     )
 
 
+def test_vector_sample_batches_forward_pass_but_keeps_row_generators_independent() -> (
+    None
+):
+    actor = _actor()
+    observations = torch.asarray(((0.1, 0.2, 0.3, 0.4), (1.0, 2.0, 3.0, 4.0)))
+    batched = actor.sample_with_generators(
+        observations,
+        (torch.Generator().manual_seed(21), torch.Generator().manual_seed(22)),
+    )
+    expected = tuple(
+        actor.sample(observation, torch.Generator().manual_seed(seed))
+        for observation, seed in zip(observations, (21, 22), strict=True)
+    )
+
+    torch.testing.assert_close(
+        batched.raw_action,
+        torch.stack([sample.raw_action for sample in expected]),
+    )
+    torch.testing.assert_close(
+        batched.log_probability,
+        torch.stack([sample.log_probability for sample in expected]),
+    )
+
+
 def test_log_probability_matches_independent_squashed_gaussian_calculation() -> None:
     actor = _actor()
     observations = torch.tensor([[0.3, -0.7, 1.2, 0.1], [-0.2, 0.4, 0.0, 1.1]])

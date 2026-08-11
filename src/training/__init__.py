@@ -7,7 +7,11 @@ from .buffers import (
     OnPolicyTensors,
     ReinforceEpisodeBuffer,
     TrainingTransition,
+    VectorOnPolicyRollout,
+    VectorOnPolicyTensors,
+    VectorRolloutBuffer,
     compute_gae_targets,
+    compute_vector_gae_targets,
     monte_carlo_return_to_go,
 )
 from .checkpoints import (
@@ -29,6 +33,8 @@ from .vector_environment import (
     PersistentRacingVectorEnv,
     RacingWorkerState,
     VectorRacingState,
+    vector_info,
+    vector_worker_info,
 )
 
 __all__ = [
@@ -47,11 +53,17 @@ __all__ = [
     "TrainingRunState",
     "TrainingTransition",
     "TrainingUpdate",
+    "VectorOnPolicyRollout",
+    "VectorOnPolicyTensors",
     "VectorRacingState",
+    "VectorRolloutBuffer",
     "compute_gae_targets",
+    "compute_vector_gae_targets",
     "evaluate_deterministic",
     "evaluate_policy_episode",
     "load_checkpoint",
     "monte_carlo_return_to_go",
     "save_checkpoint",
+    "vector_info",
+    "vector_worker_info",
 ]

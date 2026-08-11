@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
 
@@ -19,6 +20,7 @@ from .types import (
     AgentUpdateInput,
     AgentUpdateOutput,
     CollectedAction,
+    CollectedActionBatch,
     CollectionMode,
 )
 
@@ -39,7 +41,7 @@ class ReinforceAgent:
         * sampling_generator: Isolated generator used only for policy sampling.
     """
 
-    STATE_VERSION = 2
+    STATE_VERSION = 3
     collection_mode = CollectionMode.COMPLETE_EPISODES
 
     def __init__(
@@ -48,7 +50,7 @@ class ReinforceAgent:
         actor_config: ActorConfig,
         config: ReinforceConfig,
         initialization_generator: torch.Generator,
-        sampling_generator: torch.Generator,
+        sampling_generator: torch.Generator | Sequence[torch.Generator],
         *,
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
@@ -77,7 +79,8 @@ class ReinforceAgent:
             betas=(config.beta_1, config.beta_2),
             eps=config.optimizer_epsilon,
         )
-        self.sampling_generator = sampling_generator
+        self.sampling_generators = self._sampling_generators(sampling_generator)
+        self.sampling_generator = self.sampling_generators[0]
 
     def collect_action(
         self, normalized_observation: NDArray[np.float32]
@@ -105,11 +108,38 @@ class ReinforceAgent:
             action = self.actor.deterministic_action(observation)[0]
         return action.cpu().numpy().astype(np.float32, copy=False)
 
+    def collect_actions(
+        self,
+        normalized_observations: NDArray[np.float32],
+        environment_indices: Sequence[int] | None = None,
+    ) -> CollectedActionBatch:
+        """
+        Sample a policy batch using one independent stream per environment row.
+        """
+        observations = self._observation_tensor(normalized_observations)
+        indices = self._environment_indices(observations.shape[0], environment_indices)
+        sample = self.actor.sample_with_generators(
+            observations,
+            tuple(self.sampling_generators[index] for index in indices),
+        )
+        return CollectedActionBatch(
+            raw_actions=sample.raw_action.cpu().numpy(),
+            env_actions=sample.env_action.cpu().numpy(),
+            behaviour_log_probabilities=sample.log_probability.cpu().numpy(),
+            current_values=None,
+        )
+
     def bootstrap_value(self, normalized_observation: NDArray[np.float32]) -> None:
         """
         Report that actor-only REINFORCE has no bootstrap value.
         """
         del normalized_observation
+
+    def bootstrap_values(self, normalized_observations: NDArray[np.float32]) -> None:
+        """
+        Report that actor-only REINFORCE has no batched bootstrap values.
+        """
+        del normalized_observations
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
         """
@@ -195,7 +225,9 @@ class ReinforceAgent:
             "actor_learning_rate": self.actor_learning_rate,
             "actor": self.actor.state_dict(),
             "optimizer": self.optimizer.state_dict(),
-            "sampling_generator": self.sampling_generator.get_state(),
+            "sampling_generators": [
+                generator.get_state() for generator in self.sampling_generators
+            ],
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
@@ -212,7 +244,13 @@ class ReinforceAgent:
             raise ValueError("checkpoint actor learning rate does not match REINFORCE.")
         self.actor.load_state_dict(state["actor"])
         self.optimizer.load_state_dict(state["optimizer"])
-        self.sampling_generator.set_state(state["sampling_generator"])
+        generator_states = state["sampling_generators"]
+        if len(generator_states) != len(self.sampling_generators):
+            raise ValueError("checkpoint sampling-worker count does not match.")
+        for generator, generator_state in zip(
+            self.sampling_generators, generator_states, strict=True
+        ):
+            generator.set_state(generator_state)
 
     @property
     def actor_parameter_count(self) -> int:
@@ -265,3 +303,32 @@ class ReinforceAgent:
 
     def _observation_tensor(self, observation: NDArray[np.float32]) -> Tensor:
         return torch.as_tensor(observation, dtype=self.dtype, device=self.device)
+
+    @staticmethod
+    def _sampling_generators(
+        generators: torch.Generator | Sequence[torch.Generator],
+    ) -> tuple[torch.Generator, ...]:
+        if isinstance(generators, torch.Generator):
+            return (generators,)
+        values = tuple(generators)
+        if not values:
+            raise ValueError("At least one policy-sampling generator is required.")
+        return values
+
+    def _environment_indices(
+        self,
+        row_count: int,
+        environment_indices: Sequence[int] | None,
+    ) -> tuple[int, ...]:
+        indices = (
+            tuple(range(row_count))
+            if environment_indices is None
+            else tuple(environment_indices)
+        )
+        if len(indices) != row_count:
+            raise ValueError("One environment index is required per action row.")
+        if any(
+            index < 0 or index >= len(self.sampling_generators) for index in indices
+        ):
+            raise ValueError("Policy-sampling environment index is out of range.")
+        return indices

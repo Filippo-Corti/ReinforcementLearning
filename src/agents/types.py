@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -10,7 +11,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from training.buffers import OnPolicyRollout
+    from training.buffers import OnPolicyRollout, VectorOnPolicyRollout
 
 
 class CollectionMode(StrEnum):
@@ -66,6 +67,53 @@ class CollectedAction:
 
 
 @dataclass(frozen=True, slots=True)
+class CollectedActionBatch:
+    """
+    Store batched detached action and critic values for vector collection.
+
+    Fields:
+        * raw_actions: Pre-squash actions with shape `(environments, actions)`.
+        * env_actions: Bounded environment actions with the same shape.
+        * behaviour_log_probabilities: One joint action log probability per row.
+        * current_values: One critic estimate per row, or `None` for REINFORCE.
+    """
+
+    raw_actions: NDArray[np.float32]
+    env_actions: NDArray[np.float32]
+    behaviour_log_probabilities: NDArray[np.float32]
+    current_values: NDArray[np.float32] | None
+
+    def __post_init__(self) -> None:
+        """
+        Preserve private float32 copies and require one common batch dimension.
+        """
+        raw_actions = np.asarray(self.raw_actions, dtype=np.float32)
+        env_actions = np.asarray(self.env_actions, dtype=np.float32)
+        probabilities = np.asarray(self.behaviour_log_probabilities, dtype=np.float32)
+        if raw_actions.ndim != 2 or env_actions.shape != raw_actions.shape:
+            raise ValueError("Batched raw and environment actions must match.")
+        if probabilities.shape != (raw_actions.shape[0],):
+            raise ValueError("Batched probabilities require one value per action row.")
+        values = self.current_values
+        if values is not None:
+            values = np.asarray(values, dtype=np.float32)
+            if values.shape != (raw_actions.shape[0],):
+                raise ValueError("Batched critic values require one value per row.")
+            values = values.copy()
+            values.setflags(write=False)
+        raw_actions = raw_actions.copy()
+        env_actions = env_actions.copy()
+        probabilities = probabilities.copy()
+        raw_actions.setflags(write=False)
+        env_actions.setflags(write=False)
+        probabilities.setflags(write=False)
+        object.__setattr__(self, "raw_actions", raw_actions)
+        object.__setattr__(self, "env_actions", env_actions)
+        object.__setattr__(self, "behaviour_log_probabilities", probabilities)
+        object.__setattr__(self, "current_values", values)
+
+
+@dataclass(frozen=True, slots=True)
 class AgentUpdateInput:
     """
     Describe one complete-episode or fixed-rollout optimization input.
@@ -78,7 +126,7 @@ class AgentUpdateInput:
 
     mode: CollectionMode
     episodes: tuple[OnPolicyRollout, ...] = ()
-    rollout: OnPolicyRollout | None = None
+    rollout: OnPolicyRollout | VectorOnPolicyRollout | None = None
 
     def __post_init__(self) -> None:
         """
@@ -125,6 +173,24 @@ class OnPolicyAgent(Protocol):
     ) -> CollectedAction:
         """
         Sample one stochastic bounded action for training collection.
+        """
+        ...
+
+    def collect_actions(
+        self,
+        normalized_observations: NDArray[np.float32],
+        environment_indices: Sequence[int] | None = None,
+    ) -> CollectedActionBatch:
+        """
+        Sample one stochastic action per vector-environment observation.
+        """
+        ...
+
+    def bootstrap_values(
+        self, normalized_observations: NDArray[np.float32]
+    ) -> NDArray[np.float32] | None:
+        """
+        Return detached critic values for a batch of bootstrap states.
         """
         ...
 

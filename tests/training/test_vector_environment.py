@@ -9,7 +9,7 @@ import numpy as np
 
 from configs import EnvironmentConfig, ExecutionConfig, SimulationConfig
 from envs.tracks import TrackWithGeometry
-from training import PersistentRacingVectorEnv
+from training import PersistentRacingVectorEnv, vector_worker_info
 from utils.random import RunSeedStreams, SeedNamespace, SeedStream
 
 
@@ -104,3 +104,36 @@ def test_vector_state_restores_worker_and_scheduler_progress() -> None:
         np.testing.assert_array_equal(actual[1], expected[1])
         np.testing.assert_array_equal(actual[2], expected[2])
         np.testing.assert_array_equal(actual[3], expected[3])
+
+
+def test_optional_collision_info_is_safe_when_only_one_worker_crashes() -> None:
+    streams = RunSeedStreams(SeedNamespace.REDUCED_BUDGET_VALIDATION, 9)
+    track = TrackWithGeometry.generate(0)
+    worker_count = 2
+    with PersistentRacingVectorEnv(
+        (track,),
+        EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=100)),
+        ExecutionConfig(device="cpu", environment_workers=worker_count),
+        tuple(
+            streams.get_numpy_generator(
+                SeedStream.ENVIRONMENT_RESETS, substream_identity=index
+            )
+            for index in range(worker_count)
+        ),
+        tuple(
+            streams.get_numpy_generator(
+                SeedStream.TRAINING_TRACK_SELECTION, substream_identity=index
+            )
+            for index in range(worker_count)
+        ),
+    ) as pool:
+        pool.reset()
+        actions = np.asarray(((1.0, 1.0), (0.0, 0.0)), dtype=np.float32)
+        for _ in range(50):
+            _, _, terminated, _, infos = pool.step(actions)
+            if terminated[0]:
+                break
+
+        assert terminated[0]
+        assert vector_worker_info(infos, 0)["collision_substep"] is not None
+        assert vector_worker_info(infos, 1)["collision_substep"] is None

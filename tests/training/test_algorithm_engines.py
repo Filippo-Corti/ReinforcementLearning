@@ -12,6 +12,7 @@ from configs import (
     ActorConfig,
     CriticConfig,
     EnvironmentConfig,
+    ExecutionConfig,
     ObservationNormalizationConfig,
     PPOConfig,
     ReinforceConfig,
@@ -59,15 +60,22 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
         actor_config=_actor_config(),
         config=ReinforceConfig(completed_episodes_per_update=2),
         initialization_generator=torch.Generator().manual_seed(1),
-        sampling_generator=torch.Generator().manual_seed(2),
+        sampling_generator=(
+            torch.Generator().manual_seed(2),
+            torch.Generator().manual_seed(3),
+        ),
     )
     engine = ReinforceTrainingEngine(
         agent,
         tracks,
         _environment_config(),
         _normalizer(),
-        np.random.default_rng(3),
-        np.random.default_rng(selection_seed),
+        (np.random.default_rng(3), np.random.default_rng(4)),
+        (
+            np.random.default_rng(selection_seed),
+            np.random.default_rng(selection_seed + 1),
+        ),
+        execution_config=ExecutionConfig(device="cpu", environment_workers=2),
     )
 
     history = engine.train(
@@ -77,14 +85,17 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
         ),
     )
 
-    expected_generator = np.random.default_rng(selection_seed)
+    expected_generators = (
+        np.random.default_rng(selection_seed),
+        np.random.default_rng(selection_seed + 1),
+    )
     expected_circuits = tuple(
         str(
             tracks[
-                int(expected_generator.integers(0, len(tracks)))
+                int(expected_generators[index % 2].integers(0, len(tracks)))
             ].track.generation.seed
         )
-        for _ in range(5)
+        for index in range(5)
     )
     assert tuple(record.circuit_identity for record in history.episodes) == (
         expected_circuits
@@ -92,7 +103,8 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
     assert history.training_interactions == 5
     assert len(history.updates) == 2
     assert [record.transition_count for record in history.updates] == [2, 2]
-    assert completed_episodes == [(0, 0), (1, 1), (2, 1), (3, 2), (4, 2)]
+    assert completed_episodes == [(0, 1), (1, 1), (2, 2), (3, 2), (4, 2)]
+    engine.close()
 
 
 def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
@@ -105,15 +117,19 @@ def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
         critic_learning_rate=0.01,
         actor_initialization_generator=torch.Generator().manual_seed(1),
         critic_initialization_generator=torch.Generator().manual_seed(2),
-        sampling_generator=torch.Generator().manual_seed(3),
+        sampling_generator=(
+            torch.Generator().manual_seed(3),
+            torch.Generator().manual_seed(4),
+        ),
     )
     engine = A2CTrainingEngine(
         agent,
         _tracks(),
         _environment_config(),
         _normalizer(),
-        np.random.default_rng(4),
-        np.random.default_rng(5),
+        (np.random.default_rng(4), np.random.default_rng(5)),
+        (np.random.default_rng(6), np.random.default_rng(7)),
+        execution_config=ExecutionConfig(device="cpu", environment_workers=2),
     )
 
     history = engine.train(
@@ -127,6 +143,7 @@ def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
     assert len(history.episodes) == 3
     assert [record.transition_count for record in history.updates] == [2, 1]
     assert completed_episodes == [(0, 1), (1, 2), (2, 3)]
+    engine.close()
 
 
 def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
@@ -143,7 +160,10 @@ def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
         critic_learning_rate=0.01,
         actor_initialization_generator=torch.Generator().manual_seed(1),
         critic_initialization_generator=torch.Generator().manual_seed(2),
-        sampling_generator=torch.Generator().manual_seed(3),
+        sampling_generator=(
+            torch.Generator().manual_seed(3),
+            torch.Generator().manual_seed(4),
+        ),
         optimization_generator=torch.Generator().manual_seed(4),
     )
     engine = PPOTrainingEngine(
@@ -151,8 +171,9 @@ def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
         _tracks(),
         _environment_config(),
         _normalizer(),
-        np.random.default_rng(5),
-        np.random.default_rng(6),
+        (np.random.default_rng(5), np.random.default_rng(6)),
+        (np.random.default_rng(7), np.random.default_rng(8)),
+        execution_config=ExecutionConfig(device="cpu", environment_workers=2),
     )
 
     history = engine.train(
@@ -166,3 +187,4 @@ def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
     assert len(history.episodes) == 3
     assert [record.transition_count for record in history.updates] == [2, 1]
     assert completed_episodes == [(0, 1), (1, 2), (2, 3)]
+    engine.close()

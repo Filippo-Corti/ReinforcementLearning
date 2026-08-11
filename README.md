@@ -191,14 +191,17 @@ an episode cadence configured at the start of the notebook. The A2C notebook
 focuses on GAE and critic diagnostics; the PPO notebook additionally exposes
 clipping and approximate-KL diagnostics. Like the REINFORCE notebook, both have
 live deterministic viewers before and after training, with inline updates and a
-Pygame-window fallback.
+Pygame-window fallback. Persistent CPU workers collect one synchronous
+observation batch at a time; A2C and PPO retain an explicit
+time-by-environment rollout so GAE remains independent between workers.
 
-## Train REINFORCE
+## Train an agent
 
-The shared training entry point currently exposes the actor-only REINFORCE
-learner. Its learning rate is intentionally required: it must come from the
-documented pre-experiment calibration procedure rather than an implicit script
-default. For a saved circuit, run:
+The shared training entry point exposes REINFORCE, A2C and PPO. Learning rates
+are intentionally required: they must come from the documented pre-experiment
+calibration procedure rather than an implicit script default. The default
+worker count is eight for REINFORCE and the number of physical CPU cores for A2C
+and PPO; `--num-envs` makes it explicit. For a saved circuit, run:
 
 ```bash
 python experiments/train.py --algorithm reinforce --seed 0 --track tracks/experiment_1.json --run-path results/reduced_budget_end_to_end_validation/reinforce/seed_0 --actor-size medium --actor-learning-rate 0.0003 --interaction-budget 2000000

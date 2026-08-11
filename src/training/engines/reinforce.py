@@ -1,4 +1,4 @@
-"""Readable complete-episode training loop for REINFORCE."""
+"""Readable parallel complete-episode training loop for REINFORCE."""
 
 from __future__ import annotations
 
@@ -8,12 +8,16 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from agents import AgentUpdateInput, CollectionMode, ReinforceAgent
-from configs import EnvironmentConfig
-from envs.racing import RacingEnv
+from configs import EnvironmentConfig, ExecutionConfig
 from envs.tracks import TrackWithGeometry
 
 from ..buffers import OnPolicyRollout, TrainingTransition
 from ..normalization import RunningObservationNormalizer
+from ..vector_environment import (
+    PersistentRacingVectorEnv,
+    vector_info,
+    vector_worker_info,
+)
 from .records import (
     EducationalEpisodeRecord,
     EducationalTrainingHistory,
@@ -24,20 +28,20 @@ from .records import (
 
 class ReinforceTrainingEngine:
     """
-    Train REINFORCE with an explicit complete-trajectory agent-environment loop.
+    Train REINFORCE from one concurrent complete episode per environment.
 
-    Each episode is kept separate because the return-to-go in `docs/LEARNING.md`
-    is computed only from its own rewards. Once the documented number of complete
-    episodes has been collected, the engine gives that batch to the agent for one
-    optimizer update. An incomplete final batch remains recorded but is not used.
+    Each trajectory remains separate because its return-to-go uses only its own
+    rewards. The eight documented batch trajectories are collected concurrently
+    in persistent CPU workers, then their trajectory-sum losses are averaged by
+    the unchanged agent update. A partial final batch remains recorded but unused.
 
     Fields:
-        * agent: REINFORCE policy and optimizer.
+        * agent: REINFORCE policy, optimizer, and per-worker sampling streams.
         * tracks: Circuits available for selection at episode boundaries.
         * environment_config: Racing dynamics, reward, observation, and time limit.
+        * execution_config: Persistent environment-worker execution settings.
         * normalizer: Running observation statistics updated only during training.
-        * environment_reset_generator: Independent stream for reset seeds.
-        * track_selection_generator: Independent stream for circuit selection.
+        * environments: Persistent process-based racing environment pool.
         * history: Episode and optimizer-update records collected so far.
     """
 
@@ -47,22 +51,49 @@ class ReinforceTrainingEngine:
         tracks: Sequence[TrackWithGeometry],
         environment_config: EnvironmentConfig,
         normalizer: RunningObservationNormalizer,
-        environment_reset_generator: np.random.Generator,
-        track_selection_generator: np.random.Generator,
+        environment_reset_generator: (
+            np.random.Generator | Sequence[np.random.Generator]
+        ),
+        track_selection_generator: np.random.Generator | Sequence[np.random.Generator],
+        *,
+        execution_config: ExecutionConfig | None = None,
     ) -> None:
         """
         Construct an educational REINFORCE engine over one or more circuits.
         """
         if not tracks:
             raise ValueError("REINFORCE training requires at least one circuit.")
+        worker_count = len(agent.sampling_generators)
+        self.execution_config = execution_config or ExecutionConfig(
+            device="cpu", environment_workers=worker_count
+        )
+        if self.execution_config.environment_workers != agent.collection_size:
+            raise ValueError(
+                "REINFORCE requires one environment per complete trajectory."
+            )
+        if worker_count != self.execution_config.environment_workers:
+            raise ValueError(
+                "REINFORCE requires one policy-sampling stream per environment."
+            )
+        reset_generators = _generator_tuple(
+            environment_reset_generator, worker_count, "reset"
+        )
+        track_generators = _generator_tuple(
+            track_selection_generator, worker_count, "track-selection"
+        )
         self.agent = agent
         self.tracks = tuple(tracks)
         self.environment_config = environment_config
         self.normalizer = normalizer
-        self.environment_reset_generator = environment_reset_generator
-        self.track_selection_generator = track_selection_generator
         self.history = EducationalTrainingHistory()
         self._episode_batch: list[OnPolicyRollout] = []
+        self.environments = PersistentRacingVectorEnv(
+            self.tracks,
+            environment_config,
+            self.execution_config,
+            reset_generators,
+            track_generators,
+        )
 
     def train(
         self,
@@ -74,129 +105,207 @@ class ReinforceTrainingEngine:
         ) = None,
     ) -> EducationalTrainingHistory:
         """
-        Collect episodes and optionally report each one after its possible update.
+        Collect concurrent trajectories and report them after each possible update.
         """
         if episode_count <= 0:
             raise ValueError("Episode count must be positive.")
 
-        first_episode_index = len(self.history.episodes)
-        for episode_index in tqdm(
-            range(first_episode_index, first_episode_index + episode_count),
+        next_episode_index = len(self.history.episodes)
+        remaining_episodes = episode_count
+        progress_bar = tqdm(
+            total=episode_count,
             desc="Training episodes",
             unit="episode",
-        ):
-            # Circuit selection is independent from policy sampling and reset noise.
-            track_index = int(
-                self.track_selection_generator.integers(0, len(self.tracks))
-            )
-            track = self.tracks[track_index]
-            circuit_identity = str(track.track.generation.seed)
-            environment = RacingEnv(track, config=self.environment_config)
-            reset_seed = int(
-                self.environment_reset_generator.integers(0, 2**32, dtype=np.uint32)
-            )
+        )
+        try:
+            while remaining_episodes:
+                needed_for_update = self.agent.collection_size - len(
+                    self._episode_batch
+                )
+                wave_size = min(remaining_episodes, needed_for_update)
+                active = np.zeros(
+                    self.execution_config.environment_workers, dtype=np.bool_
+                )
+                active[:wave_size] = True
+                observations, reset_infos = self.environments.reset(active)
+                episode_indices = np.arange(
+                    next_episode_index,
+                    next_episode_index + wave_size,
+                    dtype=np.int64,
+                )
+                transitions: list[list[TrainingTransition]] = [
+                    [] for _ in range(wave_size)
+                ]
+                returns = np.zeros(wave_size, dtype=np.float64)
+                maximum_progress = np.zeros(wave_size, dtype=np.float64)
+                speed_totals = np.zeros(wave_size, dtype=np.float64)
+                throttle_totals = np.zeros(wave_size, dtype=np.float64)
+                circuit_identities = [
+                    str(vector_info(reset_infos, "circuit_identity", index))
+                    for index in range(wave_size)
+                ]
+                completed_records: list[EducationalEpisodeRecord] = []
 
-            episode_transitions: list[TrainingTransition] = []
-            episode_return = 0.0
-            maximum_progress = 0.0
-            speed_total = 0.0
-            throttle_magnitude_total = 0.0
-            observation, _ = environment.reset(seed=reset_seed)
-
-            try:
-                while True:
-                    # The current training observation enters the running statistics.
-                    normalized_observation = self.normalizer.update_and_normalize(
-                        observation
+                while np.any(active):
+                    normalized = self.normalizer.update_and_normalize_batch(
+                        observations, active
                     )
-                    decision = self.agent.collect_action(normalized_observation)
-                    speed_total += float(observation[2])
-                    throttle_magnitude_total += abs(float(decision.env_action[0]))
-                    (
-                        next_observation,
-                        reward,
-                        terminated,
-                        truncated,
-                        info,
-                    ) = environment.step(decision.env_action)
-
-                    # The next observation is normalized with frozen statistics. It
-                    # will update the statistics only if it becomes a current input.
-                    next_normalized_observation = self.normalizer.normalize(
-                        next_observation
+                    active_indices = np.flatnonzero(active)
+                    decisions = self.agent.collect_actions(
+                        normalized[active_indices],
+                        environment_indices=[int(index) for index in active_indices],
                     )
-                    episode_transitions.append(
-                        TrainingTransition(
-                            normalized_observation=normalized_observation,
-                            raw_action=decision.raw_action,
-                            env_action=decision.env_action,
-                            reward=float(reward),
-                            behaviour_log_probability=(
-                                decision.behaviour_log_probability
-                            ),
-                            current_value=None,
-                            next_value=None,
-                            terminated=terminated,
-                            truncated=truncated,
-                            next_normalized_observation=(next_normalized_observation),
-                            episode_identity=episode_index,
-                            episode_step_index=len(episode_transitions),
-                            circuit_identity=circuit_identity,
+                    actions = np.zeros(
+                        (self.execution_config.environment_workers, 2),
+                        dtype=np.float32,
+                    )
+                    actions[active_indices] = decisions.env_actions
+                    next_observations, rewards, terminated, truncated, infos = (
+                        self.environments.step(actions, active)
+                    )
+
+                    for decision_index, environment_index_value in enumerate(
+                        active_indices
+                    ):
+                        environment_index = int(environment_index_value)
+                        info = vector_worker_info(infos, environment_index)
+                        next_normalized = self.normalizer.normalize(
+                            next_observations[environment_index]
+                        )
+                        episode_rows = transitions[environment_index]
+                        episode_rows.append(
+                            TrainingTransition(
+                                normalized_observation=normalized[environment_index],
+                                raw_action=decisions.raw_actions[decision_index],
+                                env_action=decisions.env_actions[decision_index],
+                                reward=float(rewards[environment_index]),
+                                behaviour_log_probability=float(
+                                    decisions.behaviour_log_probabilities[
+                                        decision_index
+                                    ]
+                                ),
+                                current_value=None,
+                                next_value=None,
+                                terminated=bool(terminated[environment_index]),
+                                truncated=bool(truncated[environment_index]),
+                                next_normalized_observation=next_normalized,
+                                episode_identity=int(
+                                    episode_indices[environment_index]
+                                ),
+                                episode_step_index=len(episode_rows),
+                                circuit_identity=circuit_identities[environment_index],
+                                environment_index=environment_index,
+                            )
+                        )
+                        self.history.training_interactions += 1
+                        returns[environment_index] += rewards[environment_index]
+                        speed_totals[environment_index] += observations[
+                            environment_index, 2
+                        ]
+                        throttle_totals[environment_index] += abs(
+                            float(decisions.env_actions[decision_index, 0])
+                        )
+                        progress = float(info["episode_progress"]) / float(
+                            info["track_length"]
+                        )
+                        maximum_progress[environment_index] = max(
+                            maximum_progress[environment_index], progress
+                        )
+                        if (
+                            terminated[environment_index]
+                            or truncated[environment_index]
+                        ):
+                            active[environment_index] = False
+                            completed_records.append(
+                                EducationalEpisodeRecord(
+                                    episode_index=int(
+                                        episode_indices[environment_index]
+                                    ),
+                                    circuit_identity=circuit_identities[
+                                        environment_index
+                                    ],
+                                    interactions=len(episode_rows),
+                                    undiscounted_return=float(
+                                        returns[environment_index]
+                                    ),
+                                    outcome=racing_outcome(
+                                        bool(terminated[environment_index]),
+                                        bool(truncated[environment_index]),
+                                        info,
+                                    ),
+                                    final_progress=progress,
+                                    maximum_progress=float(
+                                        maximum_progress[environment_index]
+                                    ),
+                                    mean_speed=float(
+                                        speed_totals[environment_index]
+                                        / len(episode_rows)
+                                    ),
+                                    mean_throttle_magnitude=float(
+                                        throttle_totals[environment_index]
+                                        / len(episode_rows)
+                                    ),
+                                )
+                            )
+                    observations = next_observations
+
+                completed_records.sort(key=lambda record: record.episode_index)
+                self.history.episodes.extend(completed_records)
+                self._episode_batch.extend(
+                    OnPolicyRollout(tuple(transitions[index]))
+                    for index in range(wave_size)
+                )
+                next_episode_index += wave_size
+                remaining_episodes -= wave_size
+                progress_bar.update(wave_size)
+
+                if len(self._episode_batch) == self.agent.collection_size:
+                    output = self.agent.update(
+                        AgentUpdateInput(
+                            mode=CollectionMode.COMPLETE_EPISODES,
+                            episodes=tuple(self._episode_batch),
                         )
                     )
-                    self.history.training_interactions += 1
-                    episode_return += float(reward)
-                    progress = (
-                        float(info["episode_progress"]) / track.track.track_length
-                    )
-                    maximum_progress = max(maximum_progress, progress)
-
-                    if terminated or truncated:
-                        episode_record = EducationalEpisodeRecord(
-                            episode_index=episode_index,
-                            circuit_identity=circuit_identity,
-                            interactions=len(episode_transitions),
-                            undiscounted_return=episode_return,
-                            outcome=racing_outcome(terminated, truncated, info),
-                            final_progress=progress,
-                            maximum_progress=maximum_progress,
-                            mean_speed=speed_total / len(episode_transitions),
-                            mean_throttle_magnitude=(
-                                throttle_magnitude_total / len(episode_transitions)
+                    self.history.updates.append(
+                        EducationalUpdateRecord(
+                            update_index=len(self.history.updates),
+                            final_episode_index=max(
+                                episode.transitions[-1].episode_identity
+                                for episode in self._episode_batch
                             ),
+                            training_interactions=self.history.training_interactions,
+                            transition_count=sum(
+                                len(episode.transitions)
+                                for episode in self._episode_batch
+                            ),
+                            diagnostics=output.diagnostics,
                         )
-                        self.history.episodes.append(episode_record)
-                        break
-                    observation = next_observation
-            finally:
-                environment.close()
-
-            # REINFORCE never mixes rewards between trajectories. The agent computes
-            # one trajectory-sum loss per episode, then averages those losses.
-            self._episode_batch.append(OnPolicyRollout(tuple(episode_transitions)))
-            if len(self._episode_batch) == self.agent.collection_size:
-                output = self.agent.update(
-                    AgentUpdateInput(
-                        mode=CollectionMode.COMPLETE_EPISODES,
-                        episodes=tuple(self._episode_batch),
                     )
-                )
-                self.history.updates.append(
-                    EducationalUpdateRecord(
-                        update_index=len(self.history.updates),
-                        final_episode_index=episode_index,
-                        training_interactions=self.history.training_interactions,
-                        transition_count=sum(
-                            len(episode.transitions) for episode in self._episode_batch
-                        ),
-                        diagnostics=output.diagnostics,
-                    )
-                )
-                self._episode_batch = []
+                    self._episode_batch = []
 
-            # Evaluation at a batch boundary observes the policy after the update
-            # built from the episode that has just finished.
-            if on_episode_end is not None:
-                on_episode_end(episode_record, self.history)
-
+                if on_episode_end is not None:
+                    for episode_record in completed_records:
+                        on_episode_end(episode_record, self.history)
+        finally:
+            progress_bar.close()
         return self.history
+
+    def close(self) -> None:
+        """
+        Close the persistent environment processes owned by this engine.
+        """
+        self.environments.close()
+
+
+def _generator_tuple(
+    generators: np.random.Generator | Sequence[np.random.Generator],
+    worker_count: int,
+    role: str,
+) -> tuple[np.random.Generator, ...]:
+    if isinstance(generators, np.random.Generator):
+        values = (generators,)
+    else:
+        values = tuple(generators)
+    if len(values) != worker_count:
+        raise ValueError(f"One {role} generator is required per environment worker.")
+    return values

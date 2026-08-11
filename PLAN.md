@@ -448,6 +448,12 @@ checkpointing and accounting boundary.
 
 - Define the project-owned agent update contract for continuous vector actions.
 - Implement environment collection for complete episodes and fixed rollouts.
+- Spawn persistent CPU environment workers once per run. Collect REINFORCE's
+  eight complete trajectories concurrently; collect A2C/PPO transitions into
+  pooled `(time, environment, ...)` rollouts and compute GAE independently down
+  each environment column.
+- Give each worker indexed policy-sampling, reset and track-selection streams,
+  and reset only the worker whose episode ended.
 - Implement deterministic checkpoint evaluation at exact training-step
   boundaries without contaminating training streams.
 - Save and restore models, optimizers, normalizers, counters, active episode

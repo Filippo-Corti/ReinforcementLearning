@@ -18,6 +18,37 @@ from envs.racing import RacingEnv, RacingEnvState
 from envs.tracks import TrackWithGeometry
 from utils.random import TorchDeterminismState, configure_torch_determinism
 
+_OPTIONAL_INTEGER_INFO_FIELDS = frozenset({"collision_substep"})
+
+
+def vector_info(infos: dict[str, Any], key: str, environment_index: int) -> Any:
+    """
+    Return one worker's value from Gymnasium's dictionary-of-arrays info.
+    """
+    availability = infos.get(f"_{key}")
+    if availability is not None and not bool(availability[environment_index]):
+        raise KeyError(f"Worker {environment_index} did not provide info field {key}.")
+    value = infos[key][environment_index]
+    if key in _OPTIONAL_INTEGER_INFO_FIELDS and int(value) == -1:
+        return None
+    return value
+
+
+def vector_worker_info(infos: dict[str, Any], environment_index: int) -> dict[str, Any]:
+    """
+    Reconstruct one worker's semantic info mapping from vectorized output.
+    """
+    worker_info = {
+        key: values[environment_index]
+        for key, values in infos.items()
+        if not key.startswith("_")
+        and (f"_{key}" not in infos or bool(infos[f"_{key}"][environment_index]))
+    }
+    for key in _OPTIONAL_INTEGER_INFO_FIELDS:
+        if key in worker_info and int(worker_info[key]) == -1:
+            worker_info[key] = None
+    return worker_info
+
 
 @dataclass(frozen=True, slots=True)
 class RacingWorkerState:
@@ -189,6 +220,10 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         transition_valid: bool,
     ) -> dict[str, Any]:
         enriched = dict(info)
+        for key in _OPTIONAL_INTEGER_INFO_FIELDS:
+            if enriched.get(key) is None:
+                # Gymnasium merges worker infos into one homogeneous NumPy array.
+                enriched[key] = -1
         track = self.tracks[self._track_index].track
         enriched.update(
             {
@@ -355,11 +390,11 @@ class PersistentRacingVectorEnv:
         return VectorRacingState(
             workers=tuple(workers),
             reset_generators=tuple(
-                deepcopy(generator.bit_generator.state)
+                dict(deepcopy(generator.bit_generator.state))
                 for generator in self.reset_generators
             ),
             track_generators=tuple(
-                deepcopy(generator.bit_generator.state)
+                dict(deepcopy(generator.bit_generator.state))
                 for generator in self.track_generators
             ),
             next_track_indices=tuple(int(value) for value in self._next_track_indices),

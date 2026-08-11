@@ -78,7 +78,8 @@ After executing $A_t$, the environment returns reward $R_{t+1}$, next
 observation $O_{t+1}$ and two booleans:
 
 - `terminated` is true after completing the lap or crashing;
-- `truncated` is true after reaching the $5000$-step time limit.
+- `truncated` is true after reaching the configurable $1000$-step training
+  time limit.
 
 The actor has parameters $\mathbf\theta$. A2C and PPO additionally use a critic
 $v_{\mathbf w}(O_t)$ with parameters $\mathbf w$. The training objective is
@@ -424,9 +425,12 @@ until that episode ends.
 
 Because there is no value function from which to bootstrap, REINFORCE collects
 complete episodes. Eight episodes form one update batch so the update averages
-several independently generated trajectories. The choice of eight is a project
-trade-off: fewer episodes update more frequently but noisily, while more delay
-every update and require more memory.
+several independently generated trajectories. The eight trajectories are
+collected concurrently, one in each persistent CPU environment worker. A worker
+that reaches an episode boundary is parked until the other workers finish their
+trajectories, so one update still contains exactly one trajectory per worker.
+The choice of eight is a project trade-off: fewer episodes update more
+frequently but noisily, while more delay every update and require more memory.
 
 The implementation-only learning gate uses a deterministic one-step task with
 constant observation $(1)$ and reward equal to the bounded throttle action.
@@ -469,40 +473,34 @@ $$
 Input:
     actor architecture and actor learning rate
     training-interaction budget
-    independent RNGs for actor initialization, policy sampling and reset
+    independent actor-initialization RNG and eight indexed policy/reset RNGs
 
 Initialize:
     actor parameters theta and learned log standard deviations
     observation running statistics
     actor Adam optimizer
     total_training_interactions <- 0
+    spawn eight environment workers once and reset each worker
 
 While enough budget remains to continue collecting:
-    trajectories <- empty list
+    trajectories <- one empty trajectory for each worker
+    mark every worker active
 
-    For trajectory_index = 1, ..., 8:
-        reset the fixed-track environment at the canonical start
-        receive O_0
-        trajectory <- empty list
-        terminated <- false
-        truncated <- false
+    While at least one worker is active and budget remains:
+        update observation statistics with all active current observations
+        normalize the active observation batch
+        run one batched actor forward pass
+        sample each pre-squash U_t from that worker's policy RNG
+        set every A_t <- tanh(U_t)
+        step all active workers concurrently
+        store each transition in its worker's trajectory
+        increment total_training_interactions by the active-worker count
+        park a worker when it terminates or truncates
 
-        While neither terminated nor truncated and budget remains:
-            update observation statistics with O_t
-            normalize O_t to obtain the exact actor input
-            compute mu_theta(O_t) and the current standard deviations
-            sample pre-squash U_t with the policy RNG
-            set A_t <- tanh(U_t)
-            execute A_t and receive R_(t+1), O_(t+1), terminated, truncated
-            store normalized O_t, U_t, A_t, reward and booleans
-            increment total_training_interactions
-
-        If the budget interrupted the episode before an environment boundary:
-            retain the interactions and episode metrics for accounting
-            do not use this incomplete trajectory in a Monte Carlo update
-            stop collection
-        Else:
-            append the completed trajectory
+    If the budget interrupted any trajectory before its environment boundary:
+        retain all interactions and episode metrics for accounting
+        do not use this incomplete batch in a Monte Carlo update
+        stop collection
 
     If fewer than 8 complete trajectories were collected before the budget:
         retain all interactions and episode records for accounting
@@ -522,6 +520,7 @@ While enough budget remains to continue collecting:
     record the actor gradient norm and clip it if it exceeds 0.5
     apply one Adam update to theta and the log standard deviations
     log losses, dispersion, parameter norms, update size and interaction count
+    reset all eight workers for the next collection wave
 
 Save the final actor, normalizer, optimizer, RNG states and counters.
 ```
@@ -530,7 +529,7 @@ If the global budget ends during an episode or before eight new complete
 episodes are available, all interactions and completed-episode records remain
 counted but that incomplete update batch is not optimized. Recomputing
 log-probabilities after collection avoids retaining a neural-network computation
-graph for as many as 40,000 environment transitions. This keeps the reported
+graph for as many as 8,000 environment transitions. This keeps the reported
 interaction budget exact without inventing a critic for REINFORCE.
 
 ## A2C with Generalized Advantage Estimation
@@ -543,10 +542,13 @@ for eight episode endings. GAE combines successive TD errors to reduce variance,
 at the cost of bias from the learned critic. The course notes describe this as a
 synchronous batched V-critic actor-critic method.
 
-One rollout contains $2048$ transitions and may cross several episode
-boundaries. This is an engineering balance between update frequency and a less
-noisy batch; unlike REINFORCE, it is not imposed by the mathematics. The GAE
-parameter is $\lambda=0.95$. This is a conventional middle point between the
+One pooled rollout contains $2048$ valid transitions and may cross several
+episode boundaries. Persistent CPU environments are stepped synchronously and
+stored with shape $(T,n_{\mathrm{envs}},\ldots)$; the final time row may contain
+fewer valid columns when exactly filling the pooled count. This is an
+engineering balance between update frequency and a less noisy batch; unlike
+REINFORCE, it is not imposed by the mathematics. The GAE parameter is
+$\lambda=0.95$. This is a conventional middle point between the
 one-step case $\lambda=0$ and the higher-variance limit near $1$, and will be
 checked before the reported experiment rather than presented as a theorem.
 
@@ -584,7 +586,7 @@ Input:
     actor and fixed critic architectures
     actor and critic learning rates
     gamma = 0.9995, lambda = 0.95, rollout capacity = 2048
-    training-interaction budget and independent RNG streams
+    training-interaction budget and indexed per-worker RNG streams
 
 Initialize:
     actor parameters theta and learned log standard deviations
@@ -592,48 +594,45 @@ Initialize:
     observation running statistics
     separate actor and critic Adam optimizers
     total_training_interactions <- 0
-    reset the environment and receive O_0
+    spawn the configured environment workers once and receive all O_0 columns
 
 While total_training_interactions < budget:
-    rollout <- empty list
+    rollout <- empty time-by-environment buffer
     target_rollout_length <- min(2048, remaining interaction budget)
 
-    For rollout_step = 1, ..., target_rollout_length:
-        update observation statistics with current O_t
-        normalize O_t for actor and critic
-        compute mu_theta(O_t), standard deviations and v_w(O_t)
-        sample U_t with the policy RNG and set A_t <- tanh(U_t)
+    While the pooled valid-transition count is below target_rollout_length:
+        select at most the remaining-capacity number of worker columns
+        update observation statistics with their current O_t batch
+        normalize that batch for actor and critic
+        compute batched mu_theta(O_t), standard deviations and v_w(O_t)
+        sample each U_t with its worker RNG and set A_t <- tanh(U_t)
         compute corrected log pi_theta(A_t | O_t)
-        execute A_t and receive R_(t+1), O_(t+1), terminated, truncated
+        step the selected workers concurrently
 
-        if terminated:
-            set bootstrap value B_t <- 0
-        otherwise:
-            normalize O_(t+1) without updating observation statistics
-            set B_t <- v_w(O_(t+1))
+        for each worker transition, set B_t <- 0 after termination
+        otherwise normalize O_(t+1) without updating statistics
+        evaluate all required B_t values in one critic batch
 
         store the exact normalized inputs, U_t, action, detached value, reward,
             detached bootstrap value, booleans, episode identity and track identity
-        increment total_training_interactions
+        increment total_training_interactions by the selected-worker count
 
-        if terminated or truncated:
-            reset the environment and use its observation as the next current O_t
-        otherwise:
-            set current O_t <- O_(t+1)
+        reset only workers that terminated or truncated
+        let every other worker continue from O_(t+1)
 
-    Moving backward through the rollout:
+    For each environment column, moving backward only through that column:
         compute delta_t <- R_(t+1) + gamma * B_t - v_w(O_t)
         if terminated, truncated or final stored rollout transition:
             set raw advantage Ahat_t <- delta_t
-        otherwise:
+        otherwise within the same uninterrupted worker episode:
             set Ahat_t <- delta_t + gamma * lambda * Ahat_(t+1)
         set detached critic target y_t <- Ahat_t + v_w(O_t)
 
     standardize the raw advantages for the actor only
     recompute corrected log pi_theta(A_t | O_t) from stored inputs and U_t
-    compute the mean actor loss over the entire rollout
+    flatten only valid rows and compute the mean actor loss over the rollout
     clear actor gradients, backpropagate, record norm, clip and update theta
-    compute the mean half-squared critic loss over the entire rollout
+    compute the mean half-squared critic loss over the valid rollout rows
     clear critic gradients, backpropagate, record norm, clip and update w
     log actor, critic, advantage, target and optimization diagnostics
 
@@ -711,7 +710,7 @@ Input:
     gamma = 0.9995, lambda = 0.95
     rollout capacity = 2048, minibatch size = 64
     update epochs = 10, clipping epsilon = 0.2
-    training-interaction budget and independent RNG streams
+    training-interaction budget and indexed per-worker RNG streams
 
 Initialize:
     actor parameters theta and learned log standard deviations
@@ -719,27 +718,28 @@ Initialize:
     observation running statistics
     separate actor and critic Adam optimizers
     total_training_interactions <- 0
-    reset the environment and receive O_0
+    spawn the configured environment workers once and receive all O_0 columns
 
 While total_training_interactions < budget:
     theta_old denotes the policy used for this collection
-    rollout <- empty list
+    rollout <- empty time-by-environment buffer
     target_rollout_length <- min(2048, remaining interaction budget)
 
-    For rollout_step = 1, ..., target_rollout_length:
-        update and apply observation normalization exactly as in A2C
-        compute mu_theta_old(O_t), standard deviations and v_w(O_t)
-        sample U_t, form bounded A_t and compute old_log_probability_t
-        execute A_t and receive the environment transition
+    While the pooled valid-transition count is below target_rollout_length:
+        select at most the remaining-capacity number of worker columns
+        update and apply observation normalization to the selected batch as in A2C
+        compute batched mu_theta_old(O_t), standard deviations and v_w(O_t)
+        sample each U_t from its worker RNG and compute old_log_probability_t
+        step the selected workers concurrently
         set bootstrap value to zero after true termination
-        otherwise evaluate v_w on the normalized next observation
+        otherwise evaluate v_w on the normalized next-observation batch
         store normalized inputs, U_t, A_t, detached old log-probability,
             detached old value, reward, detached bootstrap value, booleans,
             episode identity and track identity
-        increment total_training_interactions
-        reset after termination or truncation; otherwise continue the episode
+        increment total_training_interactions by the selected-worker count
+        reset only ended workers; every other column continues its episode
 
-    Moving backward through the rollout:
+    For each environment column, moving backward only through that column:
         compute TD errors, raw GAE advantages and detached critic targets
         stop recursion at termination, truncation and the rollout boundary
 

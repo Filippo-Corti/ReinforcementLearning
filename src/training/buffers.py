@@ -43,6 +43,7 @@ class TrainingTransition:
         * episode_identity: Stable identity of the environment episode.
         * episode_step_index: Zero-based position within that episode.
         * circuit_identity: Stable identity of the episode's circuit.
+        * environment_index: Stable vector-worker column that produced the row.
     """
 
     normalized_observation: VectorInput
@@ -58,6 +59,7 @@ class TrainingTransition:
     episode_identity: int
     episode_step_index: int
     circuit_identity: str
+    environment_index: int = 0
 
     def __post_init__(self) -> None:
         """
@@ -85,6 +87,8 @@ class TrainingTransition:
             raise ValueError("A transition cannot be both terminated and truncated.")
         if self.episode_step_index < 0:
             raise ValueError("Episode step indices cannot be negative.")
+        if self.environment_index < 0:
+            raise ValueError("Environment indices cannot be negative.")
         next_value = optional_scalar(self.next_value)
         if self.terminated and next_value not in (None, 0.0):
             raise ValueError("A true termination must store a zero bootstrap value.")
@@ -231,6 +235,216 @@ class OnPolicyRollout:
             ),
             circuit_identities=tuple(row.circuit_identity for row in rows),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class VectorOnPolicyTensors:
+    """
+    Bundle a time-by-environment rollout and its valid-transition mask.
+
+    Fields:
+        * observations: Normalized inputs with shape `(time, environments, features)`.
+        * raw_actions: Pre-squash actions with shape `(time, environments, actions)`.
+        * env_actions: Bounded actions with shape `(time, environments, actions)`.
+        * rewards: Rewards with shape `(time, environments)`.
+        * behaviour_log_probabilities: Collection log probabilities when present.
+        * current_values: Detached current critic estimates when present.
+        * next_values: Detached bootstrap estimates when present.
+        * terminated: True-MDP-ending mask.
+        * truncated: Time-limit-ending mask.
+        * next_observations: Frozen-statistics next inputs.
+        * episode_identities: Episode identity per valid row.
+        * episode_step_indices: Within-episode step index per valid row.
+        * valid: Whether a time/environment cell contains a collected transition.
+        * circuit_identities: Circuit identity or `None` per cell.
+    """
+
+    observations: Tensor
+    raw_actions: Tensor
+    env_actions: Tensor
+    rewards: Tensor
+    behaviour_log_probabilities: Tensor | None
+    current_values: Tensor | None
+    next_values: Tensor | None
+    terminated: Tensor
+    truncated: Tensor
+    next_observations: Tensor
+    episode_identities: Tensor
+    episode_step_indices: Tensor
+    valid: Tensor
+    circuit_identities: tuple[tuple[str | None, ...], ...]
+
+    def flatten_valid(self, values: Tensor) -> Tensor:
+        """
+        Return valid cells in deterministic time-major, environment-minor order.
+        """
+        return values[self.valid]
+
+
+@dataclass(frozen=True, slots=True)
+class VectorOnPolicyRollout:
+    """
+    Keep fixed-rollout transitions in explicit time-by-environment columns.
+
+    A `None` cell means that worker was intentionally parked for that collection
+    tick. Valid cells retain their environment column, so target recursion never
+    crosses from one process into another.
+
+    Fields:
+        * transition_steps: Ordered `(time, environments)` semantic rows.
+    """
+
+    transition_steps: tuple[tuple[TrainingTransition | None, ...], ...]
+
+    def __post_init__(self) -> None:
+        """
+        Require a non-empty rectangular collection with at least one valid row.
+        """
+        if not self.transition_steps:
+            raise ValueError("A vector rollout must contain at least one time step.")
+        environment_count = len(self.transition_steps[0])
+        if environment_count == 0:
+            raise ValueError("A vector rollout must contain an environment column.")
+        if any(len(step) != environment_count for step in self.transition_steps):
+            raise ValueError("Vector rollout steps must have one rectangular shape.")
+        if not self.transitions:
+            raise ValueError("A vector rollout must contain a valid transition.")
+        for environment_index in range(environment_count):
+            previous: TrainingTransition | None = None
+            for step in self.transition_steps:
+                transition = step[environment_index]
+                if transition is None:
+                    continue
+                if transition.environment_index != environment_index:
+                    raise ValueError(
+                        "A transition environment index must match its vector column."
+                    )
+                if previous is not None:
+                    FixedRolloutBuffer._validate_next_transition(
+                        (previous,), transition
+                    )
+                previous = transition
+
+    @property
+    def environment_count(self) -> int:
+        """
+        Return the number of persistent worker columns.
+        """
+        return len(self.transition_steps[0])
+
+    @property
+    def transitions(self) -> tuple[TrainingTransition, ...]:
+        """
+        Return valid transitions in time-major, environment-minor order.
+        """
+        return tuple(
+            transition
+            for step in self.transition_steps
+            for transition in step
+            if transition is not None
+        )
+
+    def tensors(
+        self, device: torch.device | str | None = None
+    ) -> VectorOnPolicyTensors:
+        """
+        Return padded framework tensors while retaining an explicit valid mask.
+        """
+        first = self.transitions[0]
+        time_count = len(self.transition_steps)
+        environment_count = self.environment_count
+        observation_dimensions = first.normalized_observation.shape[0]
+        action_dimensions = first.raw_action.shape[0]
+        valid = torch.zeros(
+            (time_count, environment_count), dtype=torch.bool, device=device
+        )
+        observations = torch.zeros(
+            (time_count, environment_count, observation_dimensions),
+            dtype=torch.float32,
+            device=device,
+        )
+        raw_actions = torch.zeros(
+            (time_count, environment_count, action_dimensions),
+            dtype=torch.float32,
+            device=device,
+        )
+        env_actions = torch.zeros_like(raw_actions)
+        rewards = torch.zeros(
+            (time_count, environment_count), dtype=torch.float32, device=device
+        )
+        terminated = torch.zeros_like(valid)
+        truncated = torch.zeros_like(valid)
+        next_observations = torch.zeros_like(observations)
+        episode_identities = torch.full(
+            (time_count, environment_count), -1, dtype=torch.int64, device=device
+        )
+        episode_step_indices = torch.full_like(episode_identities, -1)
+        circuit_identities: list[tuple[str | None, ...]] = []
+
+        for time_index, step in enumerate(self.transition_steps):
+            circuits: list[str | None] = []
+            for environment_index, transition in enumerate(step):
+                if transition is None:
+                    circuits.append(None)
+                    continue
+                valid[time_index, environment_index] = True
+                observations[time_index, environment_index] = torch.tensor(
+                    transition.normalized_observation, device=device
+                )
+                raw_actions[time_index, environment_index] = torch.tensor(
+                    transition.raw_action, device=device
+                )
+                env_actions[time_index, environment_index] = torch.tensor(
+                    transition.env_action, device=device
+                )
+                rewards[time_index, environment_index] = transition.reward
+                terminated[time_index, environment_index] = transition.terminated
+                truncated[time_index, environment_index] = transition.truncated
+                next_observations[time_index, environment_index] = torch.tensor(
+                    transition.next_normalized_observation, device=device
+                )
+                episode_identities[time_index, environment_index] = (
+                    transition.episode_identity
+                )
+                episode_step_indices[time_index, environment_index] = (
+                    transition.episode_step_index
+                )
+                circuits.append(transition.circuit_identity)
+            circuit_identities.append(tuple(circuits))
+
+        return VectorOnPolicyTensors(
+            observations=observations,
+            raw_actions=raw_actions,
+            env_actions=env_actions,
+            rewards=rewards,
+            behaviour_log_probabilities=self._optional_scalar_tensor(
+                "behaviour_log_probability", valid, device
+            ),
+            current_values=self._optional_scalar_tensor("current_value", valid, device),
+            next_values=self._optional_scalar_tensor("next_value", valid, device),
+            terminated=terminated,
+            truncated=truncated,
+            next_observations=next_observations,
+            episode_identities=episode_identities,
+            episode_step_indices=episode_step_indices,
+            valid=valid,
+            circuit_identities=tuple(circuit_identities),
+        )
+
+    def _optional_scalar_tensor(
+        self,
+        field_name: str,
+        valid: Tensor,
+        device: torch.device | str | None,
+    ) -> Tensor | None:
+        values = [getattr(transition, field_name) for transition in self.transitions]
+        if all(value is None for value in values):
+            return None
+        if any(value is None for value in values):
+            raise ValueError(f"Vector rollout field {field_name} is incomplete.")
+        tensor = torch.zeros(valid.shape, dtype=torch.float32, device=device)
+        tensor[valid] = torch.tensor(values, dtype=torch.float32, device=device)
+        return tensor
 
 
 class ReinforceEpisodeBuffer:
@@ -428,6 +642,122 @@ class FixedRolloutBuffer:
             raise ValueError("A new episode must start at step index zero.")
 
 
+class VectorRolloutBuffer:
+    """
+    Collect a pooled transition count in rectangular environment-time steps.
+
+    Fields:
+        * capacity: Maximum number of valid transitions in one pooled rollout.
+        * environment_count: Number of persistent worker columns.
+        * _steps: Time-ordered rows with `None` for intentionally parked workers.
+        * _previous: Last valid transition by environment column.
+    """
+
+    def __init__(self, capacity: int, environment_count: int) -> None:
+        """
+        Initialize an empty pooled vector rollout.
+        """
+        if capacity <= 0:
+            raise ValueError("Rollout capacity must be positive.")
+        if environment_count <= 0:
+            raise ValueError("Vector rollouts require a positive environment count.")
+        self.capacity = capacity
+        self.environment_count = environment_count
+        self._steps: list[tuple[TrainingTransition | None, ...]] = []
+        self._previous: list[TrainingTransition | None] = [None] * environment_count
+        self._transition_count = 0
+
+    def append_step(
+        self,
+        transitions: Sequence[TrainingTransition | None],
+    ) -> None:
+        """
+        Append one synchronous worker step without exceeding pooled capacity.
+        """
+        step = tuple(transitions)
+        if len(step) != self.environment_count:
+            raise ValueError("A vector step must contain one cell per environment.")
+        valid_count = sum(transition is not None for transition in step)
+        if valid_count == 0:
+            raise ValueError("A vector rollout step must contain a valid transition.")
+        if self._transition_count + valid_count > self.capacity:
+            raise ValueError("Finalize the full vector rollout before appending rows.")
+        for environment_index, transition in enumerate(step):
+            if transition is None:
+                continue
+            if transition.environment_index != environment_index:
+                raise ValueError(
+                    "A transition environment index must match its vector column."
+                )
+            previous = self._previous[environment_index]
+            if previous is not None:
+                FixedRolloutBuffer._validate_next_transition((previous,), transition)
+            self._previous[environment_index] = transition
+        self._steps.append(step)
+        self._transition_count += valid_count
+
+    def finalize(self) -> VectorOnPolicyRollout:
+        """
+        Return and clear the current partial or full rectangular rollout.
+        """
+        rollout = VectorOnPolicyRollout(tuple(self._steps))
+        self._steps = []
+        self._transition_count = 0
+        return rollout
+
+    @property
+    def transition_count(self) -> int:
+        """
+        Return the number of valid pooled transitions currently stored.
+        """
+        return self._transition_count
+
+    @property
+    def remaining_capacity(self) -> int:
+        """
+        Return how many further valid transitions fit before finalization.
+        """
+        return self.capacity - self._transition_count
+
+    @property
+    def transition_steps(
+        self,
+    ) -> tuple[tuple[TrainingTransition | None, ...], ...]:
+        """
+        Return stored time/environment cells without exposing mutable lists.
+        """
+        return tuple(self._steps)
+
+    @property
+    def previous_transitions(self) -> tuple[TrainingTransition | None, ...]:
+        """
+        Return the last valid row retained for each worker column.
+        """
+        return tuple(self._previous)
+
+    def restore(
+        self,
+        transition_steps: Sequence[Sequence[TrainingTransition | None]],
+        previous_transitions: Sequence[TrainingTransition | None],
+    ) -> None:
+        """
+        Restore checkpointed cells and column-specific continuity context.
+        """
+        if len(previous_transitions) != self.environment_count:
+            raise ValueError("Vector checkpoint column count does not match.")
+        self._steps = []
+        self._previous = [None] * self.environment_count
+        self._transition_count = 0
+        for step in transition_steps:
+            self.append_step(step)
+        restored_previous = tuple(previous_transitions)
+        for environment_index, previous in enumerate(restored_previous):
+            current = self._previous[environment_index]
+            if current is not None and previous != current:
+                raise ValueError("Vector checkpoint continuity state is inconsistent.")
+        self._previous = list(restored_previous)
+
+
 @dataclass(frozen=True, slots=True)
 class GAETargets:
     """
@@ -510,6 +840,75 @@ def compute_gae_targets(
         raw_advantages[index] = next_advantage
 
     value_targets = (raw_advantages + values).detach()
+    return GAETargets(
+        temporal_difference_errors=temporal_difference_errors,
+        raw_advantages=raw_advantages.detach(),
+        value_targets=value_targets,
+    )
+
+
+def compute_vector_gae_targets(
+    rollout: VectorOnPolicyRollout,
+    discount: float,
+    gae_lambda: float,
+    *,
+    device: torch.device | str | None = None,
+) -> GAETargets:
+    """
+    Compute GAE backward within each environment column independently.
+    """
+    tensors = rollout.tensors(device=device)
+    if tensors.current_values is None or tensors.next_values is None:
+        raise ValueError(
+            "GAE requires a current and bootstrap value on every valid vector row."
+        )
+    values = tensors.current_values.detach()
+    next_values = tensors.next_values.detach()
+    bootstrap_values = torch.where(
+        tensors.terminated, torch.zeros_like(next_values), next_values
+    )
+    temporal_difference_errors = torch.where(
+        tensors.valid,
+        tensors.rewards + discount * bootstrap_values - values,
+        torch.zeros_like(tensors.rewards),
+    ).detach()
+    raw_advantages = torch.zeros_like(temporal_difference_errors)
+
+    for environment_index in range(rollout.environment_count):
+        valid_times = torch.nonzero(
+            tensors.valid[:, environment_index], as_tuple=False
+        ).flatten()
+        next_advantage = torch.zeros(
+            (), dtype=torch.float32, device=temporal_difference_errors.device
+        )
+        next_transition: TrainingTransition | None = None
+        for valid_position in range(valid_times.numel() - 1, -1, -1):
+            time_index = int(valid_times[valid_position].item())
+            transition = rollout.transition_steps[time_index][environment_index]
+            if transition is None:
+                raise RuntimeError("A valid vector mask cannot refer to an empty cell.")
+            recursion_ends = (
+                next_transition is None
+                or transition.ends_episode
+                or next_transition.episode_identity != transition.episode_identity
+            )
+            if recursion_ends:
+                next_advantage = temporal_difference_errors[
+                    time_index, environment_index
+                ]
+            else:
+                next_advantage = (
+                    temporal_difference_errors[time_index, environment_index]
+                    + discount * gae_lambda * next_advantage
+                )
+            raw_advantages[time_index, environment_index] = next_advantage
+            next_transition = transition
+
+    value_targets = torch.where(
+        tensors.valid,
+        raw_advantages + values,
+        torch.zeros_like(values),
+    ).detach()
     return GAETargets(
         temporal_difference_errors=temporal_difference_errors,
         raw_advantages=raw_advantages.detach(),

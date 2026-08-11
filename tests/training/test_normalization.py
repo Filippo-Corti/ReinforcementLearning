@@ -66,6 +66,19 @@ def test_normalized_values_are_float32_and_clipped() -> None:
     np.testing.assert_array_equal(normalized, np.array([10.0, -10.0], dtype=np.float32))
 
 
+def test_batch_update_uses_all_active_rows_before_normalizing() -> None:
+    normalizer = _normalizer()
+    observations = np.asarray(((1.0, 2.0), (3.0, 4.0), (9.0, 9.0)))
+
+    normalized = normalizer.update_and_normalize_batch(
+        observations,
+        active=np.asarray((True, True, False)),
+    )
+
+    assert normalizer.count == 2
+    np.testing.assert_allclose(normalized[:2], np.asarray(((-1.0, -1.0), (1.0, 1.0))))
+
+
 def test_normalizer_rejects_observations_with_wrong_shape() -> None:
     normalizer = _normalizer()
 

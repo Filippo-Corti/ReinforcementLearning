@@ -1183,3 +1183,58 @@ the end-to-end scripted baseline completed one lap in 306 interactions.
 `tests/training/test_policy_evaluation.py`, and `docs/DIARY.md`.
 
 **Commit**: `fix: scale scripted baseline for short circuit [ai]`
+
+## 2026-08-11 — Parallel on-policy rollout collection
+
+**Task**: Reduce training wall time by collecting racing interactions in
+persistent CPU processes while preserving the reward, learning equations,
+episode-boundary rules, deterministic seed contract and disabled features.
+
+**Result**: Batched actor and critic inference now consumes synchronous
+observation rows without moving model training to another device. REINFORCE
+uses eight worker-indexed policy, reset and circuit-selection streams and
+collects one complete trajectory per worker concurrently before its unchanged
+eight-trajectory update. A2C and PPO default to the number of physical CPU
+cores and fill an explicit `(time, environment, ...)` buffer to exactly 2048
+pooled valid transitions. Environments reset independently after termination or
+truncation, and GAE recurses backward within each environment column only.
+
+Both the complete experiment engine and the readable algorithm engines spawn
+their process pool once and reuse it for the run. Checkpoints now retain every
+worker, observation, collector and indexed generator state. The experiment
+runner exposes `--num-envs`, records worker stream identities, and uses eight
+workers automatically for REINFORCE. Optional collision metadata is encoded
+homogeneously at the Gymnasium vector boundary and decoded back to its semantic
+`None` value, preventing an asymmetric worker crash from blocking collection.
+
+The learning and experiment documents describe the parallel collection shape
+and execution contract. All three educational notebooks expose their worker
+count, construct indexed streams, close their workers explicitly and retain
+16-episode smoke outputs. No entropy bonus, learning-rate scheduler, weight
+decay, PPO value clipping, KL early stopping or GPU migration was added;
+`delta_t_agent=0.04`, `gamma=0.9995` and the `0.05` time-penalty rate remain
+unchanged.
+
+**Validation**: Hand-computed vector-buffer tests verify the valid mask and
+independent GAE columns. Process tests verify persistent worker identities,
+selective reset, deterministic worker settings, state restore and asymmetric
+optional collision data. The focused policy/agent/buffer/engine/runner suite
+passed 69 tests before the final integration pass. Black, Ruff and targeted
+Pyright passed, and the complete suite passed all 198 tests with only the two
+existing unbounded-observation-space warnings.
+
+The retained notebooks completed without cell errors. REINFORCE recorded 16
+episodes, 8,674 interactions, two updates and three deterministic evaluations;
+A2C recorded 16 episodes, 8,584 interactions, five updates and nine evaluations;
+PPO recorded 16 episodes, 10,679 interactions, six updates and nine evaluations.
+Each retains its initial/final live viewer and training-record plots. No
+notebook unit tests were added.
+
+**Files**: `src/models/actor.py`, `src/models/policies.py`, `src/agents/`,
+`src/training/buffers.py`, `src/training/normalization.py`,
+`src/training/vector_environment.py`, `src/training/engines/`,
+`experiments/train.py`, `tests/models/test_policies.py`, `tests/training/`,
+`tests/experiments/test_train.py`, `notebooks/`, `docs/LEARNING.md`,
+`docs/EXPERIMENT.md`, `README.md`, `PLAN.md`, and `docs/DIARY.md`.
+
+**Commit**: `feature: parallelize on-policy rollouts [ai]`

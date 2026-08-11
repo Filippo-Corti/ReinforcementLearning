@@ -11,6 +11,7 @@ from configs import (
     ExecutionConfig,
     PPOConfig,
     SimulationConfig,
+    TrackGenerationConfig,
 )
 from experiments.train import (
     parse_arguments,
@@ -30,9 +31,7 @@ def test_train_entry_point_runs_reinforce_and_writes_shared_records(tmp_path) ->
         actor_config=SMALL_ACTOR_CONFIG,
         actor_learning_rate=0.01,
         training_interaction_budget=8,
-        environment_config=EnvironmentConfig(
-            simulation=SimulationConfig(max_episode_steps=1)
-        ),
+        environment_config=_fixture_environment_config(),
         execution_config=ExecutionConfig(device="cpu"),
     )
     run = RunDirectory.open(
@@ -100,9 +99,7 @@ def test_train_entry_point_runs_a2c_and_writes_shared_records(tmp_path) -> None:
         critic_learning_rate=0.01,
         training_interaction_budget=8,
         a2c_config=A2CConfig(transitions_per_rollout=8),
-        environment_config=EnvironmentConfig(
-            simulation=SimulationConfig(max_episode_steps=1)
-        ),
+        environment_config=_fixture_environment_config(),
         execution_config=ExecutionConfig(device="cpu"),
     )
     run = RunDirectory.open(
@@ -135,9 +132,7 @@ def test_train_entry_point_runs_ppo_and_writes_shared_records(tmp_path) -> None:
             optimization_epochs=2,
             minibatch_size=4,
         ),
-        environment_config=EnvironmentConfig(
-            simulation=SimulationConfig(max_episode_steps=1)
-        ),
+        environment_config=_fixture_environment_config(),
         execution_config=ExecutionConfig(device="cpu"),
     )
     run = RunDirectory.open(
@@ -161,3 +156,13 @@ def test_train_entry_point_runs_ppo_and_writes_shared_records(tmp_path) -> None:
     )
     assert '"current_curvature":' in trajectory
     assert '"lateral_acceleration_proxy":' in trajectory
+
+
+def _fixture_environment_config() -> EnvironmentConfig:
+    """
+    Use the length range of the deliberately long legacy test fixture.
+    """
+    return EnvironmentConfig(
+        simulation=SimulationConfig(max_episode_steps=1),
+        track=TrackGenerationConfig(min_length=1_000.0, max_length=3_000.0),
+    )

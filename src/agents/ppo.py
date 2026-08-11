@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
 
@@ -12,7 +13,13 @@ from torch import Tensor
 
 from configs import ActorConfig, CriticConfig, PPOConfig
 from models import ActorNetwork, CriticNetwork, agent_parameter_counts
-from training.buffers import compute_gae_targets
+from training.buffers import (
+    GAETargets,
+    OnPolicyRollout,
+    VectorOnPolicyRollout,
+    compute_gae_targets,
+    compute_vector_gae_targets,
+)
 
 from .diagnostics import (
     explained_variance,
@@ -24,6 +31,7 @@ from .types import (
     AgentUpdateInput,
     AgentUpdateOutput,
     CollectedAction,
+    CollectedActionBatch,
     CollectionMode,
 )
 
@@ -47,7 +55,7 @@ class PPOAgent:
         * optimization_generator: Isolated generator used only for minibatch order.
     """
 
-    STATE_VERSION = 2
+    STATE_VERSION = 3
     collection_mode = CollectionMode.FIXED_ROLLOUT
 
     def __init__(
@@ -59,7 +67,7 @@ class PPOAgent:
         critic_learning_rate: float,
         actor_initialization_generator: torch.Generator,
         critic_initialization_generator: torch.Generator,
-        sampling_generator: torch.Generator,
+        sampling_generator: torch.Generator | Sequence[torch.Generator],
         optimization_generator: torch.Generator,
         *,
         device: torch.device | str = "cpu",
@@ -105,7 +113,8 @@ class PPOAgent:
             lr=self.critic_learning_rate,
             **optimizer_arguments,
         )
-        self.sampling_generator = sampling_generator
+        self.sampling_generators = self._sampling_generators(sampling_generator)
+        self.sampling_generator = self.sampling_generators[0]
         self.optimization_generator = optimization_generator
         self._last_minibatch_indices: tuple[tuple[tuple[int, ...], ...], ...] = ()
 
@@ -137,6 +146,29 @@ class PPOAgent:
             action = self.actor.deterministic_action(observation)[0]
         return action.cpu().numpy().astype(np.float32, copy=False)
 
+    def collect_actions(
+        self,
+        normalized_observations: NDArray[np.float32],
+        environment_indices: Sequence[int] | None = None,
+    ) -> CollectedActionBatch:
+        """
+        Sample one action and critic value per independent environment row.
+        """
+        observations = self._observation_tensor(normalized_observations)
+        indices = self._environment_indices(observations.shape[0], environment_indices)
+        sample = self.actor.sample_with_generators(
+            observations,
+            tuple(self.sampling_generators[index] for index in indices),
+        )
+        with torch.inference_mode():
+            current_values = self.critic(observations)
+        return CollectedActionBatch(
+            raw_actions=sample.raw_action.cpu().numpy(),
+            env_actions=sample.env_action.cpu().numpy(),
+            behaviour_log_probabilities=sample.log_probability.cpu().numpy(),
+            current_values=current_values.cpu().numpy(),
+        )
+
     def bootstrap_value(self, normalized_observation: NDArray[np.float32]) -> float:
         """
         Return a detached critic estimate for a non-terminal bootstrap state.
@@ -145,6 +177,17 @@ class PPOAgent:
         with torch.inference_mode():
             value = self.critic(observation)[0]
         return float(value.item())
+
+    def bootstrap_values(
+        self, normalized_observations: NDArray[np.float32]
+    ) -> NDArray[np.float32]:
+        """
+        Return detached critic estimates for batched non-terminal next states.
+        """
+        observations = self._observation_tensor(normalized_observations)
+        with torch.inference_mode():
+            values = self.critic(observations)
+        return values.cpu().numpy().astype(np.float32, copy=False)
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
         """
@@ -158,18 +201,10 @@ class PPOAgent:
         if len(rollout.transitions) > self.collection_size:
             raise ValueError("PPO rollout exceeds its configured collection size.")
 
-        tensors = rollout.tensors(device=self.device)
-        if tensors.behaviour_log_probabilities is None:
-            raise ValueError("PPO requires a behaviour log probability on every row.")
-        targets = compute_gae_targets(
-            rollout,
-            self.config.discount,
-            self.config.gae_lambda,
-            device=self.device,
+        observations, raw_actions, old_log_probabilities, targets = (
+            self._rollout_training_tensors(rollout)
         )
-        observations = tensors.observations.to(dtype=self.dtype)
-        raw_actions = tensors.raw_actions.to(dtype=self.dtype)
-        old_log_probabilities = tensors.behaviour_log_probabilities.detach().clone()
+        old_log_probabilities = old_log_probabilities.detach().clone()
         advantages = self._standardize_advantages(targets.raw_advantages)
         value_targets = targets.value_targets.detach().clone()
         actor_weight_norm = parameter_norm(self.actor.parameters())
@@ -300,7 +335,9 @@ class PPOAgent:
             "critic": self.critic.state_dict(),
             "actor_optimizer": self.actor_optimizer.state_dict(),
             "critic_optimizer": self.critic_optimizer.state_dict(),
-            "sampling_generator": self.sampling_generator.get_state(),
+            "sampling_generators": [
+                generator.get_state() for generator in self.sampling_generators
+            ],
             "optimization_generator": self.optimization_generator.get_state(),
         }
 
@@ -324,7 +361,13 @@ class PPOAgent:
         self.critic.load_state_dict(state["critic"])
         self.actor_optimizer.load_state_dict(state["actor_optimizer"])
         self.critic_optimizer.load_state_dict(state["critic_optimizer"])
-        self.sampling_generator.set_state(state["sampling_generator"])
+        generator_states = state["sampling_generators"]
+        if len(generator_states) != len(self.sampling_generators):
+            raise ValueError("checkpoint sampling-worker count does not match.")
+        for generator, generator_state in zip(
+            self.sampling_generators, generator_states, strict=True
+        ):
+            generator.set_state(generator_state)
         self.optimization_generator.set_state(state["optimization_generator"])
 
     @property
@@ -441,6 +484,78 @@ class PPOAgent:
 
     def _observation_tensor(self, observation: NDArray[np.float32]) -> Tensor:
         return torch.as_tensor(observation, dtype=self.dtype, device=self.device)
+
+    def _rollout_training_tensors(
+        self,
+        rollout: OnPolicyRollout | VectorOnPolicyRollout,
+    ) -> tuple[Tensor, Tensor, Tensor, GAETargets]:
+        if isinstance(rollout, VectorOnPolicyRollout):
+            tensors = rollout.tensors(device=self.device)
+            if tensors.behaviour_log_probabilities is None:
+                raise ValueError("PPO requires collection log probabilities.")
+            vector_targets = compute_vector_gae_targets(
+                rollout,
+                self.config.discount,
+                self.config.gae_lambda,
+                device=self.device,
+            )
+            targets = GAETargets(
+                temporal_difference_errors=tensors.flatten_valid(
+                    vector_targets.temporal_difference_errors
+                ),
+                raw_advantages=tensors.flatten_valid(vector_targets.raw_advantages),
+                value_targets=tensors.flatten_valid(vector_targets.value_targets),
+            )
+            return (
+                tensors.flatten_valid(tensors.observations).to(dtype=self.dtype),
+                tensors.flatten_valid(tensors.raw_actions).to(dtype=self.dtype),
+                tensors.flatten_valid(tensors.behaviour_log_probabilities),
+                targets,
+            )
+        tensors = rollout.tensors(device=self.device)
+        if tensors.behaviour_log_probabilities is None:
+            raise ValueError("PPO requires collection log probabilities.")
+        targets = compute_gae_targets(
+            rollout,
+            self.config.discount,
+            self.config.gae_lambda,
+            device=self.device,
+        )
+        return (
+            tensors.observations.to(dtype=self.dtype),
+            tensors.raw_actions.to(dtype=self.dtype),
+            tensors.behaviour_log_probabilities,
+            targets,
+        )
+
+    @staticmethod
+    def _sampling_generators(
+        generators: torch.Generator | Sequence[torch.Generator],
+    ) -> tuple[torch.Generator, ...]:
+        if isinstance(generators, torch.Generator):
+            return (generators,)
+        values = tuple(generators)
+        if not values:
+            raise ValueError("At least one policy-sampling generator is required.")
+        return values
+
+    def _environment_indices(
+        self,
+        row_count: int,
+        environment_indices: Sequence[int] | None,
+    ) -> tuple[int, ...]:
+        indices = (
+            tuple(range(row_count))
+            if environment_indices is None
+            else tuple(environment_indices)
+        )
+        if len(indices) != row_count:
+            raise ValueError("One environment index is required per action row.")
+        if any(
+            index < 0 or index >= len(self.sampling_generators) for index in indices
+        ):
+            raise ValueError("Policy-sampling environment index is out of range.")
+        return indices
 
     @staticmethod
     def _validate_config(config: PPOConfig) -> None:

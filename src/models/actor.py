@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import torch
 from numpy.typing import NDArray
@@ -63,6 +65,16 @@ class ActorNetwork(nn.Module, Policy):
         Return the bounded Gaussian mean action.
         """
         return self.policy.deterministic_action(observations)
+
+    def sample_with_generators(
+        self,
+        observations: Tensor,
+        sampling_generators: Sequence[torch.Generator],
+    ) -> PolicySample[Tensor, Tensor]:
+        """
+        Draw one detached row per independent environment sampling stream.
+        """
+        return self.policy.sample_with_generators(observations, sampling_generators)
 
     def log_probability(self, observations: Tensor, raw_actions: Tensor) -> Tensor:
         """

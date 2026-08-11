@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
 
@@ -12,7 +13,13 @@ from torch import Tensor
 
 from configs import A2CConfig, ActorConfig, CriticConfig
 from models import ActorNetwork, CriticNetwork, agent_parameter_counts
-from training.buffers import OnPolicyRollout, compute_gae_targets
+from training.buffers import (
+    GAETargets,
+    OnPolicyRollout,
+    VectorOnPolicyRollout,
+    compute_gae_targets,
+    compute_vector_gae_targets,
+)
 
 from .diagnostics import (
     explained_variance,
@@ -24,6 +31,7 @@ from .types import (
     AgentUpdateInput,
     AgentUpdateOutput,
     CollectedAction,
+    CollectedActionBatch,
     CollectionMode,
 )
 
@@ -46,7 +54,7 @@ class A2CAgent:
         * sampling_generator: Isolated generator used only for policy sampling.
     """
 
-    STATE_VERSION = 2
+    STATE_VERSION = 3
     collection_mode = CollectionMode.FIXED_ROLLOUT
 
     def __init__(
@@ -58,7 +66,7 @@ class A2CAgent:
         critic_learning_rate: float,
         actor_initialization_generator: torch.Generator,
         critic_initialization_generator: torch.Generator,
-        sampling_generator: torch.Generator,
+        sampling_generator: torch.Generator | Sequence[torch.Generator],
         *,
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
@@ -102,7 +110,8 @@ class A2CAgent:
             lr=self.critic_learning_rate,
             **optimizer_arguments,
         )
-        self.sampling_generator = sampling_generator
+        self.sampling_generators = self._sampling_generators(sampling_generator)
+        self.sampling_generator = self.sampling_generators[0]
 
     def collect_action(
         self, normalized_observation: NDArray[np.float32]
@@ -132,6 +141,29 @@ class A2CAgent:
             action = self.actor.deterministic_action(observation)[0]
         return action.cpu().numpy().astype(np.float32, copy=False)
 
+    def collect_actions(
+        self,
+        normalized_observations: NDArray[np.float32],
+        environment_indices: Sequence[int] | None = None,
+    ) -> CollectedActionBatch:
+        """
+        Sample one action and critic value per independent environment row.
+        """
+        observations = self._observation_tensor(normalized_observations)
+        indices = self._environment_indices(observations.shape[0], environment_indices)
+        sample = self.actor.sample_with_generators(
+            observations,
+            tuple(self.sampling_generators[index] for index in indices),
+        )
+        with torch.inference_mode():
+            current_values = self.critic(observations)
+        return CollectedActionBatch(
+            raw_actions=sample.raw_action.cpu().numpy(),
+            env_actions=sample.env_action.cpu().numpy(),
+            behaviour_log_probabilities=sample.log_probability.cpu().numpy(),
+            current_values=current_values.cpu().numpy(),
+        )
+
     def bootstrap_value(self, normalized_observation: NDArray[np.float32]) -> float:
         """
         Return a detached critic estimate for a non-terminal bootstrap state.
@@ -140,6 +172,17 @@ class A2CAgent:
         with torch.inference_mode():
             value = self.critic(observation)[0]
         return float(value.item())
+
+    def bootstrap_values(
+        self, normalized_observations: NDArray[np.float32]
+    ) -> NDArray[np.float32]:
+        """
+        Return detached critic estimates for batched non-terminal next states.
+        """
+        observations = self._observation_tensor(normalized_observations)
+        with torch.inference_mode():
+            values = self.critic(observations)
+        return values.cpu().numpy().astype(np.float32, copy=False)
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
         """
@@ -153,17 +196,13 @@ class A2CAgent:
         if len(rollout.transitions) > self.collection_size:
             raise ValueError("A2C rollout exceeds its configured collection size.")
 
-        tensors = rollout.tensors(device=self.device)
-        targets = compute_gae_targets(
-            rollout,
-            self.config.discount,
-            self.config.gae_lambda,
-            device=self.device,
+        observations, raw_actions, behaviour_log_probabilities, targets = (
+            self._rollout_training_tensors(rollout)
         )
         advantages = self._standardize_advantages(targets.raw_advantages)
-        actor_loss = self._actor_loss(rollout, advantages)
+        actor_loss = self._actor_loss_tensors(observations, raw_actions, advantages)
         critic_loss, predictions = self._critic_loss(
-            tensors.observations.to(dtype=self.dtype), targets.value_targets
+            observations, targets.value_targets
         )
         actor_weight_norm = parameter_norm(self.actor.parameters())
         critic_weight_norm = parameter_norm(self.critic.parameters())
@@ -210,7 +249,7 @@ class A2CAgent:
                 ),
                 "actor_learning_rate": self.actor_learning_rate,
                 "critic_learning_rate": self.critic_learning_rate,
-                "entropy_proxy": self._entropy_proxy(rollout),
+                "entropy_proxy": float(-behaviour_log_probabilities.mean().item()),
                 "explained_variance": explained_variance(
                     targets.value_targets, predictions
                 ),
@@ -258,7 +297,9 @@ class A2CAgent:
             "critic": self.critic.state_dict(),
             "actor_optimizer": self.actor_optimizer.state_dict(),
             "critic_optimizer": self.critic_optimizer.state_dict(),
-            "sampling_generator": self.sampling_generator.get_state(),
+            "sampling_generators": [
+                generator.get_state() for generator in self.sampling_generators
+            ],
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
@@ -281,7 +322,13 @@ class A2CAgent:
         self.critic.load_state_dict(state["critic"])
         self.actor_optimizer.load_state_dict(state["actor_optimizer"])
         self.critic_optimizer.load_state_dict(state["critic_optimizer"])
-        self.sampling_generator.set_state(state["sampling_generator"])
+        generator_states = state["sampling_generators"]
+        if len(generator_states) != len(self.sampling_generators):
+            raise ValueError("checkpoint sampling-worker count does not match.")
+        for generator, generator_state in zip(
+            self.sampling_generators, generator_states, strict=True
+        ):
+            generator.set_state(generator_state)
 
     @property
     def actor_parameter_count(self) -> int:
@@ -302,10 +349,19 @@ class A2CAgent:
 
     def _actor_loss(self, rollout: OnPolicyRollout, advantages: Tensor) -> Tensor:
         tensors = rollout.tensors(device=self.device)
-        log_probabilities = self.actor.log_probability(
+        return self._actor_loss_tensors(
             tensors.observations.to(dtype=self.dtype),
             tensors.raw_actions.to(dtype=self.dtype),
+            advantages,
         )
+
+    def _actor_loss_tensors(
+        self,
+        observations: Tensor,
+        raw_actions: Tensor,
+        advantages: Tensor,
+    ) -> Tensor:
+        log_probabilities = self.actor.log_probability(observations, raw_actions)
         return -(log_probabilities * advantages.detach()).mean()
 
     def _critic_loss(
@@ -336,3 +392,81 @@ class A2CAgent:
 
     def _observation_tensor(self, observation: NDArray[np.float32]) -> Tensor:
         return torch.as_tensor(observation, dtype=self.dtype, device=self.device)
+
+    def _rollout_training_tensors(
+        self,
+        rollout: OnPolicyRollout | VectorOnPolicyRollout,
+    ) -> tuple[Tensor, Tensor, Tensor, GAETargets]:
+        if isinstance(rollout, VectorOnPolicyRollout):
+            tensors = rollout.tensors(device=self.device)
+            vector_targets = compute_vector_gae_targets(
+                rollout,
+                self.config.discount,
+                self.config.gae_lambda,
+                device=self.device,
+            )
+            targets = GAETargets(
+                temporal_difference_errors=tensors.flatten_valid(
+                    vector_targets.temporal_difference_errors
+                ),
+                raw_advantages=tensors.flatten_valid(vector_targets.raw_advantages),
+                value_targets=tensors.flatten_valid(vector_targets.value_targets),
+            )
+            observations = tensors.flatten_valid(tensors.observations).to(
+                dtype=self.dtype
+            )
+            raw_actions = tensors.flatten_valid(tensors.raw_actions).to(
+                dtype=self.dtype
+            )
+            probabilities = tensors.behaviour_log_probabilities
+            if probabilities is None:
+                flattened_probabilities = self.actor.log_probability(
+                    observations, raw_actions
+                ).detach()
+            else:
+                flattened_probabilities = tensors.flatten_valid(probabilities)
+            return observations, raw_actions, flattened_probabilities, targets
+        tensors = rollout.tensors(device=self.device)
+        targets = compute_gae_targets(
+            rollout,
+            self.config.discount,
+            self.config.gae_lambda,
+            device=self.device,
+        )
+        observations = tensors.observations.to(dtype=self.dtype)
+        raw_actions = tensors.raw_actions.to(dtype=self.dtype)
+        probabilities = tensors.behaviour_log_probabilities
+        if probabilities is None:
+            probabilities = self.actor.log_probability(
+                observations, raw_actions
+            ).detach()
+        return observations, raw_actions, probabilities, targets
+
+    @staticmethod
+    def _sampling_generators(
+        generators: torch.Generator | Sequence[torch.Generator],
+    ) -> tuple[torch.Generator, ...]:
+        if isinstance(generators, torch.Generator):
+            return (generators,)
+        values = tuple(generators)
+        if not values:
+            raise ValueError("At least one policy-sampling generator is required.")
+        return values
+
+    def _environment_indices(
+        self,
+        row_count: int,
+        environment_indices: Sequence[int] | None,
+    ) -> tuple[int, ...]:
+        indices = (
+            tuple(range(row_count))
+            if environment_indices is None
+            else tuple(environment_indices)
+        )
+        if len(indices) != row_count:
+            raise ValueError("One environment index is required per action row.")
+        if any(
+            index < 0 or index >= len(self.sampling_generators) for index in indices
+        ):
+            raise ValueError("Policy-sampling environment index is out of range.")
+        return indices

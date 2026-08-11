@@ -13,7 +13,12 @@ from agents import (
     CollectedAction,
     CollectionMode,
 )
-from configs import EnvironmentConfig, ObservationNormalizationConfig, SimulationConfig
+from configs import (
+    EnvironmentConfig,
+    ExecutionConfig,
+    ObservationNormalizationConfig,
+    SimulationConfig,
+)
 from envs.racing import RacingEnv
 from envs.tracks import Track, TrackWithGeometry
 from recording import RunCategory
@@ -99,6 +104,7 @@ def _engine(
 ) -> tuple[OnPolicyTrainingEngine, _FixedAgent]:
     agent = _FixedAgent(mode, size)
     normalizer = RunningObservationNormalizer(4, ObservationNormalizationConfig())
+    worker_count = size if mode is CollectionMode.COMPLETE_EPISODES else 1
     engine = OnPolicyTrainingEngine(
         agent,
         _environment(),
@@ -106,7 +112,15 @@ def _engine(
         run_category=RunCategory.REDUCED_VALIDATION,
         evaluation_environment_factory=_environment,
         evaluation_interval=evaluation_interval,
-        environment_reset_generator=np.random.default_rng(123),
+        environment_reset_generators=tuple(
+            np.random.default_rng(123 + index) for index in range(worker_count)
+        ),
+        track_selection_generators=tuple(
+            np.random.default_rng(321 + index) for index in range(worker_count)
+        ),
+        execution_config=ExecutionConfig(
+            device="cpu", environment_workers=worker_count
+        ),
         evaluation_seed=456,
     )
     return engine, agent

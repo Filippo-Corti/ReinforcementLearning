@@ -76,7 +76,17 @@ def run_reinforce_training(
         raise ValueError("Actor learning rate must be positive.")
     environment_config = environment_config or EnvironmentConfig()
     reinforce_config = reinforce_config or ReinforceConfig()
-    execution_config = execution_config or ExecutionConfig()
+    execution_config = execution_config or replace(
+        ExecutionConfig(),
+        environment_workers=reinforce_config.completed_episodes_per_update,
+    )
+    if (
+        execution_config.environment_workers
+        != reinforce_config.completed_episodes_per_update
+    ):
+        raise ValueError(
+            "REINFORCE needs one environment worker per episode in its update batch."
+        )
     configure_torch_determinism(execution_config)
     resolved_actor_config = replace(actor_config, learning_rate=actor_learning_rate)
     base_training_config = TrainingConfig(actor=resolved_actor_config)
@@ -117,9 +127,13 @@ def run_reinforce_training(
                 SeedStream.ACTOR_INITIALIZATION,
                 device=execution_config.device,
             ),
-            sampling_generator=streams.get_torch_generator(
-                SeedStream.POLICY_ACTION_SAMPLING,
-                device=execution_config.device,
+            sampling_generator=tuple(
+                streams.get_torch_generator(
+                    SeedStream.POLICY_ACTION_SAMPLING,
+                    device=execution_config.device,
+                    substream_identity=index,
+                )
+                for index in range(execution_config.environment_workers)
             ),
             device=execution_config.device,
         ),
@@ -204,9 +218,13 @@ def run_a2c_training(
                 SeedStream.CRITIC_INITIALIZATION,
                 device=execution_config.device,
             ),
-            sampling_generator=streams.get_torch_generator(
-                SeedStream.POLICY_ACTION_SAMPLING,
-                device=execution_config.device,
+            sampling_generator=tuple(
+                streams.get_torch_generator(
+                    SeedStream.POLICY_ACTION_SAMPLING,
+                    device=execution_config.device,
+                    substream_identity=index,
+                )
+                for index in range(execution_config.environment_workers)
             ),
             device=execution_config.device,
         ),
@@ -291,9 +309,13 @@ def run_ppo_training(
                 SeedStream.CRITIC_INITIALIZATION,
                 device=execution_config.device,
             ),
-            sampling_generator=streams.get_torch_generator(
-                SeedStream.POLICY_ACTION_SAMPLING,
-                device=execution_config.device,
+            sampling_generator=tuple(
+                streams.get_torch_generator(
+                    SeedStream.POLICY_ACTION_SAMPLING,
+                    device=execution_config.device,
+                    substream_identity=index,
+                )
+                for index in range(execution_config.environment_workers)
             ),
             optimization_generator=streams.get_torch_generator(
                 SeedStream.OPTIMIZATION_BATCH_ORDER,
@@ -347,6 +369,17 @@ def _run_training(
             "seed_streams": {
                 stream.name: _first_seed(streams, stream) for stream in SeedStream
             },
+            "worker_seed_streams": {
+                str(index): {
+                    stream.name: _first_indexed_seed(streams, stream, index)
+                    for stream in (
+                        SeedStream.POLICY_ACTION_SAMPLING,
+                        SeedStream.ENVIRONMENT_RESETS,
+                        SeedStream.TRAINING_TRACK_SELECTION,
+                    )
+                }
+                for index in range(execution_config.environment_workers)
+            },
         },
         config={
             "training": training_config.to_dict(),
@@ -378,9 +411,21 @@ def _run_training(
             track, config=environment_config
         ),
         evaluation_interval=training_config.evaluation.evaluation_interval,
-        environment_reset_generator=streams.get_numpy_generator(
-            SeedStream.ENVIRONMENT_RESETS
+        environment_reset_generators=tuple(
+            streams.get_numpy_generator(
+                SeedStream.ENVIRONMENT_RESETS,
+                substream_identity=index,
+            )
+            for index in range(execution_config.environment_workers)
         ),
+        track_selection_generators=tuple(
+            streams.get_numpy_generator(
+                SeedStream.TRAINING_TRACK_SELECTION,
+                substream_identity=index,
+            )
+            for index in range(execution_config.environment_workers)
+        ),
+        execution_config=execution_config,
         evaluation_seed=_first_seed(streams, SeedStream.EVALUATION),
         root_identity=seed,
         circuit_identity=str(track.track.generation.seed),
@@ -435,7 +480,7 @@ def _run_training(
             }
         )
     finally:
-        environment.close()
+        engine.close()
     return engine
 
 
@@ -463,6 +508,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         choices=("cpu", "cuda"),
         default=ExecutionConfig().device,
     )
+    parser.add_argument("--num-envs", type=int)
     parser.add_argument(
         "--run-category",
         choices=tuple(category.value for category in RunCategory),
@@ -476,6 +522,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
     Train the selected agent and print its exact completed interaction count.
     """
     parsed = parse_arguments(arguments)
+    algorithm = Algorithm(parsed.algorithm)
+    worker_count = parsed.num_envs
+    if worker_count is None and algorithm is Algorithm.REINFORCE:
+        worker_count = ReinforceConfig().completed_episodes_per_update
+    execution_config = replace(ExecutionConfig(), device=parsed.device)
+    if worker_count is not None:
+        execution_config = replace(execution_config, environment_workers=worker_count)
     common_arguments = {
         "seed": parsed.seed,
         "track_path": parsed.track,
@@ -485,10 +538,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "training_interaction_budget": parsed.interaction_budget,
         "evaluation_interval": parsed.evaluation_interval,
         "near_saturated_steering_threshold": (parsed.near_saturated_steering_threshold),
-        "execution_config": replace(ExecutionConfig(), device=parsed.device),
+        "execution_config": execution_config,
         "run_category": RunCategory(parsed.run_category),
     }
-    algorithm = Algorithm(parsed.algorithm)
     if algorithm is Algorithm.REINFORCE:
         engine = run_reinforce_training(**common_arguments)
     else:
@@ -675,6 +727,22 @@ def _first_seed(streams: RunSeedStreams, stream: SeedStream) -> int:
     Return one reproducible integer identifier for a named seed stream.
     """
     return int(streams.get_numpy_generator(stream).integers(0, 2**32))
+
+
+def _first_indexed_seed(
+    streams: RunSeedStreams,
+    stream: SeedStream,
+    substream_identity: int,
+) -> int:
+    """
+    Return one reproducible identifier for a worker-specific seed substream.
+    """
+    return int(
+        streams.get_numpy_generator(
+            stream,
+            substream_identity=substream_identity,
+        ).integers(0, 2**32)
+    )
 
 
 if __name__ == "__main__":
