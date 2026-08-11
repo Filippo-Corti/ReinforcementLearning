@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
+from tqdm.auto import tqdm
 
 from agents import AgentUpdateInput, CollectionMode, PPOAgent
 from configs import EnvironmentConfig
@@ -63,9 +64,17 @@ class PPOTrainingEngine:
         self.track_selection_generator = track_selection_generator
         self.history = EducationalTrainingHistory()
 
-    def train(self, episode_count: int) -> EducationalTrainingHistory:
+    def train(
+        self,
+        episode_count: int,
+        *,
+        on_episode_end: (
+            Callable[[EducationalEpisodeRecord, EducationalTrainingHistory], None]
+            | None
+        ) = None,
+    ) -> EducationalTrainingHistory:
         """
-        Collect complete episodes while updating after each fixed-size rollout.
+        Collect episodes and optionally report each completed episode to a caller.
         """
         if episode_count <= 0:
             raise ValueError("Episode count must be positive.")
@@ -74,8 +83,10 @@ class PPOTrainingEngine:
         first_episode_index = len(self.history.episodes)
         final_episode_index = first_episode_index
 
-        for episode_index in range(
-            first_episode_index, first_episode_index + episode_count
+        for episode_index in tqdm(
+            range(first_episode_index, first_episode_index + episode_count),
+            desc="Training episodes",
+            unit="episode",
         ):
             final_episode_index = episode_index
             track_index = int(
@@ -167,17 +178,18 @@ class PPOTrainingEngine:
                         rollout_transitions = []
 
                     if terminated or truncated:
-                        self.history.episodes.append(
-                            EducationalEpisodeRecord(
-                                episode_index=episode_index,
-                                circuit_identity=circuit_identity,
-                                interactions=episode_interactions,
-                                undiscounted_return=episode_return,
-                                outcome=racing_outcome(terminated, truncated, info),
-                                final_progress=progress,
-                                maximum_progress=maximum_progress,
-                            )
+                        episode_record = EducationalEpisodeRecord(
+                            episode_index=episode_index,
+                            circuit_identity=circuit_identity,
+                            interactions=episode_interactions,
+                            undiscounted_return=episode_return,
+                            outcome=racing_outcome(terminated, truncated, info),
+                            final_progress=progress,
+                            maximum_progress=maximum_progress,
                         )
+                        self.history.episodes.append(episode_record)
+                        if on_episode_end is not None:
+                            on_episode_end(episode_record, self.history)
                         break
                     observation = next_observation
             finally:

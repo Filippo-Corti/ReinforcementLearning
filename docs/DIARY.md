@@ -1046,3 +1046,33 @@ without cell errors.
 `docs/DIARY.md`.
 
 **Commit**: Pending user commit.
+
+## 2026-08-11 — Educational A2C and PPO notebooks
+
+**Task**: Add readable notebook walkthroughs for A2C with GAE and PPO, using
+their algorithm-specific agents and engines rather than the shared experiment
+engine.
+
+**Result**: Added configurable A2C and PPO notebooks with explicit single- or
+multi-circuit training, documented learning settings, raw episode returns, a
+trailing 20-episode return mean, actor and critic weight norms at optimizer
+steps, and algorithm-specific diagnostics. Both notebooks run isolated
+deterministic evaluations before training and at a configurable episode
+cadence, then show evaluation return, outcome and progress. The educational
+A2C and PPO engines now expose an episode callback so evaluation does not force
+an early fixed-rollout update, and both show episode progress bars.
+
+**Validation**: The focused educational-engine test file passed all three tests,
+and Black and Ruff passed on the touched Python files. Both four-episode smoke
+notebooks executed and retained their outputs without cell errors. A2C collected
+2,255 training interactions and two optimizer updates; PPO collected 2,353
+training interactions and two optimizer updates. Each retained three greedy
+evaluation records and its complete six-panel plot. No notebook unit tests were
+added.
+
+**Files**: `src/training/engines/a2c.py`,
+`src/training/engines/ppo.py`, `tests/training/test_algorithm_engines.py`,
+`notebooks/a2c.ipynb`, `notebooks/ppo.ipynb`, `README.md`, `PLAN.md`, and
+`docs/DIARY.md`.
+
+**Commit**: `feature: add educational A2C and PPO notebooks [ai]`

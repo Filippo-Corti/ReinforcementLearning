@@ -89,6 +89,7 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
 
 
 def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
+    completed_episodes: list[tuple[int, int]] = []
     agent = A2CAgent(
         observation_dimensions=4,
         actor_config=_actor_config(),
@@ -108,14 +109,21 @@ def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
         np.random.default_rng(5),
     )
 
-    history = engine.train(3)
+    history = engine.train(
+        3,
+        on_episode_end=lambda record, current_history: completed_episodes.append(
+            (record.episode_index, len(current_history.episodes))
+        ),
+    )
 
     assert history.training_interactions == 3
     assert len(history.episodes) == 3
     assert [record.transition_count for record in history.updates] == [2, 1]
+    assert completed_episodes == [(0, 1), (1, 2), (2, 3)]
 
 
 def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
+    completed_episodes: list[tuple[int, int]] = []
     agent = PPOAgent(
         observation_dimensions=4,
         actor_config=_actor_config(),
@@ -140,8 +148,14 @@ def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
         np.random.default_rng(6),
     )
 
-    history = engine.train(3)
+    history = engine.train(
+        3,
+        on_episode_end=lambda record, current_history: completed_episodes.append(
+            (record.episode_index, len(current_history.episodes))
+        ),
+    )
 
     assert history.training_interactions == 3
     assert len(history.episodes) == 3
     assert [record.transition_count for record in history.updates] == [2, 1]
+    assert completed_episodes == [(0, 1), (1, 2), (2, 3)]

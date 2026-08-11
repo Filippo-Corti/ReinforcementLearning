@@ -550,6 +550,7 @@ policy, value model, rollout and GAE components.
 - `experiments/train.py`
 - `tests/agents/test_a2c.py`
 - `tests/experiments/test_train.py`
+- `notebooks/a2c.ipynb`
 - `docs/DIARY.md`
 
 **Validation gate:**
@@ -586,6 +587,7 @@ data or evaluation contracts.
 - `experiments/train.py`
 - `tests/agents/test_ppo.py`
 - `tests/experiments/test_train.py`
+- `notebooks/ppo.ipynb`
 - `docs/DIARY.md`
 
 **Validation gate:**

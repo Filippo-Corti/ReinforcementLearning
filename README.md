@@ -183,6 +183,14 @@ between one generated circuit and several circuits. Its live viewer updates an
 inline notebook figure at every action; set `VIEWER_MODE` to `"window"` for the
 Pygame display when a notebook frontend does not animate inline output.
 
+[`notebooks/a2c.ipynb`](notebooks/a2c.ipynb) and
+[`notebooks/ppo.ipynb`](notebooks/ppo.ipynb) present the corresponding readable
+actor-critic engines. Both show raw and 20-episode moving-average returns,
+actor/critic weight norms at optimizer steps, and deterministic evaluations at
+an episode cadence configured at the start of the notebook. The A2C notebook
+focuses on GAE and critic diagnostics; the PPO notebook additionally exposes
+clipping and approximate-KL diagnostics.
+
 ## Train REINFORCE
 
 The shared training entry point currently exposes the actor-only REINFORCE
