@@ -21,6 +21,8 @@ class EducationalEpisodeRecord:
         * outcome: Explicit racing lifecycle outcome.
         * final_progress: Fraction of a lap reached at the episode boundary.
         * maximum_progress: Largest lap fraction reached during the episode.
+        * mean_speed: Mean pre-action vehicle speed across the episode.
+        * mean_throttle_magnitude: Mean absolute throttle/brake action.
     """
 
     episode_index: int
@@ -30,6 +32,8 @@ class EducationalEpisodeRecord:
     outcome: EpisodeOutcome
     final_progress: float
     maximum_progress: float
+    mean_speed: float | None = None
+    mean_throttle_magnitude: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

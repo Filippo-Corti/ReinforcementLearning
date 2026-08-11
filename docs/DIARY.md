@@ -1024,3 +1024,25 @@ and the complete notebook re-executed with its default configuration.
 `README.md`, and `docs/DIARY.md`.
 
 **Commit**: `fix: add live notebook policy viewer [ai]`
+
+## 2026-08-11 — Episode speed and throttle-magnitude records
+
+**Task**: Show how the REINFORCE policy's mean vehicle speed and mean absolute
+throttle/brake action change across training episodes.
+
+**Result**: The readable REINFORCE engine now accumulates pre-action speed and
+absolute longitudinal-action samples during each episode and stores their means
+in `EducationalEpisodeRecord`. The notebook's records section exposes both
+values and plots them alongside return, progress, episode length, and actor
+loss.
+
+**Validation**: The complete notebook executed with its current 640-episode CPU
+configuration. It collected 1,003,399 training interactions, performed 80
+optimizer updates, retained the new fields and six-panel plot, and finished
+without cell errors.
+
+**Files**: `src/training/engines/records.py`,
+`src/training/engines/reinforce.py`, `notebooks/reinforce.ipynb`, and
+`docs/DIARY.md`.
+
+**Commit**: Pending user commit.

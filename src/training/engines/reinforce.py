@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
+from tqdm.auto import tqdm
 
 from agents import AgentUpdateInput, CollectionMode, ReinforceAgent
 from configs import EnvironmentConfig
@@ -71,8 +72,10 @@ class ReinforceTrainingEngine:
             raise ValueError("Episode count must be positive.")
 
         first_episode_index = len(self.history.episodes)
-        for episode_index in range(
-            first_episode_index, first_episode_index + episode_count
+        for episode_index in tqdm(
+            range(first_episode_index, first_episode_index + episode_count),
+            desc="Training episodes",
+            unit="episode",
         ):
             # Circuit selection is independent from policy sampling and reset noise.
             track_index = int(
@@ -88,6 +91,8 @@ class ReinforceTrainingEngine:
             episode_transitions: list[TrainingTransition] = []
             episode_return = 0.0
             maximum_progress = 0.0
+            speed_total = 0.0
+            throttle_magnitude_total = 0.0
             observation, _ = environment.reset(seed=reset_seed)
 
             try:
@@ -97,6 +102,8 @@ class ReinforceTrainingEngine:
                         observation
                     )
                     decision = self.agent.collect_action(normalized_observation)
+                    speed_total += float(observation[2])
+                    throttle_magnitude_total += abs(float(decision.env_action[0]))
                     (
                         next_observation,
                         reward,
@@ -146,6 +153,10 @@ class ReinforceTrainingEngine:
                                 outcome=racing_outcome(terminated, truncated, info),
                                 final_progress=progress,
                                 maximum_progress=maximum_progress,
+                                mean_speed=speed_total / len(episode_transitions),
+                                mean_throttle_magnitude=(
+                                    throttle_magnitude_total / len(episode_transitions)
+                                ),
                             )
                         )
                         break

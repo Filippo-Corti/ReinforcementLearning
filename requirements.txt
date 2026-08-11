@@ -11,3 +11,4 @@ scipy==1.18.0
 scipy-stubs==1.18.0.1
 setuptools==80.10.2
 torch>=2.11,<2.12
+tqdm>=4.67,<4.68
