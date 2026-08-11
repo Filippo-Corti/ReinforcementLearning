@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from math import radians, tan
 
 import numpy as np
@@ -28,7 +29,19 @@ def validate_track_geometry(
     Validate track length, curvature, seams, intersections, and separation.
     """
     vehicle = vehicle_config or CarConfig()
-    generation = track_config or TrackGenerationConfig()
+    generation = track_config
+    if generation is None:
+        # Saved files retain their generation radius but not the acceptance
+        # interval. Scale the default interval with that recorded radius so
+        # both the current short task and earlier long circuits remain loadable.
+        default = TrackGenerationConfig()
+        scale = track.generation.base_radius / default.base_radius
+        generation = replace(
+            default,
+            base_radius=track.generation.base_radius,
+            min_length=default.min_length * scale,
+            max_length=default.max_length * scale,
+        )
 
     if not generation.min_length <= track.track_length <= generation.max_length:
         raise TrackValidationError(

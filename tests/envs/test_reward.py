@@ -74,9 +74,9 @@ def _transition(*states: VehicleState) -> KinematicTransition:
     )
 
 
-def test_stationary_timeout_matches_documented_total(circle_geometry) -> None:
+def test_target_lap_step_cost_matches_documented_total(circle_geometry) -> None:
     """
-    Remaining stationary through 5,000 agent steps returns minus ten.
+    Eighteen seconds of non-terminal stationary steps costs minus 0.9.
     """
     lifecycle = EpisodeLifecycle(circle_geometry)
     state = _state(circle_geometry.position(0.0))
@@ -84,10 +84,43 @@ def test_stationary_timeout_matches_documented_total(circle_geometry) -> None:
 
     total = sum(
         lifecycle.process_transition(_transition(state, state, state, state)).reward
-        for _ in range(5_000)
+        for _ in range(450)
     )
 
-    assert total == pytest.approx(-10.0)
+    assert total == pytest.approx(-0.9)
+
+
+def test_stationary_timeout_matches_documented_total(circle_geometry) -> None:
+    """
+    Remaining stationary through 1,000 agent steps returns minus two.
+    """
+    lifecycle = EpisodeLifecycle(circle_geometry)
+    state = _state(circle_geometry.position(0.0))
+    lifecycle.reset(state)
+
+    total = sum(
+        lifecycle.process_transition(_transition(state, state, state, state)).reward
+        for _ in range(1_000)
+    )
+
+    assert total == pytest.approx(-2.0)
+
+
+def test_normalized_progress_still_sums_to_one_lap(circle_geometry) -> None:
+    """
+    Dividing signed distance by track length keeps one lap normalized to one.
+    """
+    lifecycle = EpisodeLifecycle(circle_geometry)
+    lifecycle.reset(_state(circle_geometry.position(0.0)))
+    progress = 0.0
+
+    for distance in range(10, 640, 10):
+        state = _state(circle_geometry.position(float(distance)))
+        progress += lifecycle.process_transition(_transition(state)).progress_delta
+    finish = _state(circle_geometry.position(0.0))
+    progress += lifecycle.process_transition(_transition(finish)).progress_delta
+
+    assert progress / circle_geometry.track.track_length == pytest.approx(1.0)
 
 
 def test_immediate_crash_matches_documented_penalty(circle_geometry) -> None:

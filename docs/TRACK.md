@@ -71,7 +71,7 @@ The proposed version 0 generation defaults are explicit configuration values:
 | Parameter | Default | Meaning |
 |---|---:|---|
 | `n_checkpoints` | 12 | Checkpoints distributed around the loop |
-| `base_radius` | $250m$ | Radius before radial jitter |
+| `base_radius` | $50m$ | Radius before radial jitter |
 | `radial_jitter` | $\pm25\%$ | Independent checkpoint-radius variation |
 | `angular_jitter` | $\pm\frac{1}{4}$ sector | Variation from equally spaced checkpoint angles |
 | $\Delta s_{\text{gen}}$ | $0.5m$ | Spacing of the final lookup table |
@@ -98,8 +98,8 @@ $$ \frac{1}{|\kappa(s)|} \ge R_{\min} = \frac{L}{\tan(\delta_{max})} \quad \fora
    sides.
 5. The left and right boundaries are themselves simple closed curves and never
    intersect each other.
-6. The total length is between $1000m$ and $3000m$, matching the initial
-   single-circuit experiment scale.
+6. The total length is between $200m$ and $600m$. This configurable training
+   scale is approximately one fifth of the original $1000m$--$3000m$ range.
 
 The turning-radius check guarantees only kinematic steerability. It does not
 guarantee that a future grip-limited car can take every corner at every speed.
@@ -132,14 +132,14 @@ Version 0 files contain:
   "generation": {
     "seed": 0,
     "n_checkpoints": 12,
-    "base_radius": 250.0,
+    "base_radius": 50.0,
     "radial_jitter": 0.25,
     "angular_jitter": 0.25,
     "max_attempts": 100
   },
   "width": 12.0,
   "sample_spacing": 0.5,
-  "track_length": 1500.0,
+  "track_length": 300.0,
   "start_index": 0,
   "samples": [
     {"s": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0, "curvature": 0.0}

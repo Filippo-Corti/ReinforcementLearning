@@ -21,7 +21,7 @@ def test_defaults_match_the_environment_specification() -> None:
         agent_timestep=0.04,
         physics_timestep=0.01,
         physics_substeps=4,
-        max_episode_steps=5_000,
+        max_episode_steps=1_000,
     )
     assert config.vehicle == CarConfig(
         wheelbase=3.6,
@@ -31,14 +31,14 @@ def test_defaults_match_the_environment_specification() -> None:
     )
     assert config.track == TrackGenerationConfig(
         n_checkpoints=12,
-        base_radius=250.0,
+        base_radius=50.0,
         radial_jitter=0.25,
         angular_jitter=0.25,
         sample_spacing=0.5,
         width=12.0,
         max_attempts=100,
-        min_length=1_000.0,
-        max_length=3_000.0,
+        min_length=200.0,
+        max_length=600.0,
         nonlocal_centerline_margin=2.0,
     )
     assert config.reward == RewardConfig(

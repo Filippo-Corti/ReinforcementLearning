@@ -29,7 +29,7 @@ def test_generated_track_is_valid_and_uniformly_sampled() -> None:
     track = generate_track(0)
 
     assert validate_track_geometry(track).track is track
-    assert 1_000.0 <= track.track_length <= 3_000.0
+    assert 200.0 <= track.track_length <= 600.0
     assert track.sample_spacing == pytest.approx(0.5)
     np.testing.assert_allclose(
         track.s,

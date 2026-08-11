@@ -51,7 +51,7 @@ class SimulationConfig:
     agent_timestep: float = 0.04
     physics_timestep: float = 0.01
     physics_substeps: int = 4
-    max_episode_steps: int = 5_000
+    max_episode_steps: int = 1_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,14 +93,14 @@ class TrackGenerationConfig:
     """
 
     n_checkpoints: int = 12
-    base_radius: float = 250.0
+    base_radius: float = 50.0
     radial_jitter: float = 0.25
     angular_jitter: float = 0.25
     sample_spacing: float = 0.5
     width: float = 12.0
     max_attempts: int = 100
-    min_length: float = 1_000.0
-    max_length: float = 3_000.0
+    min_length: float = 200.0
+    max_length: float = 600.0
     nonlocal_centerline_margin: float = 2.0
 
 
@@ -118,7 +118,7 @@ class RewardConfig:
 
     finish_reward: float = 10.0
     crash_penalty: float = 20.0
-    time_penalty_rate: float = 0.0075 # Changed from 0.05 - verify if it helps
+    time_penalty_rate: float = 0.05
     progress_coefficient: float = 1.0
 
 

@@ -157,20 +157,23 @@ Where:
 * $c_{\text{prog}}=1$
 * $\Delta \tilde{s}_t$ is the progress term, computed as a normalized difference between the current and next locations (see [`TRACK.md`](TRACK.md)).
 
-The maximum episode length is $T_{\max}=5000$ agent steps, corresponding to
-$200s$. This gives a $90s$ target lap, which takes $90/0.04=2250$ agent steps, a
-little more than a factor of two of time margin during early learning.
+The maximum episode length is $T_{\max}=1000$ agent steps, corresponding to
+$40s$. The training circuit is approximately one fifth of the original circuit
+length, so its target lap is $18s$, or $18/0.04=450$ agent steps. The cap keeps
+the same little-more-than-two-times safety margin used by the original
+$5000$-step cap over a $2250$-step target lap. Both the circuit scale and cap are
+configuration values and can be increased together for a longer task.
 
 The signs and approximate undiscounted totals are:
 
-* The step penalty over a $90s$ lap is
-  $-c_{\text{step}}\times 90/\Delta_{t_{agent}}=-4.5$.
+* The step penalty over an $18s$ lap is
+  $-c_{\text{step}}\times 18/\Delta_{t_{agent}}=-0.9$.
 * The normalized progress accumulated over one forward lap is approximately $+1$.
-* Including the finish reward, a $90s$ lap therefore returns approximately
-  $10+1-4.5=6.5$. The exact value differs by at most one shaped transition
+* Including the finish reward, an $18s$ lap therefore returns approximately
+  $10+1-0.9=10.1$. The exact value differs by at most one shaped transition
   because the terminal branch replaces the normal step reward.
 * Remaining stationary until truncation returns
-  $-c_{\text{step}}\times T_{\max}=-10$.
+  $-c_{\text{step}}\times T_{\max}=-2$.
 * An immediate crash returns $-R_{\text{crash}}=-20$.
 
 These reference values must be covered by reward tests when the environment is
@@ -182,10 +185,10 @@ The learning contract fixes $\gamma=0.9995$ for all three algorithms. This value
 is chosen from the task timescale:
 
 * Its effective geometric horizon is $1/(1-\gamma)=2000$ agent steps, or $80s$.
-* A reward received after a $90s$ lap is weighted by
-  $\gamma^{2250}\approx0.325$, rather than being effectively discarded.
-* At the $5000$-step time limit, the discount weight is still approximately
-  $0.082$.
+* A reward received after an $18s$ lap is weighted by
+  $\gamma^{450}\approx0.798$, rather than being effectively discarded.
+* At the $1000$-step time limit, the discount weight is still approximately
+  $0.606$.
 
 Since the underlying objective is a finite-horizon shortest-time problem,
 $\gamma=1$ would be a meaningful subject for a separate comparison. It is not a

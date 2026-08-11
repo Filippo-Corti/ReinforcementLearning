@@ -1105,3 +1105,33 @@ Pyright and `git diff --check` passed; no notebook unit tests were added.
 `docs/DIARY.md`.
 
 **Commit**: `feature: align educational policy notebooks [ai]`
+
+## 2026-08-11 — Shorter configurable training task
+
+**Task**: Reduce episode wall time without changing the per-step reward formula,
+agent timestep, discount, or learning equations.
+
+**Result**: Reduced the configurable procedural-track scale from a `250m` to a
+`50m` base radius and scaled its accepted length interval from `1000m`--`3000m`
+to `200m`--`600m`. Generated development tracks are consequently about one fifth
+as long. Reduced the configurable episode cap from 5000 to 1000 agent steps,
+retaining the original little-more-than-two-times margin over the proportionally
+shortened 450-step target lap. Restored the approved time-penalty rate to `0.05`.
+The reward implementation remains unchanged and still divides signed progress
+by the selected circuit's own length, so a full lap contributes approximately
+one normalized progress unit at either scale.
+
+**Validation**: Configuration and generation checks cover the new length and
+time-limit values. Reward reference tests cover the `-0.9` target-lap step cost,
+the `-2.0` stationary truncation total, the unchanged `-20` crash penalty, and
+one normalized progress unit over a complete lap.
+
+Saved-track validation derives its missing acceptance interval from the recorded
+generation radius, so previously saved long circuits remain loadable without
+weakening explicit generation-time validation.
+
+**Files**: `src/configs/environment.py`, `src/envs/tracks/validation.py`,
+`tests/configs/test_environment_config.py`, `tests/envs/test_track_generation.py`,
+`tests/envs/test_reward.py`, `docs/MDP.md`, `docs/TRACK.md`, and `docs/DIARY.md`.
+
+**Commit**: `config: shorten the training task [ai]`
