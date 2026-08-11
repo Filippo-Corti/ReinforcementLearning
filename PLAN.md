@@ -514,6 +514,7 @@ before introducing a critic.
 - `tests/agents/test_reinforce.py`
 - `tests/fixtures/envs/continuous_control.py`
 - `tests/experiments/test_train.py`
+- `notebooks/reinforce.ipynb`
 - `docs/DIARY.md`
 
 **Validation gate:**

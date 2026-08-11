@@ -976,3 +976,30 @@ suite, Black, Ruff, Pyright, `pip check` and `git diff --check` passed.
 `docs/DIARY.md`.
 
 **Commit**: `feature: add educational training engines [ai]`
+
+## 2026-08-11 — Guided REINFORCE racing notebook
+
+**Task**: Present REINFORCE training as educational material using the
+project-owned agent and its readable algorithm-specific engine, with visible
+configuration, records, and rendered behavior.
+
+**Result**: Added `notebooks/reinforce.ipynb`. It derives its explanation of
+the bounded policy, complete-trajectory return-to-go, batch standardization and
+trajectory-average loss from `docs/LEARNING.md`. One configuration cell exposes
+the root seed, device, episode count, actor learning rate, REINFORCE settings,
+render settings, and a switch between one explicit circuit seed and several.
+The notebook constructs `ReinforceAgent` and `ReinforceTrainingEngine` directly,
+renders deterministic rollouts before and after training, prints the collected
+episode and update records, and plots return, progress, episode length and actor
+loss. Jupyter was added as an explicit project dependency.
+
+**Validation**: The notebook is valid version-4 JSON with stable cell IDs, every
+code cell compiles, and reduced in-memory executions passed in both single- and
+multi-circuit modes, including rendering and an optimizer update. The full test
+suite, Black, Ruff, Pyright, `pip check` and `git diff --check` passed.
+
+**Files**: `notebooks/reinforce.ipynb`,
+`tests/notebooks/test_reinforce_notebook.py`, `requirements.txt`, `README.md`,
+`PLAN.md`, and `docs/DIARY.md`.
+
+**Commit**: `docs: add guided REINFORCE training notebook [ai]`
