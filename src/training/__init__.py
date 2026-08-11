@@ -16,7 +16,7 @@ from .checkpoints import (
     load_checkpoint,
     save_checkpoint,
 )
-from .engine import (
+from .engines.shared_engine import (
     OnPolicyTrainingEngine,
     TrainingCounters,
     TrainingRunState,

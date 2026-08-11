@@ -166,6 +166,16 @@ by training root, procedural track schedule and held-out circuits. Evaluation is
 deterministic and does not update normalization or consume training randomness.
 See [`docs/EXPERIMENT.md`](docs/EXPERIMENT.md) for the complete protocol.
 
+## Training engines
+
+The `training.engines` package offers two deliberately different views of
+training. `shared_engine.py` retains checkpointing, deterministic evaluation,
+timing and experiment accounting for reproducible runs. The `reinforce.py`,
+`a2c.py` and `ppo.py` modules contain direct algorithm-specific loops whose
+collection and update boundaries can be read from top to bottom. These simpler
+engines return episode and update records for notebooks and teaching; they do
+not replace the shared engine used by `experiments/train.py`.
+
 ## Train REINFORCE
 
 The shared training entry point currently exposes the actor-only REINFORCE

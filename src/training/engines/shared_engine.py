@@ -30,15 +30,15 @@ from recording.records import (
     TimingRecord,
 )
 
-from .buffers import (
+from ..buffers import (
     FixedRolloutBuffer,
     OnPolicyRollout,
     ReinforceEpisodeBuffer,
     TrainingTransition,
 )
-from .checkpoints import load_checkpoint, save_checkpoint
-from .evaluation import circuit_geometry_summary, evaluate_deterministic
-from .normalization import RunningObservationNormalizer
+from ..checkpoints import load_checkpoint, save_checkpoint
+from ..evaluation import circuit_geometry_summary, evaluate_deterministic
+from ..normalization import RunningObservationNormalizer
 
 
 @dataclass(slots=True)

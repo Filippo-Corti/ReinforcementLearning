@@ -950,3 +950,29 @@ Black, Ruff, Pyright and `git diff --check` passed.
 and configuration tests, `docs/LEARNING.md`, and `docs/DIARY.md`.
 
 **Commit**: `refactor: store actor learning rate in its config [ai]`
+
+## 2026-08-11 — Readable algorithm-specific training engines
+
+**Task**: Retain the reproducible shared training lifecycle while adding direct
+algorithm-specific engines that make collection and update timing easier to
+follow for educational use.
+
+**Result**: Moved the unchanged shared engine to
+`training/engines/shared_engine.py` and retained its public export for the
+experiment runner. Added standalone REINFORCE, A2C and PPO engines whose main
+methods show the complete agent-environment loops. REINFORCE keeps trajectories
+separate and updates only after a full episode batch. A2C and PPO collect fixed
+rollouts across episode boundaries and use a final shorter rollout. All three
+support independently seeded circuit selection and reset streams, update the
+observation normalizer only for current training inputs, and return concise
+episode and optimizer-update records.
+
+**Validation**: Added focused tests for complete-episode batching, full and
+partial fixed rollouts, and deterministic multi-circuit selection. The full test
+suite, Black, Ruff, Pyright, `pip check` and `git diff --check` passed.
+
+**Files**: `src/training/engines/`, `src/training/__init__.py`,
+`tests/training/test_algorithm_engines.py`, `PLAN.md`, `README.md`, and
+`docs/DIARY.md`.
+
+**Commit**: `feature: add educational training engines [ai]`

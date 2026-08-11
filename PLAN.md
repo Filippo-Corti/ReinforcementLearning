@@ -456,16 +456,25 @@ checkpointing and accounting boundary.
   separately.
 - Record environment steps as the primary budget while also retaining episodes
   and updates.
+- Preserve this complete experiment engine under `training/engines`, alongside
+  direct algorithm-specific loops intended for reading and notebooks. The
+  educational REINFORCE loop batches complete trajectories; the A2C and PPO
+  loops collect fixed rollouts and make their different update boundaries
+  visible without delegating to the shared engine.
 
 **Expected files:**
 
 - `src/agents/types.py`
 - `src/agents/__init__.py`
-- `src/training/engine.py`
+- `src/training/engines/shared_engine.py`
+- `src/training/engines/reinforce.py`
+- `src/training/engines/a2c.py`
+- `src/training/engines/ppo.py`
 - `src/training/evaluation.py`
 - `src/training/checkpoints.py`
 - `src/training/__init__.py`
 - `tests/training/test_engine.py`
+- `tests/training/test_algorithm_engines.py`
 - `tests/training/test_evaluation.py`
 - `tests/training/test_checkpoints.py`
 - `docs/DIARY.md`
@@ -885,7 +894,7 @@ validation and test circuits from leakage.
 
 - `src/envs/racing/factory.py`
 - `src/configs/experiments.py`
-- `src/training/engine.py`
+- `src/training/engines/shared_engine.py`
 - `src/training/evaluation.py`
 - `tests/envs/test_environment_factory.py`
 - `tests/utils/test_multitrack_training.py`

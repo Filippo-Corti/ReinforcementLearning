@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+
+import numpy as np
+import torch
+
+from agents import A2CAgent, PPOAgent, ReinforceAgent
+from configs import (
+    A2CConfig,
+    ActorConfig,
+    CriticConfig,
+    EnvironmentConfig,
+    ObservationNormalizationConfig,
+    PPOConfig,
+    ReinforceConfig,
+    SimulationConfig,
+)
+from envs.tracks import TrackWithGeometry
+from training.engines.a2c import A2CTrainingEngine
+from training.engines.ppo import PPOTrainingEngine
+from training.engines.reinforce import ReinforceTrainingEngine
+from training.normalization import RunningObservationNormalizer
+
+
+def _tracks() -> tuple[TrackWithGeometry, TrackWithGeometry]:
+    source = Path(__file__).parents[1] / "fixtures" / "tracks" / "valid_circle.json"
+    first = TrackWithGeometry.load(source)
+    second_track = replace(
+        first.track,
+        generation=replace(first.track.generation, seed=1),
+    )
+    return first, TrackWithGeometry(second_track)
+
+
+def _environment_config() -> EnvironmentConfig:
+    return EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=1))
+
+
+def _normalizer() -> RunningObservationNormalizer:
+    return RunningObservationNormalizer(4, ObservationNormalizationConfig())
+
+
+def _actor_config() -> ActorConfig:
+    return ActorConfig(
+        name="small",
+        hidden_sizes=(4, 4),
+        learning_rate=0.01,
+    )
+
+
+def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
+    tracks = _tracks()
+    selection_seed = 19
+    agent = ReinforceAgent(
+        observation_dimensions=4,
+        actor_config=_actor_config(),
+        config=ReinforceConfig(completed_episodes_per_update=2),
+        initialization_generator=torch.Generator().manual_seed(1),
+        sampling_generator=torch.Generator().manual_seed(2),
+    )
+    engine = ReinforceTrainingEngine(
+        agent,
+        tracks,
+        _environment_config(),
+        _normalizer(),
+        np.random.default_rng(3),
+        np.random.default_rng(selection_seed),
+    )
+
+    history = engine.train(5)
+
+    expected_generator = np.random.default_rng(selection_seed)
+    expected_circuits = tuple(
+        str(
+            tracks[
+                int(expected_generator.integers(0, len(tracks)))
+            ].track.generation.seed
+        )
+        for _ in range(5)
+    )
+    assert tuple(record.circuit_identity for record in history.episodes) == (
+        expected_circuits
+    )
+    assert history.training_interactions == 5
+    assert len(history.updates) == 2
+    assert [record.transition_count for record in history.updates] == [2, 2]
+
+
+def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
+    agent = A2CAgent(
+        observation_dimensions=4,
+        actor_config=_actor_config(),
+        critic_config=CriticConfig(hidden_sizes=(4, 4)),
+        config=A2CConfig(transitions_per_rollout=2),
+        critic_learning_rate=0.01,
+        actor_initialization_generator=torch.Generator().manual_seed(1),
+        critic_initialization_generator=torch.Generator().manual_seed(2),
+        sampling_generator=torch.Generator().manual_seed(3),
+    )
+    engine = A2CTrainingEngine(
+        agent,
+        _tracks(),
+        _environment_config(),
+        _normalizer(),
+        np.random.default_rng(4),
+        np.random.default_rng(5),
+    )
+
+    history = engine.train(3)
+
+    assert history.training_interactions == 3
+    assert len(history.episodes) == 3
+    assert [record.transition_count for record in history.updates] == [2, 1]
+
+
+def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
+    agent = PPOAgent(
+        observation_dimensions=4,
+        actor_config=_actor_config(),
+        critic_config=CriticConfig(hidden_sizes=(4, 4)),
+        config=PPOConfig(
+            transitions_per_rollout=2,
+            optimization_epochs=1,
+            minibatch_size=2,
+        ),
+        critic_learning_rate=0.01,
+        actor_initialization_generator=torch.Generator().manual_seed(1),
+        critic_initialization_generator=torch.Generator().manual_seed(2),
+        sampling_generator=torch.Generator().manual_seed(3),
+        optimization_generator=torch.Generator().manual_seed(4),
+    )
+    engine = PPOTrainingEngine(
+        agent,
+        _tracks(),
+        _environment_config(),
+        _normalizer(),
+        np.random.default_rng(5),
+        np.random.default_rng(6),
+    )
+
+    history = engine.train(3)
+
+    assert history.training_interactions == 3
+    assert len(history.episodes) == 3
+    assert [record.transition_count for record in history.updates] == [2, 1]
