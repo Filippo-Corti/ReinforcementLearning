@@ -60,6 +60,8 @@ class A2CConfig(SerializableConfig):
     learning_rate_candidates: tuple[tuple[float, float], ...] = (
         (1e-4, 3e-4),
         (3e-4, 1e-3),
+        (3e-4, 3e-3),
+        (3e-4, 1e-2),
     )
     beta_1: float = 0.9
     beta_2: float = 0.999
@@ -113,6 +115,8 @@ class PPOConfig(SerializableConfig):
     learning_rate_candidates: tuple[tuple[float, float], ...] = (
         (1e-4, 3e-4),
         (3e-4, 1e-3),
+        (3e-4, 3e-3),
+        (3e-4, 1e-2),
     )
     beta_1: float = 0.9
     beta_2: float = 0.999

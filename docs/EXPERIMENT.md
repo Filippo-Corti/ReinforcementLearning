@@ -36,13 +36,26 @@ therefore compare only the following finite candidates with the medium
 - REINFORCE actor rate:
   $\{10^{-4},3\cdot10^{-4},10^{-3}\}$;
 - A2C actor/critic rates:
-  $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3})\}$;
-- PPO actor/critic rates:
-  $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3})\}$.
+  $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3}),
+  (3\cdot10^{-4},3\cdot10^{-3}),(3\cdot10^{-4},10^{-2})\}$;
+- PPO actor/critic rates: the same four pairs as A2C.
 
 These candidates are engineering scales around Adam's $10^{-3}$ suggested
 default, reduced where the noisy policy-gradient objective benefits from
 smaller steps. They do not come from the policy-gradient theorem.
+
+The two highest critic rates were added on 2026-08-12, and the grid is shared by
+A2C and PPO so that neither algorithm is offered an option the other is denied;
+each still selects its own pair. The reason is that the original grid could not
+express the range the two algorithms need. A2C applies **one** critic step per
+2048-transition rollout, which is 977 Adam steps across a 2,000,000-interaction
+run, while PPO applies several hundred minibatch steps per rollout. Adam's
+per-parameter displacement is bounded by its learning rate, so an A2C critic at
+$10^{-3}$ cannot traverse the distance to a value target of order $200$ within
+its update count: refitting the same critic architecture on a constant target of
+$200$ reaches $79.7$ after 977 steps and $200.0$ after 5,000. The original grid
+also varied the actor and critic rates together, which cannot separate their
+effects; the added pairs hold the actor rate fixed and move only the critic.
 
 Each candidate receives 250,000 interactions on each of three dedicated roots.
 This allowance is long enough to reveal immediate divergence and early progress
@@ -50,14 +63,81 @@ without pretending to establish final performance. Every candidate consumes the
 same allowance and none stops early. Select lexicographically by:
 
 1. number of final deterministic policies that complete the lap;
-2. mean final maximum normalized progress;
+2. mean final maximum normalized progress, each run clamped to $1$;
 3. mean final deterministic return; and
 4. smaller actor rate, then smaller critic rate.
+
+Criterion 2 clamps at $1$ because a completed lap overshoots that value by
+wherever its final step happened to land. Without the clamp, two candidates that
+both complete every lap would be separated by that overshoot, which measures the
+last step rather than the driving. The clamp keeps criterion 2 discriminating
+among policies that did not finish, which is what it is for, and leaves the
+return to separate those that did.
 
 This is a pragmatic rule of thumb for avoiding a clearly unusable optimizer
 scale. It does not support claims that one candidate is scientifically superior.
 The chosen rate for an algorithm is then used for all three actor sizes. If this
 rule changes, the change must be documented before any reported experiment run.
+
+#### Recorded outcome
+
+Executed 2026-08-12 over the full grid: 33 runs, 50 minutes total. Because
+`tracks/experiment_1.json` does not exist yet — its selection rule currently
+admits no candidate, see the fixed-circuit section — these runs used the
+development circuit generated from seed `0`, the same one the algorithm
+notebooks use. Neural execution was CPU, which this section's rule permits
+because it makes no timing claim; on this workload CPU is also between two and
+three times faster than the reported-run CUDA path, because a `(64, 64)` network
+stepped in eight-row batches never amortizes the transfer.
+
+| Algorithm | Actor | Critic | Laps | Mean progress | Mean return | Per-root return SD |
+|---|---:|---:|---:|---:|---:|---:|
+| REINFORCE | $10^{-4}$ | — | 0/3 | 0.236 | 9.74 | — |
+| REINFORCE | $3\cdot10^{-4}$ | — | 0/3 | 0.368 | 21.97 | — |
+| **REINFORCE** | $\mathbf{10^{-3}}$ | — | **3/3** | **1.000** | **242.07** | — |
+| A2C | $10^{-4}$ | $3\cdot10^{-4}$ | 0/3 | 0.350 | 18.97 | 3.56 |
+| A2C | $3\cdot10^{-4}$ | $10^{-3}$ | 0/3 | 0.267 | 13.12 | 10.52 |
+| **A2C** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{3\cdot10^{-3}}$ | 0/3 | **0.365** | 21.93 | **0.60** |
+| A2C | $3\cdot10^{-4}$ | $10^{-2}$ | 0/3 | 0.302 | 16.18 | 10.33 |
+| PPO | $10^{-4}$ | $3\cdot10^{-4}$ | 3/3 | 1.000 | 250.67 | 3.39 |
+| PPO | $3\cdot10^{-4}$ | $10^{-3}$ | 3/3 | 1.000 | 245.19 | 6.53 |
+| PPO | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 3/3 | 1.000 | 251.59 | 1.81 |
+| **PPO** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 3/3 | 1.000 | **251.61** | 1.97 |
+
+Selected rates: REINFORCE $10^{-3}$; A2C $(3\cdot10^{-4},3\cdot10^{-3})$; PPO
+$(3\cdot10^{-4},10^{-2})$.
+
+Three observations qualify these numbers, and none of them is a claim that the
+selected candidate is superior.
+
+**REINFORCE's selection is the only unambiguous one.** Its two smaller rates
+complete no lap and its largest completes every one, so the first criterion
+decides outright. This rate is more than three times the $3\cdot10^{-4}$ used in
+the development notebooks, where REINFORCE first lapped near 400,000
+interactions rather than within 250,000.
+
+**PPO's selection rests on noise.** Its top two candidates differ by `0.02` in
+mean return against per-root standard deviations near `1.9`, so the rule's third
+criterion separates them at a hundredth of the spread. What the data does support
+is coarser: the two added critic rates are better than the original
+$10^{-3}$ both in mean return and, more clearly, in consistency, where the
+original pair carries one root that laps in `17.8 s` against `14.4 s` and
+`14.6 s`. Reading `3\cdot10^{-3}` and `10^{-2}` as equivalent is the honest
+interpretation. Selecting between them would need either a tolerance in
+criterion 3 — as the Experiment 2 actor rule already uses one standard error —
+or more roots. Changing the rule that way is a documented amendment and has not
+been made.
+
+**A2C completes no lap at any candidate.** The 250,000-interaction allowance is
+simply short for A2C, which in a full-budget development run first lapped
+deterministically near 1,450,000 interactions, so this selection rests entirely
+on partial progress. The critic rate nevertheless separates the candidates on
+stability rather than on mean: at $3\cdot10^{-3}$ the three roots agree to within
+a standard deviation of `0.60`, against `10.52` at $10^{-3}$ and `10.33` at
+$10^{-2}$, both of which contain a collapsed root. Raising the critic rate alone
+therefore does not buy A2C a lap inside this allowance, and whether it resolves
+the starved critic over the full 2,000,000-interaction budget is not established
+here.
 
 ### Deterministic reference controller
 

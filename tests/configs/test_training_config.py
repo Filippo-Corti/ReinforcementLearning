@@ -53,15 +53,18 @@ def test_agent_configs_expose_only_documented_learning_rate_candidates() -> None
     a2c = A2CConfig()
     ppo = PPOConfig()
 
+    documented_pairs = (
+        (1e-4, 3e-4),
+        (3e-4, 1e-3),
+        (3e-4, 3e-3),
+        (3e-4, 1e-2),
+    )
+
     assert reinforce.actor_learning_rate_candidates == (1e-4, 3e-4, 1e-3)
-    assert a2c.learning_rate_candidates == (
-        (1e-4, 3e-4),
-        (3e-4, 1e-3),
-    )
-    assert ppo.learning_rate_candidates == (
-        (1e-4, 3e-4),
-        (3e-4, 1e-3),
-    )
+    # A2C and PPO are offered the same grid so that neither is denied an option
+    # the other is given; each still selects its own pair.
+    assert a2c.learning_rate_candidates == documented_pairs
+    assert ppo.learning_rate_candidates == documented_pairs
     assert not hasattr(reinforce, "actor_learning_rate")
     assert not hasattr(a2c, "actor_learning_rate")
     assert not hasattr(ppo, "critic_learning_rate")

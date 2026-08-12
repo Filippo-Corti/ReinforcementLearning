@@ -1742,3 +1742,61 @@ calibration must now choose from a grid that reaches beyond `1e-3`.
 **Commits**: `fix: keep the exploration scale learnable at its bound [ai]`,
 `feature: let every algorithm use the same worker count [ai]`,
 `docs: align the notebooks and the contract with the code [ai]`.
+
+## 2026-08-12 — Pre-experiment learning-rate calibration
+
+**Task**: Run the learning-rate selection rule for all three algorithms and
+record the outcome.
+
+**Result**: 33 runs, 250,000 interactions on each of three roots per candidate,
+50 minutes total. Selected REINFORCE `1e-3`, A2C `(3e-4, 3e-3)` and PPO
+`(3e-4, 1e-2)`. The full table and its qualifications are in
+[`EXPERIMENT.md`](EXPERIMENT.md).
+
+The critic candidate grid was extended upward, because the original grid topped
+out at the rate that the earlier diagnosis showed was starving A2C's critic, and
+the same grid is offered to A2C and PPO so neither is denied an option the other
+receives. The selection rule's progress criterion now clamps each run at `1`; a
+completed lap overshoots that value by wherever its final step landed, and
+without the clamp two candidates that both lap every root would be separated by
+that overshoot rather than by their driving.
+
+Only REINFORCE's selection is unambiguous: its two smaller rates complete no lap
+and `1e-3` completes every one. That rate is more than three times the `3e-4`
+the notebooks used, where REINFORCE first lapped near 400,000 interactions.
+
+PPO's selection rests on noise, `0.02` in mean return against a per-root standard
+deviation near `1.9`. What the data does support is that both added critic rates
+beat the original `1e-3`, most clearly in consistency: at `1e-3` one root laps in
+`17.8 s` against `14.4 s` and `14.6 s`, while the added rates hold every root
+between `13.2 s` and `14.4 s`. A2C completes no lap at any candidate, so its
+selection rests on partial progress alone; the critic rate separates its
+candidates on stability instead, with a per-root return standard deviation of
+`0.60` at `3e-3` against `10.52` and `10.33` at the neighbouring rates, both of
+which contain a collapsed root. Raising the critic rate therefore does not buy
+A2C a lap inside this allowance, and whether it repairs the starved critic over
+the full budget is not established here.
+
+**Blocker found**: the Experiment 1 circuit-eligibility rule admits no circuit.
+It requires at least 15% of arc-length samples at `|k| <= 0.002`, but over 100
+candidate identities the best generated circuit reaches 13.3% and the median
+reaches 3.7%, so `0/100` are eligible against the `85/100` the protocol records.
+One candidate identity fails generation outright. The calibration therefore ran
+on the development circuit from seed `0` rather than on `tracks/experiment_1.json`,
+which cannot currently be produced. The generated circuits are curved almost
+everywhere: 81.6% of their arc length sits at radius `<= 100 m` and only 3.7% is
+near-straight, because checkpoints are sampled in polar form around one circle
+and interpolated by a cubic spline, which is star-shaped about the origin and has
+continuously varying curvature by construction. Either the rule or the generator
+has to move; this is left for decision.
+
+**Also recorded**: CPU neural execution is two to three times faster than the
+mandated CUDA path on this workload, measured at 20,000 interactions with eight
+workers — `3694` against `1144` interactions per second for A2C. A `(64, 64)`
+network stepped in eight-row batches never amortizes the transfer. Reported runs
+still specify CUDA; changing that is a protocol amendment.
+
+**Files**: `src/configs/algorithms.py`, `tests/configs/test_training_config.py`,
+`docs/EXPERIMENT.md`, `docs/DIARY.md`.
+
+**Commit**: `docs: record the calibrated learning rates [ai]`.
