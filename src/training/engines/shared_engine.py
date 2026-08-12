@@ -846,6 +846,8 @@ def _outcome(terminated: bool, truncated: bool, info: dict[str, Any]) -> Episode
         return EpisodeOutcome.COMPLETED
     if terminated and bool(info["collision"]):
         return EpisodeOutcome.CRASHED
+    if terminated and bool(info["stalled"]):
+        return EpisodeOutcome.STALLED
     if truncated:
         return EpisodeOutcome.TIME_LIMIT
     raise ValueError("Terminal transition lacks a supported RacingEnv outcome.")

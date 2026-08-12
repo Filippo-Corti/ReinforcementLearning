@@ -23,12 +23,13 @@ from configs import (
 from envs.observations import FrenetObservation
 from envs.racing import RacingEnv
 from envs.tracks import Track, TrackWithGeometry
-from recording import RunCategory
+from recording import EpisodeOutcome, RunCategory
 from training import (
     OnPolicyTrainingEngine,
     RunningObservationNormalizer,
     TrainingTransition,
 )
+from training.engines.shared_engine import _outcome
 
 
 class _FixedAgent:
@@ -154,6 +155,29 @@ def test_fixed_rollout_preserves_transition_and_counter_semantics() -> None:
     assert engine.episode_records[0].interactions == 3
     assert engine.episode_records[0].training_interactions == 3
     assert engine.normalizer.count == 5
+
+
+@pytest.mark.parametrize(
+    ("terminated", "truncated", "info", "expected"),
+    [
+        (True, False, {"lap_completed": True}, EpisodeOutcome.COMPLETED),
+        (True, False, {"collision": True}, EpisodeOutcome.CRASHED),
+        (True, False, {"stalled": True}, EpisodeOutcome.STALLED),
+        (False, True, {}, EpisodeOutcome.TIME_LIMIT),
+    ],
+)
+def test_every_environment_lifecycle_boundary_has_a_recorded_outcome(
+    terminated: bool,
+    truncated: bool,
+    info: dict[str, Any],
+    expected: EpisodeOutcome,
+) -> None:
+    """
+    A stall is a terminal state, so it must not reach the unsupported-outcome error.
+    """
+    flags = {"lap_completed": False, "collision": False, "stalled": False, **info}
+
+    assert _outcome(terminated, truncated, flags) is expected
 
 
 def test_complete_episode_collection_waits_for_complete_batch() -> None:
