@@ -49,7 +49,6 @@ def test_train_entry_point_runs_reinforce_and_writes_shared_records(tmp_path) ->
     completion = run.require_complete()
     assert completion["timing"]["persistence"] > 0.0
     assert completion["resources"]["training_interactions"] == 8
-    assert completion["resources"]["peak_gpu_memory"] is None
 
 
 def test_train_cli_requires_learning_rate_and_accepts_output_alias() -> None:

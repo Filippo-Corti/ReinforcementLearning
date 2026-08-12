@@ -8,8 +8,6 @@ from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
-import torch
-
 from agents import A2CAgent, ParameterizedOnPolicyAgent, PPOAgent, ReinforceAgent
 from configs import (
     FIXED_CRITIC_CONFIG,
@@ -339,7 +337,6 @@ def _run_training(
         raise ValueError(
             "Reported runs require an explicit near-saturated steering threshold."
         )
-    _reset_peak_gpu_memory(execution_config.device)
     streams = RunSeedStreams(_seed_namespace(run_category), seed)
     track = TrackWithGeometry.load(
         track_path,
@@ -454,7 +451,6 @@ def _run_training(
             actor_parameters=agent.actor_parameter_count,
             critic_parameters=agent.critic_parameter_count,
             peak_process_memory=None,
-            peak_gpu_memory=_peak_gpu_memory(execution_config.device),
         )
         run.complete(
             {
@@ -500,11 +496,6 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--interaction-budget", required=True, type=int)
     parser.add_argument("--evaluation-interval", type=int)
     parser.add_argument("--near-saturated-steering-threshold", type=float)
-    parser.add_argument(
-        "--device",
-        choices=("cpu", "cuda"),
-        default=ExecutionConfig().device,
-    )
     parser.add_argument("--num-envs", type=int)
     parser.add_argument(
         "--run-category",
@@ -521,9 +512,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parsed = parse_arguments(arguments)
     algorithm = Algorithm(parsed.algorithm)
     worker_count = parsed.num_envs
-    if worker_count is None and algorithm is Algorithm.REINFORCE:
-        worker_count = ReinforceConfig().completed_episodes_per_update
-    execution_config = replace(ExecutionConfig(), device=parsed.device)
+    execution_config = ExecutionConfig()
     if worker_count is not None:
         execution_config = replace(execution_config, environment_workers=worker_count)
     common_arguments = {
@@ -700,23 +689,6 @@ def _optional_diagnostic(
     Return one algorithm-specific diagnostic when the active agent records it.
     """
     return diagnostics.get(key)
-
-
-def _reset_peak_gpu_memory(device: str) -> None:
-    """
-    Start one run-scoped CUDA peak-memory measurement when CUDA is selected.
-    """
-    if device == "cuda" and torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
-
-
-def _peak_gpu_memory(device: str) -> int | None:
-    """
-    Return run-scoped peak allocated CUDA memory when the selected device has it.
-    """
-    if device != "cuda" or not torch.cuda.is_available():
-        return None
-    return int(torch.cuda.max_memory_allocated())
 
 
 def _first_seed(streams: RunSeedStreams, stream: SeedStream) -> int:

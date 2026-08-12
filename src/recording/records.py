@@ -345,7 +345,7 @@ class TimingRecord:
 @dataclass(frozen=True, slots=True)
 class ResourceRecord:
     """
-    Store run resource counts and optional process/GPU memory observations.
+    Store run resource counts and optional process memory observations.
 
     Fields:
         * training_interactions: Steps used for learning.
@@ -355,7 +355,6 @@ class ResourceRecord:
         * actor_parameters: Trainable actor parameter count.
         * critic_parameters: Trainable critic parameter count when applicable.
         * peak_process_memory: Peak process memory when available.
-        * peak_gpu_memory: Peak GPU memory when available.
     """
 
     run_category: RunCategory
@@ -367,7 +366,6 @@ class ResourceRecord:
     actor_parameters: int
     critic_parameters: int | None
     peak_process_memory: int | None
-    peak_gpu_memory: int | None
     schema_version: int = METRICS_SCHEMA_VERSION
 
     @property

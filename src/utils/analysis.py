@@ -416,7 +416,6 @@ def run_summary_rows(
                 "peak_process_memory": _optional_integer(
                     resources, "peak_process_memory"
                 ),
-                "peak_gpu_memory": _optional_integer(resources, "peak_gpu_memory"),
             }
         )
     return sorted(summaries, key=_table_sort_key)

@@ -43,14 +43,13 @@ change global NumPy or PyTorch state. Callers retain a generator when they need
 sequential draws. Environment and track seeds are drawn from their named NumPy
 generators rather than through a separate seed API.
 At run startup, a separate explicit operation configures PyTorch for one
-intra-op and one inter-op thread, deterministic algorithms with errors, and
-disabled cuDNN benchmarking. The same operation runs inside every persistent
+intra-op and one inter-op thread and deterministic algorithms with errors. The same operation runs inside every persistent
 environment-worker process because process-wide settings are not inherited
 reliably under multiprocessing. Workers are spawned once and reused for the
 training run. That operation intentionally changes process-wide PyTorch settings
 and must run before parallel PyTorch work. It cannot guarantee bitwise equality
-across PyTorch versions, platforms, CPU versus GPU, or kernels without
-deterministic implementations.
+across PyTorch versions, platforms, or kernels without deterministic
+implementations.
 
 ## Problem-specific notation
 

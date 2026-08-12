@@ -148,8 +148,6 @@ class TorchDeterminismState:
         * interop_threads: Configured inter-operation thread count.
         * deterministic_algorithms: Whether deterministic kernels are required.
         * deterministic_warn_only: Whether nondeterministic kernels only warn.
-        * cudnn_benchmark: Whether cuDNN benchmarking is enabled.
-        * cudnn_deterministic: Whether cuDNN deterministic mode is enabled.
     """
 
     device: str
@@ -157,8 +155,6 @@ class TorchDeterminismState:
     interop_threads: int
     deterministic_algorithms: bool
     deterministic_warn_only: bool
-    cudnn_benchmark: bool
-    cudnn_deterministic: bool
 
 
 def configure_torch_determinism(
@@ -169,7 +165,7 @@ def configure_torch_determinism(
 
     This must run before parallel PyTorch work because inter-op thread settings
     may become immutable. Deterministic kernels do not promise identical values
-    across PyTorch versions, platforms, or CPU and GPU implementations.
+    across PyTorch versions or platforms.
     """
     import torch
 
@@ -187,8 +183,6 @@ def configure_torch_determinism(
         execution.deterministic_algorithms,
         warn_only=execution.deterministic_warn_only,
     )
-    torch.backends.cudnn.benchmark = execution.cudnn_benchmark
-    torch.backends.cudnn.deterministic = execution.deterministic_algorithms
 
     return TorchDeterminismState(
         device=execution.device,
@@ -196,6 +190,4 @@ def configure_torch_determinism(
         interop_threads=torch.get_num_interop_threads(),
         deterministic_algorithms=torch.are_deterministic_algorithms_enabled(),
         deterministic_warn_only=torch.is_deterministic_algorithms_warn_only_enabled(),
-        cudnn_benchmark=torch.backends.cudnn.benchmark,
-        cudnn_deterministic=torch.backends.cudnn.deterministic,
     )

@@ -365,37 +365,18 @@ def _dependency_freeze() -> list[str] | None:
 
 def _torch_metadata(device: str | None) -> dict[str, Any]:
     """
-    Return available PyTorch, CUDA, and GPU facts without requiring CUDA.
+    Return the PyTorch facts a CPU-only run needs to be reproducible.
     """
     try:
         import torch
     except ImportError:
         return {"available": False, "requested_device": device}
-    cuda_available = torch.cuda.is_available()
-    gpu_name = torch.cuda.get_device_name(0) if cuda_available else None
-    driver_version = (
-        _run_command(
-            [
-                "nvidia-smi",
-                "--query-gpu=driver_version",
-                "--format=csv,noheader",
-            ],
-            Path.cwd(),
-        )
-        if cuda_available
-        else None
-    )
     return {
         "available": True,
         "version": str(torch.__version__),
         "requested_device": device,
         "intraop_threads": torch.get_num_threads(),
         "interop_threads": torch.get_num_interop_threads(),
-        "cuda_available": cuda_available,
-        "cuda_version": str(torch.version.cuda) if torch.version.cuda else None,
-        "driver_version": driver_version.splitlines()[0] if driver_version else None,
-        "gpu_name": gpu_name,
-        "gpu_count": torch.cuda.device_count() if cuda_available else 0,
     }
 
 

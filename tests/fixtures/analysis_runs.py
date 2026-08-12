@@ -177,7 +177,6 @@ def write_analysis_run(
         actor_parameters=10,
         critic_parameters=5,
         peak_process_memory=None,
-        peak_gpu_memory=None,
     )
     run.complete(
         {

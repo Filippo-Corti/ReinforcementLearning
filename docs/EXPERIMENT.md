@@ -85,10 +85,7 @@ Executed 2026-08-12 over the full grid: 33 runs, 50 minutes total. Because
 `tracks/experiment_1.json` does not exist yet — its selection rule currently
 admits no candidate, see the fixed-circuit section — these runs used the
 development circuit generated from seed `0`, the same one the algorithm
-notebooks use. Neural execution was CPU, which this section's rule permits
-because it makes no timing claim; on this workload CPU is also between two and
-three times faster than the reported-run CUDA path, because a `(64, 64)` network
-stepped in eight-row batches never amortizes the transfer.
+notebooks use. Neural execution was CPU, as it now is everywhere.
 
 | Algorithm | Actor | Critic | Laps | Mean progress | Mean return | Per-root return SD |
 |---|---:|---:|---:|---:|---:|---:|
@@ -296,26 +293,38 @@ exact resume on the supported hardware and software stack.
 
 ## Execution hardware and timing
 
-Neural-network training and evaluation use the available NVIDIA GeForce RTX
-2060 with CUDA and PyTorch `float32`. Racing environments and their geometry
-queries execute in persistent CPU worker processes. All three algorithms use the
-same worker count, the number of physical CPU cores, so that reported collection
-throughput and wall time compare like with like. What differs is only what each
-algorithm does with the collected data: REINFORCE fills a batch of eight
-complete episodes, over several waves when there are fewer workers than
-episodes, while A2C and PPO store a pooled 2048-transition rollout. The selected
-worker count is configurable and recorded. The main
-process and every worker apply one PyTorch intra-op thread, one inter-op thread,
-deterministic algorithms and disabled cuDNN benchmarking. CPU-only neural
-execution remains valid for unit tests and reduced development checks, but it
-is not comparable reported timing data.
+Everything runs on the CPU with PyTorch `float32`. Neural work is not placed on
+a GPU, and no GPU path is offered.
 
-All reported runs use the same physical GPU, CUDA/PyTorch build, driver, and
-the same algorithm-specific worker and thread configuration. PyTorch
-deterministic algorithms are enabled
-with errors rather than warnings, and cuDNN benchmarking is disabled. PyTorch
-does not guarantee identical results across releases, platforms or CPU/GPU
-execution, which is why the exact stack is retained with every run. See the
+That is a measurement, not an oversight. The actor and critic have two hidden
+layers and are stepped in batches of one row per environment worker, which is
+far too small to amortize host-to-device transfer. Over 20,000 interactions with
+eight workers:
+
+| Algorithm | CPU | CUDA |
+|---|---:|---:|
+| REINFORCE | 3,372 interactions/s | 1,862 interactions/s |
+| A2C | 3,694 interactions/s | 1,144 interactions/s |
+| PPO | 2,835 interactions/s | 1,146 interactions/s |
+
+The GPU was between two and three times slower for every algorithm, so using it
+would have made the 45 Experiment 1 runs take roughly 22 hours instead of 8. The
+device choice was removed from the configuration on 2026-08-12 rather than left
+as a selectable option that no run should select.
+
+Racing environments and their geometry queries execute in persistent worker
+processes. All three algorithms use the same worker count, the number of physical
+CPU cores, so that reported collection throughput and wall time compare like with
+like. What differs is only what each algorithm does with the collected data:
+REINFORCE fills a batch of eight complete episodes, over several waves when there
+are fewer workers than episodes, while A2C and PPO store a pooled
+2048-transition rollout. The selected worker count is configurable and recorded.
+
+The main process and every worker apply one PyTorch intra-op thread, one inter-op
+thread, and deterministic algorithms with errors rather than warnings. All
+reported runs use the same PyTorch build and the same worker and thread
+configuration. PyTorch does not guarantee identical results across releases or
+platforms, which is why the exact stack is retained with every run. See the
 [official reproducibility guidance](https://docs.pytorch.org/docs/stable/notes/randomness.html).
 
 Timing categories do not overlap:
@@ -328,7 +337,7 @@ Timing categories do not overlap:
 
 Training-only time is collection plus optimization. End-to-end time is also
 reported so evaluation and persistence overhead remain visible. Reported runs
-execute one at a time; no other training process competes for the GPU.
+execute one at a time; no other training process competes for the cores.
 
 ## Experiment 1 — Actor size on one circuit
 
@@ -431,7 +440,7 @@ The following are the actual tracked quantities for Experiment 1.
 - root identity and every derived seed state;
 - complete environment, model, optimizer and evaluation configuration;
 - protocol revision, manifest checksum, git commit and dirty state;
-- Python and dependency freeze, OS, CPU, GPU, driver, CUDA and PyTorch versions;
+- Python and dependency freeze, OS, CPU and PyTorch versions;
   and
 - start/end timestamps and run completion state.
 
@@ -465,7 +474,7 @@ reported run when it is absent; Step 10 freezes the value before data collection
 - completed episodes and optimizer updates;
 - interactions per collection second and per training second;
 - actor, critic and total parameter counts; and
-- peak process and GPU memory where available.
+- peak process memory where available.
 
 Selected deterministic trajectories at every 250,000 interactions and at the
 final budget retain progress, pose, current/preview curvature, speed, controls,
@@ -691,7 +700,7 @@ mandatory.
   importance-ratio distribution;
 - gradient, weight and update norms;
 - collection/optimization/evaluation/persistence durations;
-- throughput, parameter counts and peak CPU/GPU memory; and
+- throughput, parameter counts and peak process memory; and
 - number and identities of training circuits encountered so far.
 
 ### Outcomes and analysis

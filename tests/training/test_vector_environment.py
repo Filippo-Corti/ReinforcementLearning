@@ -75,7 +75,6 @@ def test_workers_persist_and_apply_deterministic_torch_settings() -> None:
         assert all(
             state.deterministic_algorithms for state in pool.worker_torch_determinism
         )
-        assert all(not state.cudnn_benchmark for state in pool.worker_torch_determinism)
 
 
 def test_only_selected_workers_reset_and_parked_workers_do_not_advance() -> None:

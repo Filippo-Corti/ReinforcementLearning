@@ -132,5 +132,3 @@ def test_torch_determinism_configuration_applies_documented_global_policy() -> N
     assert state.interop_threads == 1
     assert state.deterministic_algorithms
     assert not state.deterministic_warn_only
-    assert not state.cudnn_benchmark
-    assert state.cudnn_deterministic
