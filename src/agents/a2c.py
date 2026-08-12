@@ -222,6 +222,7 @@ class A2CAgent:
             ).item()
         )
         self.actor_optimizer.step()
+        self.actor.project_parameters()
 
         self.actor_optimizer.zero_grad(set_to_none=True)
         self.critic_optimizer.zero_grad(set_to_none=True)

@@ -187,6 +187,7 @@ class ReinforceAgent:
             ).item()
         )
         self.optimizer.step()
+        self.actor.project_parameters()
 
         flattened_returns = torch.cat(returns)
         return AgentUpdateOutput(

@@ -427,6 +427,7 @@ class PPOAgent:
             ).item()
         )
         self.actor_optimizer.step()
+        self.actor.project_parameters()
 
         critic_loss, _ = self._critic_loss(observations, value_targets)
         self.actor_optimizer.zero_grad(set_to_none=True)

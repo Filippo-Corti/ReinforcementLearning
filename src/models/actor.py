@@ -81,3 +81,9 @@ class ActorNetwork(nn.Module, Policy):
         Recompute action log probabilities through the contained policy.
         """
         return self.policy.log_probability(observations, raw_actions)
+
+    def project_parameters(self) -> None:
+        """
+        Restore the contained policy's bounds after an optimizer step.
+        """
+        self.policy.project_parameters()

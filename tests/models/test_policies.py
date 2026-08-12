@@ -116,10 +116,12 @@ def test_dispersion_bounds_and_extreme_actions_have_finite_log_probability() -> 
     actor = _actor()
     with torch.no_grad():
         actor.policy.log_standard_deviation.fill_(100.0)
+    actor.project_parameters()
     assert torch.allclose(actor.policy.standard_deviation, torch.full((2,), exp(0.0)))
 
     with torch.no_grad():
         actor.policy.log_standard_deviation.fill_(-100.0)
+    actor.project_parameters()
     assert torch.allclose(actor.policy.standard_deviation, torch.full((2,), exp(-5.0)))
 
     log_probability = actor.log_probability(
@@ -127,6 +129,24 @@ def test_dispersion_bounds_and_extreme_actions_have_finite_log_probability() -> 
         torch.tensor([[50.0, -50.0], [-25.0, 25.0]]),
     )
     assert torch.isfinite(log_probability).all()
+
+
+def test_dispersion_at_its_bound_can_still_be_learned_back_inside() -> None:
+    """
+    A log scale resting on a bound must keep a live gradient.
+
+    Enforcing the bounds with a clamp inside the log density instead would give
+    the parameter exactly zero gradient there, so a policy that once reached
+    maximum dispersion could never reduce it again.
+    """
+    actor = _actor()
+    with torch.no_grad():
+        actor.policy.log_standard_deviation.fill_(0.0)
+
+    actor.log_probability(torch.randn(5, 4), torch.randn(5, 2)).mean().backward()
+    gradient = actor.policy.log_standard_deviation.grad
+
+    assert gradient is not None and torch.count_nonzero(gradient) == 2
 
 
 def test_initialization_and_sampling_are_seed_reproducible_without_global_rng_change() -> (

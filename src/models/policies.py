@@ -207,6 +207,7 @@ class GaussianPolicy(nn.Module, Policy):
             )
         )
         self.log_standard_deviation_bounds = config.log_standard_deviation_bounds
+        self.project_parameters()
 
     def action(self, observation: NDArray[np.float32]) -> NDArray[np.float32]:
         """
@@ -309,17 +310,31 @@ class GaussianPolicy(nn.Module, Policy):
         """
         return self._mean
 
+    def project_parameters(self) -> None:
+        """
+        Move the learned log scale back inside its approved interval.
+
+        The bounds prevent vanishing exploration and numerically extreme Gaussian
+        samples. They are enforced on the parameter after an optimizer step
+        rather than inside the log density, because a clamp in the forward pass
+        has *zero* gradient outside the interval: a log scale that once left the
+        interval could never be learned back, and the policy would stay pinned at
+        maximum dispersion for the rest of the run. Projecting the parameter
+        instead leaves it exactly at the bound, where its gradient is still live,
+        so the optimizer can move it inward whenever the data asks for that.
+        """
+        with torch.no_grad():
+            self.log_standard_deviation.clamp_(*self.log_standard_deviation_bounds)
+
     @property
     def standard_deviation(self) -> Tensor:
         """
-        Return exp(clamp(log_standard_deviation, minimum, maximum)).
+        Return exp(log_standard_deviation).
 
-        Clamping the learned log scale prevents vanishing exploration and
-        numerically extreme Gaussian samples while preserving gradients inside
-        the approved interval.
+        The log scale is kept inside its approved interval by
+        `project_parameters`, so no clamp is applied here.
         """
-        minimum, maximum = self.log_standard_deviation_bounds
-        return torch.exp(self.log_standard_deviation.clamp(minimum, maximum))
+        return torch.exp(self.log_standard_deviation)
 
     def _log_probability_from_pre_squash_action(
         self, observations: Tensor, raw_actions: Tensor
@@ -334,9 +349,7 @@ class GaussianPolicy(nn.Module, Policy):
         is a vector-valued joint event.
         """
         mean = self.mean(observations)
-        log_standard_deviation = self.log_standard_deviation.clamp(
-            *self.log_standard_deviation_bounds
-        )
+        log_standard_deviation = self.log_standard_deviation
         standardized = (raw_actions - mean) / torch.exp(log_standard_deviation)
         gaussian_log_density = -0.5 * (
             standardized.square() + 2.0 * log_standard_deviation + _LOG_TWO_PI
