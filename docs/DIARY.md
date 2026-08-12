@@ -1800,3 +1800,73 @@ still specify CUDA; changing that is a protocol amendment.
 `docs/EXPERIMENT.md`, `docs/DIARY.md`.
 
 **Commit**: `docs: record the calibrated learning rates [ai]`.
+
+## 2026-08-12 — Circuits of straights and corners, and what followed
+
+**Task**: Replace the track generator, drop the GPU path, and recalibrate.
+
+**Result**: Circuits are now a closed polygon whose vertices have been rounded
+into constant-radius corners, so what survives of each edge is a straight. About
+63% of a lap is straight against the previous 3.7%, corner radii run from 12 m
+to 160 m, every circuit turns both ways, and 60 of 60 seeds generate. The
+construction and its omissions are in [`TRACK.md`](TRACK.md). Because both
+corners keep their tangent points on the polygon edges, closure is exact and no
+numerical solve is needed; every primitive has a closed-form arc-length
+parametrization, so the arc-length inversion and the finite-difference curvature
+are both gone.
+
+Three rules had to follow the geometry rather than the other way round. The
+non-local separation check was rejecting tight corners instead of folding,
+because the chord across an arc is shorter than the arc; it now ignores pairs
+closer along the track than half a turn at the minimum radius. The circuit scale
+was chosen to keep a lap inside the unchanged episode cap, since laps grew from
+`15.9 s` to `22.4 s`. The convergence threshold was defined as twice the
+reference average, which now exceeds the cap and would have silently become
+vacuous; it is `34 s`, confirmed rather than derived.
+
+**Reference controller**: it crashed on one circuit in forty once straights
+existed. The trace showed no braking problem at all — the car left a corner four
+metres off line and diverged across the following straight with steering
+saturated. Linearizing the bicycle model about a straight gives a lateral loop
+whose damping ratio `h * sqrt(delta_max / (4 * L * l))` does not depend on speed,
+and it was `0.39`. The previous circuits never contained a straight long enough
+for that to develop. Raising the heading gain from `0.8` to `1.8` brings it to
+`0.89`; the controller now completes all forty circuits, reaching `4.56 m` of
+lateral offset against the `6 m` boundary rather than `5.69 m`, at unchanged lap
+times.
+
+**GPU**: removed rather than deselected. Measured over 20,000 interactions with
+eight workers, CUDA reached `1144` interactions per second against the CPU's
+`3694` for A2C and was slower for all three algorithms, because a `(64, 64)`
+network stepped in eight-row batches never amortizes the transfer. Experiment 1
+would have taken roughly 22 hours on the GPU instead of 8.
+
+**Calibration**: rerun on the new circuits. Selected REINFORCE `1e-3`, A2C
+`(3e-4, 1e-2)`, PPO `(3e-4, 1e-2)`. A2C's four candidates were indistinguishable
+at the 250,000-interaction allowance, all between `0.067` and `0.097` progress,
+so the allowance was raised to 750,000 for A2C alone, where they separate
+monotonically in the critic rate. That amendment and its evidence are recorded in
+[`EXPERIMENT.md`](EXPERIMENT.md).
+
+**A2C at full budget**: on the previous circuits, with the calibrated critic rate
+and the exploration-scale fix, A2C completes its first lap at 600,000
+interactions, holds one from 1,350,000, and finishes at `13.00 s` — faster than
+REINFORCE's `15.07 s`. The earlier report that A2C fails was an artefact of a
+starved critic and of reading a single checkpoint. Explained variance recovers to
+about `0.10` rather than collapsing to `0.007`.
+
+**CI**: six type errors and a formatting failure, none of them caught locally
+because pyright's own configuration checked two directories where CI checks
+three. It now checks the same three.
+
+**Files**: `src/envs/tracks/`, `src/configs/`, `src/models/policies.py`,
+`src/training/`, `src/recording/`, `src/utils/random.py`, `experiments/`,
+`tests/`, `notebooks/`, `pyproject.toml`, `docs/TRACK.md`, `docs/MDP.md`,
+`docs/LEARNING.md`, `docs/EXPERIMENT.md`, `docs/DIARY.md`.
+
+**Commits**: `feature: run on the CPU only and drop the GPU path [ai]`,
+`docs: correct the controller gain and drop the circuit rule [ai]`,
+`feature: build circuits from straights and corners [ai]`,
+`fix: damp the reference controller's lateral loop [ai]`,
+`fix: restore the static checks CI runs [ai]`,
+`docs: record the recalibrated learning rates [ai]`.
