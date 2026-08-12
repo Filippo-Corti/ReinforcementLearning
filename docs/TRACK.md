@@ -220,7 +220,7 @@ rather than being accepted or silently clipped.
 
 ### Frenet Observation
 
-$$ o_t^{\text{Frenet}} = (d_t, \phi_{e,t}, v_t, \bar{\kappa}_t) $$
+$$ o_t^{\text{Frenet}} = (d_t, \phi_{e,t}, v_t, \delta_t, \bar{\kappa}_t) $$
 
 computed as:
 
@@ -231,15 +231,18 @@ $$
 \bar{\kappa}_t = \bar{\kappa}(s_t,v_t).
 $$
 
-Here $\theta_t$ is the car's heading from the true environment state, while
-$\bar{\kappa}$ is the runtime preview defined above. Version 0 exposes values in
-physical units; observation normalization, if enabled for an agent, belongs in
-a wrapper or training utility and must not alter the environment dynamics.
+Here $\theta_t$ is the car's heading from the true environment state, $\delta_t$
+is the current front-wheel angle, and $\bar{\kappa}$ is the runtime preview
+defined above. The steering angle is observed because the rate limit described in
+[`MDP.md`](MDP.md) makes it a state variable rather than a property of the
+action. The environment exposes values in physical units; observation
+normalization, if enabled for an agent, belongs in a wrapper or training utility
+and must not alter the environment dynamics.
 
 ### LiDAR Observation
 
 $$
-o_t^{\text{LiDAR}} = (v_t, R_t), \qquad
+o_t^{\text{LiDAR}} = (v_t, \delta_t, R_t), \qquad
 R_t = (\tilde r_t^{(1)}, \dots, \tilde r_t^{(16)}).
 $$
 
@@ -267,9 +270,16 @@ Given the projection $(s_t, d_t)$, the car is off-track if:
 
 $$ |d_t| \ge \frac{w}{2}. $$
 
-This version 0 rule treats the car as a point and is evaluated after every
-physics substep. A finite vehicle footprint is explicitly deferred as described
-in [`MDP.md`](MDP.md).
+This rule treats the car as a point and is evaluated after every physics
+substep. A finite vehicle footprint is explicitly deferred as described in
+[`MDP.md`](MDP.md).
+
+Most crashes now arrive through this rule rather than through a dedicated
+physical failure. With the tyre friction budget in force, entering a corner too
+fast does not spin the car: it understeers, the achieved yaw rate falls short of
+the requested one, and the resulting path runs wide until $|d_t|$ reaches the
+boundary. The physics decides where the car goes; the geometry decides that
+going there ends the episode.
 
 ### Progress Term of the Reward
 
@@ -302,28 +312,31 @@ with $\Delta\tilde{s}_0=0$ on reset.
 
 ### Finish Line and Lap Completion
 
-The canonical finish gate is the segment joining the two boundaries at
-`start_index`, oriented by the forward tangent $\hat t(0)$. A forward crossing
-requires the car trajectory to intersect this segment and have positive motion
-along $\hat t(0)$.
+The finish gate of an episode is the segment joining the two boundaries at the
+arc length the car started from, oriented by the forward tangent there. A
+forward crossing requires the car trajectory to intersect this segment and have
+positive motion along that tangent.
 
-A fixed-start episode finishes only when all of the following hold:
+Because the start pose is sampled (see [`MDP.md`](MDP.md)), the gate moves with
+it: the objective is always one full circuit from wherever the car was placed,
+never a partial run to a line somewhere else on the track. With a fixed start the
+gate coincides with `start_index`, recovering the canonical finish line. The
+geometry is resolved once at reset rather than at every physics substep.
+
+An episode finishes only when all of the following hold:
 
 1. The car crosses the finish gate in the forward direction.
 2. It is still on track after the crossing.
 3. Its signed episode progress is at least
    $S_{\text{track}}-\epsilon_{\text{finish}}$, where
    $\epsilon_{\text{finish}}=\max(2\Delta s_{\text{gen}},
-   v_{\max}\Delta_{t_{agent}})=2.8m$ with the version 0 constants.
+   v_{\max}\Delta_{t_{agent}})=2.8m$ with the current constants.
 
 The progress requirement prevents the reset pose on the finish line, local
 oscillation across the gate, or a nearby geometric shortcut from completing a
 lap. If collision and finish are detected in the same physics substep,
 collision takes precedence.
 
-For a future random-start curriculum, the default objective remains one full
-lap: the reset position $s_0^{\text{wrap}}$ defines an episode-specific virtual
-finish gate, and the same forward-crossing and progress conditions apply
-relative to that gate. A mode that instead asks every random start to reach the
-canonical finish line would be a different task and must be configured
-explicitly.
+A mode that instead asks every sampled start to reach the canonical finish line
+would be a different task, with a lap length that depends on where the car
+happened to be placed, and must be configured explicitly.

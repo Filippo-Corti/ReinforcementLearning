@@ -1554,3 +1554,88 @@ after. The environment and geometry suites pass; Black and Ruff pass.
 `docs/DIARY.md`.
 
 **Commit**: `perf: vectorize centerline projection and spline evaluation [ai]`
+
+## 2026-08-12 — Grip-limited physics, sampled starts and a lap-time reward
+
+**Task**: Act on the review of the 2,000,000-interaction runs recorded in
+`RESPONSE.md`. Three symptoms shared one theme: the environment did not ask the
+policy for anything a racing driver would recognize. Full throttle was optimal
+everywhere, standing still was reachable by gradient ascent from a neutral
+initialization, and a lap three times slower scored within five percent of a
+fast one.
+
+**Result**: Four changes to the environment and two to the learning contract.
+
+*Grip.* Longitudinal and lateral tyre demand now share one friction budget of
+`20 m/s^2`, about `2g`, chosen to match the lateral acceleration limit the
+scripted reference controller already assumed. Asking for more cornering than
+the budget leaves does not spin the car or trigger a special rule: the achieved
+steering angle is reduced, the car understeers, runs wide and eventually reaches
+the track boundary. Crashing therefore remains a geometric event. Braking uses
+the full budget while acceleration stays engine-limited at `9.26 m/s^2`.
+Quadratic drag, derived as `a_max / v_max^2` rather than introduced as a free
+constant, makes `70 m/s` a terminal speed instead of a clamp.
+
+*Steering rate.* The front wheels travel at most `180°/s`, so a full sweep takes
+a third of a second rather than one agent step. This makes the steering angle a
+state variable, so the Frenet observation gains it and becomes five-dimensional.
+Hiding it would have made the task partially observable for no modelling reason.
+
+*Start states.* Training samples the start pose uniformly along the circuit with
+bounded lateral offset, heading error and speed. The finish gate moves with the
+start, so a lap is always one full circuit. Deterministic evaluation still
+launches from the canonical start line, so reported numbers stay comparable and
+one evaluation episode per checkpoint is now genuinely sufficient.
+
+*Stall rule.* A car that advances less than one metre in three seconds ends its
+episode, charged the entire time penalty it would have paid by idling to the
+limit. The return of standing still is unchanged; only the simulation is saved.
+It also gives the failure its own recorded outcome instead of hiding it as a
+time limit.
+
+*Reward.* The per-step time penalty doubles to `1 s^-1` and the completion
+reward gains a term scaled by the unused episode clock. Raising the step penalty
+alone could not carry lap time: past roughly `2 s^-1` a policy that drives half
+a lap and crashes scores below one that crashes immediately, which re-inverts
+the ordering fixed the previous day. A term that applies only on success has no
+such side effect. `experiments/plot_reward.py` draws all three orderings beside
+the original coefficients, for which every one of them was violated.
+
+*Learning contract.* The learned exploration scale is capped at `1` instead of
+`exp(2)`. PPO's runs showed it growing `0.61 -> 1.9`, which with `tanh` squashing
+saturates nearly every sample and turns the policy into random bang-bang
+steering. PPO now reuses each rollout four times instead of ten and stops early
+on approximate KL. REINFORCE loses its actor weight decay, which no other
+algorithm had and which shrank the actor monotonically toward a zero-output mean.
+
+**A regression this introduced, and its fix**: the first validation run showed
+A2C stalling in 97% of training episodes, worse than before the change. The
+cause was the braking asymmetry interacting with symmetric exploration noise: at
+a zero mean action, `E[acceleration] = 9.26 E[tanh^+] - 20 E[tanh^-] =
+-2.17 m/s^2`. An untrained policy brakes to a standstill within seconds. A
+control run with symmetric braking confirmed it, dropping stalls to under five
+percent. The fix keeps the physics and corrects the initialization instead: the
+actor's throttle output bias starts at `0.2`, the value at which the initial
+policy's expected acceleration is zero. Stalls fell to `0-9%` and the mean
+signed throttle moved from `0.00` to `0.16`. A policy that is neutral in the
+action is not neutral in the quantity the action controls.
+
+**Validation**: The scripted reference controller, retuned for the new physics
+(target lateral acceleration `12 m/s^2`, below the budget, because preview
+curvature understates a corner on entry and braking spends grip that cannot then
+be used to turn), completes 24 of 24 generated circuits averaging `15.9 s`. This
+is the standing evidence that the task remains solvable. A 926-step scripted
+trace over three circuits is bit-identical before and after the projection
+optimization. The full suite passes, including two `test_train.py` failures that
+predated this work and depended on the host's core count.
+
+**Files**: `src/configs/environment.py`, `src/configs/training.py`,
+`src/configs/algorithms.py`, `src/envs/vehicle/`, `src/envs/observations/frenet.py`,
+`src/envs/racing/`, `src/models/policies.py`, `src/agents/ppo.py`,
+`src/agents/reinforce.py`, `src/training/`, `experiments/plot_reward.py`,
+`notebooks/`, `docs/MDP.md`, `docs/TRACK.md`, `docs/EXPERIMENT.md`, `README.md`,
+and `docs/DIARY.md`.
+
+**Commits**: `feature: add grip-limited physics, sampled starts and lap-time
+reward [ai]`, `feature: bound exploration scale and shorten PPO rollout reuse
+[ai]`, `feature: report signed throttle, outcome mix and lap time [ai]`.

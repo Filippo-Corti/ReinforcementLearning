@@ -13,12 +13,11 @@ intentional: understanding one experiment should not require jumping between
 several common-protocol sections.
 
 Work performed before these experiments may select usable learning rates,
-validate the software path, choose the fixed circuit and decide whether the
-version-0 physics needs a grip constraint. Those runs are development evidence,
-not observations in either reported experiment, and their results are never
-pooled with the reported results.
+validate the software path and choose the fixed circuit. Those runs are
+development evidence, not observations in either reported experiment, and their
+results are never pooled with the reported results.
 
-**Protocol revision:** 2026-08-11 reproducible-analysis contract.
+**Protocol revision:** 2026-08-12 grip-limited physics contract.
 
 ## Before either experiment
 
@@ -72,10 +71,10 @@ $$
 
 $$
 v_t^\star=min\left\{50,
-\sqrt{20/\max(|\bar\kappa_t|,10^{-4})}\right\},
+\sqrt{12/\max(|\bar\kappa_t|,10^{-4})}\right\},
 \qquad
 A_t^{\mathrm{throttle}}=
-\operatorname{clip}((v_t^\star-v_t)/10,-1,1).
+\operatorname{clip}((v_t^\star-v_t)/6,-1,1).
 $$
 
 These constants are hand-designed project values, not results from the course
@@ -84,16 +83,21 @@ theory:
 - `0.15` makes a one-metre lateral error contribute `0.15` steering;
 - `0.8` gives a heading error in radians a stronger corrective effect;
 - `50` makes curvature $0.01\,\mathrm{m^{-1}}$ contribute `0.5` steering;
-- $20\,\mathrm{m\,s^{-2}}$ defines a conservative curvature-dependent target
-  through $v^2|\kappa|$;
+- $12\,\mathrm{m\,s^{-2}}$ defines a curvature-dependent target through
+  $v^2|\kappa|$, deliberately below the car's $20\,\mathrm{m\,s^{-2}}$ friction
+  budget: preview curvature is averaged over the lookahead and so understates a
+  corner on entry, and braking spends grip that is then unavailable to turn, so
+  a controller aiming at the limit arrives at corners already beyond it;
 - $50\,\mathrm{m\,s^{-1}}$ keeps the reference below the environment maximum;
   and
-- division by `10` turns a $10\,\mathrm{m\,s^{-1}}$ speed error into saturated
+- division by `6` turns a $6\,\mathrm{m\,s^{-1}}$ speed error into saturated
   throttle or braking.
 
 The controller is neither an expert demonstrator nor training data. Its purpose
 is to expose a broken observation, reward or control convention before neural
-learning is blamed.
+learning is blamed. On twenty-four generated circuits it completes every lap,
+averaging $15.9\,\mathrm s$, which is the standing evidence that the task is
+solvable with the current physics and reward.
 
 ### Fixed circuit for Experiment 1
 
@@ -119,35 +123,26 @@ complete circuit as `tracks/experiment_1.json`.
 
 No learned return, completion or lap time can influence this selection.
 
-### Version-0 physics decision
+### Physics version
 
-Before Experiment 1, train the selected medium PPO configuration on version-0
-physics using three dedicated roots. Cornering is interpreted only if at least
-two roots satisfy the Experiment 1 convergence definition below. If this
-capability gate fails, diagnose learning and do not begin the reported runs.
+The environment previously used a kinematic bicycle model with no lateral grip,
+no drag, and no steering-rate limit. Under it, full throttle remained close to
+optimal everywhere: at $70\,\mathrm{m\,s^{-1}}$ through the tightest corner of a
+typical generated circuit the car pulled about $34g$, and a trained A2C policy
+finished laps at the speed limit with the throttle open.
 
-For capable policies, derive curvature quartiles from every arc-length sample of
-the fixed circuit and retain final deterministic trajectories. Add the minimum
-grip model only if all of the following are true:
+This protocol previously deferred the decision to a pre-registered trigger
+measured on trained trajectories. That trigger is superseded: the diagnostic it
+was meant to detect was observed directly, so the constraint was specified and
+frozen rather than tested for. The grip-limited model in [`MDP.md`](MDP.md) is
+the physics for both reported experiments. Its three additions are a shared tyre
+friction budget of $20\,\mathrm{m\,s^{-2}}$, a steering rate limit of
+$180°\,\mathrm s^{-1}$, and quadratic aerodynamic drag derived from the existing
+speed and acceleration limits.
 
-- the trajectory visits at least 100 samples in the highest-curvature quartile;
-- at least 5% of those visits have $v^2|\kappa|>4g$, where
-  $g=9.81\,\mathrm{m\,s^{-2}}$;
-- median speed falls by less than 10% from the lowest- to highest-curvature
-  quartile; and
-- median throttle falls by less than `0.1` between those quartiles.
-
-The $4g$ bound is a deliberately generous diagnostic proxy, not a claim that the
-point-car model reproduces Formula 1 tires. The count and percentage require the
-effect to be repeated rather than a single numerical spike. The speed and
-throttle tolerances define a visible behavioural reduction. All are explicit
-project thresholds because the current MDP contains no tire model from which to
-derive them.
-
-If the trigger is false, retain version 0. If it is true, specify the smallest
-grip constraint in `MDP.md`, keep version 0 selectable, repeat the same capability
-check and freeze the validated physics version before either experiment begins.
-The reward is unchanged throughout.
+The unconstrained model remains selectable through configuration, so a later
+ablation can report both. Any such comparison is development evidence unless it
+is added to this protocol before the runs happen.
 
 ### Reduced-budget end-to-end validation
 
@@ -198,7 +193,7 @@ $$
 | Experiment 1 reported roots | 1 | `0..4` |
 | Experiment 2 reported roots | 2 | `0..4` |
 | Learning-rate configuration | 3 | `0..2` |
-| Capability and grip diagnosis | 4 | `0..2` |
+| Capability check | 4 | `0..2` |
 | Reduced-budget end-to-end validation | 5 | `0` |
 | Controlled-problem algorithm validation | 6 | `0..4` |
 | Experiment 1 circuit candidates | 7 | `0..99` |
@@ -321,14 +316,26 @@ primary result; a best-seen checkpoint is only a diagnostic.
 
 Evaluation uses
 $A_t^{\mathrm{eval}}=\tanh(\boldsymbol\mu_{\mathbf\theta}(O_t))$ from the
-canonical start. It does not change model parameters, optimizers, observation
-statistics, training RNGs or checkpoint selection.
+canonical start with zero speed, even though training samples its start pose.
+Holding the evaluation start fixed keeps every reported number an answer to the
+same question and reproducible from the seed alone. It does not change model
+parameters, optimizers, observation statistics, training RNGs or checkpoint
+selection.
+
+One evaluation episode per checkpoint is sufficient and is what runs. Both the
+policy and the start are deterministic and the circuit is fixed, so repeated
+episodes are identical; earlier runs took sixteen of them and reported a
+standard deviation that was exactly zero at every checkpoint.
 
 Stable convergence is the first of three consecutive evaluations that complete
-the lap in at most $100$ simulated seconds. The MDP identifies $90$ seconds as
-the target lap, so the additional 10 seconds provide an explicit tolerance. A
-run that never meets the rule is right-censored at 2,000,000 interactions and
-remains in every success-rate and learning-curve summary.
+the lap in at most $32$ simulated seconds, twice the reference controller's
+$15.9\,\mathrm s$ average. A run that never meets the rule is right-censored at
+2,000,000 interactions and remains in every success-rate and learning-curve
+summary.
+
+Evaluation records the episode outcome, not only its return. A return alone
+cannot distinguish crashing from idling from lapping slowly, and the outcomes
+now include `stalled` for a car that has stopped making progress.
 
 ### Data recorded for every run
 

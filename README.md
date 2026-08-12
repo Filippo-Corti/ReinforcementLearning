@@ -41,7 +41,7 @@ equations are fixed in [`docs/LEARNING.md`](docs/LEARNING.md).
 1. **Phase 1 — racing-environment baseline.** Build and validate the procedural
    track, Frenet geometry, kinematic dynamics, episode lifecycle and rendering.
 2. **Phase 2 — experiment-ready learning system.** Implement deterministic
-   training infrastructure, REINFORCE, A2C+GAE, PPO, conditional lateral grip,
+   training infrastructure, REINFORCE, A2C+GAE, PPO, grip-limited dynamics,
    LiDAR and multi-track orchestration. Run reduced-budget end-to-end validation
    on every experimental path.
 3. **Experiment 1 — policy-space complexity.** Run REINFORCE, A2C+GAE and PPO
@@ -54,12 +54,12 @@ equations are fixed in [`docs/LEARNING.md`](docs/LEARNING.md).
    to convergence, computational cost, between-seed variation and generalization
    without hiding failed or non-converged runs.
 
-The version 0 kinematic model intentionally has no lateral grip limit, drag,
-finite vehicle footprint, tire slip, or steering-rate limit. Full throttle may
-therefore remain optimal in corners. A capable learned policy will first be
-diagnosed on version 0. The minimum grip constraint will be added before the
-reported experiment runs only if the pre-experiment capability trigger is met;
-the reward remains unchanged during that decision.
+The vehicle model is a kinematic bicycle constrained by a shared tyre friction
+budget, a steering-rate limit and aerodynamic drag, so speed has to be spent and
+recovered rather than simply held. The car is still a point for collision
+detection and has no tyre slip or speed-dependent downforce. The full model,
+including how excess cornering demand turns into understeer rather than a
+special-cased failure, is specified in [`docs/MDP.md`](docs/MDP.md).
 
 ## View a track
 
@@ -116,12 +116,11 @@ Python 3.12+ with Black 26.5.1, Gymnasium 1.3.0, Matplotlib 3.10, NumPy 2.4.4,
 Pygame 2.6.1, Pyright 1.1.411, pytest 9.1.1, Ruff 0.16.0, SciPy 1.18.0 and setuptools
 80.10.2 (see `requirements.txt` for the authoritative manifest).
 
-Version 0 deliberately uses a point-car kinematic bicycle model. It has no
-lateral-grip limit, aerodynamic drag, tire slip, steering-rate limit or finite
-vehicle footprint, so it can make unrealistic full-throttle cornering possible.
-Learning agents, LiDAR and multi-circuit training are Phase-2 work; randomized
-starts and more detailed vehicle dynamics remain outside the approved
-experiments.
+The environment uses a point-car bicycle model with a tyre friction budget, a
+steering-rate limit and drag. It has no tyre slip, load transfer, speed-dependent
+downforce or finite vehicle footprint. Training samples the start pose around the
+circuit while deterministic evaluation always launches from the canonical start
+line. LiDAR and multi-circuit training remain Phase-2 work.
 
 ## Evaluate the reference controllers
 
@@ -272,14 +271,15 @@ default.
   $(x,y)$ cannot generalize. Worth stating explicitly as a hypothesis and testing
   it — it's a clean, gradeable scientific result.
 
-* **Keep the approved initial-state rule fixed.** The experiments use the
-  canonical start. Randomized starts are a possible later study, not a training
-  shortcut for selected reported experiment runs.
+* **Keep training and evaluation starts distinct.** Training samples a pose
+  around the circuit for state coverage; deterministic evaluation always launches
+  from the canonical start line so every reported number answers the same
+  question. Mixing the two makes evaluation curves incomparable.
 
-* **Keep version-0 dynamics until the registered diagnosis.** The current
-  kinematic bicycle has no friction limit. Add only the minimum grip constraint
-  if the capable-policy trigger in the protocol is met; richer tire and vehicle
-  dynamics remain future work.
+* **Keep the frozen dynamics.** The friction budget, steering-rate limit and drag
+  are specified in `docs/MDP.md` and are the physics for both reported
+  experiments. Tyre slip, load transfer and a finite vehicle footprint remain
+  future work.
 
 * **Metrics/tracking.** Even without `wandb`/`tensorboard` installed, a small CSV
   logger per run + the planned project plotting utilities is enough. What
@@ -290,13 +290,15 @@ default.
 
 ## Variants and possible solutions
 
-- If the car always uses full throttle -> implement the planned grip-limited
-  dynamics before retuning the reward.
+- If the car always uses full throttle -> check the friction budget is actually
+  binding before retuning the reward; on this circuit it caps the tightest corner
+  at about 17 m/s.
 
 - If training is unstable -> diagnose the frozen configuration; changing the
   observation requires a new protocol amendment
 
-- If training is slow -> retain the fixed start for the approved reported
-  experiments; a random-start curriculum is a separate variant
+- If training is slow -> check the outcome mix and the *signed* mean throttle
+  before the return. A flat throttle magnitude with a zero signed mean means the
+  policy has learned nothing and the motion is exploration noise.
 
 - Infinite horizon -> The car is supposed to keep going indefinitely -> I would have to make sure that it does not crash intentionally
