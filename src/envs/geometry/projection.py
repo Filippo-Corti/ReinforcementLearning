@@ -59,6 +59,10 @@ class PolylineProjector:
         self.ends = ends
         self.lengths = lengths
         self.midpoints = midpoints
+        self._directions = ends - points
+        self._squared_lengths = np.einsum(
+            "ij,ij->i", self._directions, self._directions
+        )
         self._max_half_length = float(np.max(lengths) / 2.0)
         self._tree = cKDTree(midpoints)
 
@@ -83,10 +87,13 @@ class PolylineProjector:
         )
 
         search_radius = initial_distance + self._max_half_length
-        candidates = sorted(
-            set(self._tree.query_ball_point(point, search_radius)) | {initial_index}
+        candidates = np.union1d(
+            np.asarray(
+                self._tree.query_ball_point(point, search_radius), dtype=np.int64
+            ),
+            np.asarray([initial_index], dtype=np.int64),
         )
-        return self._project_candidates(point, candidates)
+        return self.project_sorted_candidates(point, candidates)
 
     def project_candidates(
         self,
@@ -97,14 +104,12 @@ class PolylineProjector:
         Return the closest projection among an explicit segment subset.
         """
         point = point_array(point)
-        candidates = list(segment_indices)
-        if not candidates:
+        candidates = np.asarray(list(segment_indices), dtype=np.int64)
+        if candidates.size == 0:
             raise ValueError("segment_indices must not be empty.")
-        if any(type(index) is not int for index in candidates):
-            raise ValueError("segment_indices must contain only integers.")
-        if any(not 0 <= index < self.segment_count for index in candidates):
+        if candidates.min() < 0 or candidates.max() >= self.segment_count:
             raise ValueError("segment_indices must reference indexed segments.")
-        return self._project_candidates(point, candidates)
+        return self.project_sorted_candidates(point, np.sort(candidates))
 
     def candidate_pairs(self, maximum_distance: float) -> NDArray[np.int64]:
         """
@@ -129,27 +134,32 @@ class PolylineProjector:
         )
         return self._tree.query_ball_tree(other._tree, search_radius)
 
-    def _project_candidates(
+    def project_sorted_candidates(
         self,
         point: FloatArray,
-        candidates: Iterable[int],
+        indices: NDArray[np.int64],
     ) -> SegmentProjection:
-        best: SegmentProjection | None = None
-        for index in candidates:
-            projection, fraction, distance = project_to_segment(
-                point,
-                self.starts[index],
-                self.ends[index],
-            )
-            candidate = SegmentProjection(
-                segment_index=index,
-                fraction=fraction,
-                point=projection,
-                distance=distance,
-            )
-            if best is None or (distance, index) < (best.distance, best.segment_index):
-                best = candidate
+        """
+        Return the nearest projection among pre-validated ascending candidates.
 
-        if best is None:
-            raise RuntimeError("segment index did not return any candidates.")
-        return best
+        This is the per-physics-substep hot path, so it trusts its arguments and
+        projects every candidate in one vectorized pass. Ascending order lets
+        `argmin` reproduce the lowest-index winner among equidistant segments.
+        """
+        starts = self.starts[indices]
+        directions = self._directions[indices]
+        offsets = point - starts
+        fractions = np.clip(
+            np.einsum("ij,ij->i", offsets, directions) / self._squared_lengths[indices],
+            0.0,
+            1.0,
+        )
+        deltas = offsets - fractions[:, np.newaxis] * directions
+        squared_distances = np.einsum("ij,ij->i", deltas, deltas)
+        best = int(np.argmin(squared_distances))
+        return SegmentProjection(
+            segment_index=int(indices[best]),
+            fraction=float(fractions[best]),
+            point=starts[best] + fractions[best] * directions[best],
+            distance=float(np.sqrt(squared_distances[best])),
+        )

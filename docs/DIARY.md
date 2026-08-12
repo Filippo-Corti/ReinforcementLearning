@@ -1513,3 +1513,44 @@ exercised the live dashboard and every shared figure builder.
 `README.md`, and `docs/DIARY.md`.
 
 **Commit**: `feature: align algorithm notebook dashboards [ai]`
+
+## 2026-08-12 — Environment step made three times faster
+
+**Task**: Reduce the cost of one `RacingEnv.step`. Profiling the 2,000,000
+interaction runs showed the environment, not the learning code, setting the
+wall-clock ceiling for Experiment 1.
+
+**Result**: Three changes, none of which alter behaviour. Centerline projection
+now evaluates all candidate segments in one vectorized pass instead of a Python
+loop calling `project_to_segment` per segment; `project_sorted_candidates` is
+the documented unvalidated hot path and the Frenet observer precomputes the
+sorted local-candidate table once per track instead of building a Python set per
+substep. SciPy's `CubicSpline` objects are still used to build coefficients, but
+scalar evaluation goes through `ScalarPiecewisePolynomial`, which applies
+Horner's rule directly and skips SciPy's array dispatch; position now uses a
+single vector-valued spline instead of two scalar ones. The finish-gate geometry
+is resolved once per episode into a `FinishGate` rather than re-interpolated at
+every physics substep. `RacingEnv._observe` also passes the lifecycle's known
+segment index, removing one global KD-tree search per agent step.
+
+Measured on this machine: `1164 us` to `348 us` per step, a factor of `3.34`.
+
+This exposed a second problem that is left for a later decision. With the step
+this cheap, the spawned-worker `AsyncVectorEnv` no longer pays for itself:
+ten workers deliver `2,605` steps per second while ten environments stepped
+sequentially in one process deliver `2,821`. Pure inter-process overhead is
+`1.01 ms` per wave against a `0.35 ms` step. Exploiting more than one core now
+needs a batched environment that steps every car with array operations, not
+per-step process handoff.
+
+**Validation**: A scripted-policy trace over three circuits and 926 steps,
+covering a crash, a completed lap and a time limit, is bit-identical before and
+after. The environment and geometry suites pass; Black and Ruff pass.
+
+**Files**: `src/envs/geometry/interpolation.py`,
+`src/envs/geometry/projection.py`, `src/envs/geometry/__init__.py`,
+`src/envs/observations/frenet.py`, `src/envs/racing/lifecycle.py`,
+`src/envs/racing/environment.py`, `src/envs/tracks/track.py`, and
+`docs/DIARY.md`.
+
+**Commit**: `perf: vectorize centerline projection and spline evaluation [ai]`

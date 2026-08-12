@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from math import isfinite
+from math import cos, isfinite, sin
 from os import PathLike
 from pathlib import Path
 from typing import Any, ClassVar
@@ -14,7 +14,7 @@ from scipy.interpolate import CubicSpline
 
 from configs import CarConfig, TrackGenerationConfig
 
-from ..geometry import PolylineProjector, wrap_angle
+from ..geometry import PolylineProjector, ScalarPiecewisePolynomial, wrap_angle
 from ..types import FloatArray
 from .errors import TrackValidationError
 
@@ -39,14 +39,22 @@ class TrackWithGeometry:
         extended_y = np.append(track.y, track.y[0])
         extended_curvature = np.append(track.curvature, track.curvature[0])
 
-        self._x_spline = CubicSpline(extended_s, extended_x, bc_type="periodic")
-        self._y_spline = CubicSpline(extended_s, extended_y, bc_type="periodic")
-        self._curvature_spline = CubicSpline(
+        curvature_spline = CubicSpline(
             extended_s,
             extended_curvature,
             bc_type="periodic",
         )
-        self._curvature_integral = self._curvature_spline.antiderivative()
+        self._position_spline = ScalarPiecewisePolynomial.periodic_spline(
+            extended_s,
+            np.column_stack((extended_x, extended_y)),
+        )
+        self._curvature_spline = ScalarPiecewisePolynomial.of(curvature_spline)
+        self._curvature_integral = ScalarPiecewisePolynomial.of(
+            curvature_spline.antiderivative()
+        )
+        self._lap_curvature_integral = float(
+            self._curvature_integral(track.track_length) - self._curvature_integral(0.0)
+        )
 
         unwrapped_heading = np.unwrap(track.heading)
         closing_turn = wrap_angle(float(track.heading[0] - track.heading[-1]))
@@ -112,11 +120,7 @@ class TrackWithGeometry:
         """
         Interpolate centerline position periodically at an arc length.
         """
-        wrapped = self._wrapped(s)
-        return np.array(
-            [self._x_spline(wrapped), self._y_spline(wrapped)],
-            dtype=np.float64,
-        )
+        return np.asarray(self._position_spline(self._wrapped(s)), dtype=np.float64)
 
     def heading(self, s: float) -> float:
         """
@@ -131,7 +135,7 @@ class TrackWithGeometry:
         Return the unit normal pointing left of the centerline tangent.
         """
         heading = self.heading(s)
-        return np.array([-np.sin(heading), np.cos(heading)], dtype=np.float64)
+        return np.array([-sin(heading), cos(heading)], dtype=np.float64)
 
     def curvature(self, s: float) -> float:
         """
@@ -148,10 +152,7 @@ class TrackWithGeometry:
             raise ValueError("distance must be finite and non-negative.")
         length = self.track.track_length
         complete_laps, remainder = divmod(distance, length)
-        lap_integral = float(
-            self._curvature_integral(length) - self._curvature_integral(0.0)
-        )
-        total = complete_laps * lap_integral
+        total = complete_laps * self._lap_curvature_integral
         end = start + remainder
         if end <= length:
             total += float(

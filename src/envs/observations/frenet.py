@@ -97,6 +97,12 @@ class FrenetObserver:
         self.maximum_local_distance = (
             track.track.width / 2.0 + maximum_physics_travel + 4.0 * spacing
         )
+        segment_count = track.centerline_projector.segment_count
+        offsets = np.arange(-self.local_window, self.local_window + 1)
+        self._local_candidates = np.sort(
+            (np.arange(segment_count)[:, np.newaxis] + offsets) % segment_count,
+            axis=1,
+        )
 
     def observe(
         self,
@@ -182,11 +188,10 @@ class FrenetObserver:
                 "previous_segment_index must reference a centerline segment."
             )
 
-        candidates = {
-            (previous_segment_index + offset) % projector.segment_count
-            for offset in range(-self.local_window, self.local_window + 1)
-        }
-        local = projector.project_candidates(point, sorted(candidates))
+        local = projector.project_sorted_candidates(
+            point,
+            self._local_candidates[previous_segment_index],
+        )
         if local.distance <= self.maximum_local_distance:
             return self._frenet_projection(
                 point,

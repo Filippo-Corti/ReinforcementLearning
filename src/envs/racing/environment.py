@@ -242,6 +242,7 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             raise RuntimeError("environment state is not initialized.")
         observation, _ = self._lifecycle.observer.observe(
             self.state,
+            previous_segment_index=self._lifecycle.current_segment_index,
             config=self.config.observation,
         )
         return observation.as_array().astype(np.float32)

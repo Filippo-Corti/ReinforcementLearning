@@ -45,6 +45,28 @@ class ActionOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class FinishGate:
+    """
+    Store the fixed finish-line segment an episode must cross to complete a lap.
+
+    The gate spans the track width at one arc length and never moves during an
+    episode, so its geometry is resolved once instead of at every physics
+    substep.
+
+    Fields:
+        * center: The centerline point at the gate arc length.
+        * tangent: The unit forward direction at the gate.
+        * start: The gate endpoint right of forward travel.
+        * end: The gate endpoint left of forward travel.
+    """
+
+    center: np.ndarray
+    tangent: np.ndarray
+    start: np.ndarray
+    end: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
 class EpisodeLifecycleState:
     """
     Store the mutable episode progress needed to resume racing dynamics exactly.
@@ -101,6 +123,9 @@ class EpisodeLifecycle:
         self.agent_steps = 0
         self._previous_position = np.zeros(2, dtype=np.float64)
         self._previous_segment_index: int | None = None
+        self._gate = self._build_gate(
+            track.track.start_index * track.track.sample_spacing
+        )
 
     def reset(self, state: VehicleState) -> FrenetProjection:
         """
@@ -177,6 +202,13 @@ class EpisodeLifecycle:
             termination_substep=termination_substep,
         )
 
+    @property
+    def current_segment_index(self) -> int | None:
+        """
+        Return the centerline segment holding the most recent projection.
+        """
+        return self._previous_segment_index
+
     def state(self) -> EpisodeLifecycleState:
         """
         Return the semantic mutable state needed for a mid-episode restore.
@@ -202,6 +234,21 @@ class EpisodeLifecycle:
         self._previous_position = np.asarray(state.previous_position, dtype=np.float64)
         self._previous_segment_index = state.previous_segment_index
 
+    def _build_gate(self, gate_s: float) -> FinishGate:
+        """
+        Resolve the finish-line geometry at one arc length along the centerline.
+        """
+        half_width = self.track.track.width / 2.0
+        center = self.track.position(gate_s)
+        normal = self.track.normal(gate_s)
+        heading = self.track.heading(gate_s)
+        return FinishGate(
+            center=center,
+            tangent=np.asarray([np.cos(heading), np.sin(heading)], dtype=np.float64),
+            start=center - half_width * normal,
+            end=center + half_width * normal,
+        )
+
     @property
     def _finish_progress_requirement(self) -> float:
         """
@@ -221,27 +268,20 @@ class EpisodeLifecycle:
         """
         Return whether forward motion crosses the finite start/finish gate.
         """
-        raw_track = self.track.track
-        start_s = raw_track.start_index * raw_track.sample_spacing
-        gate_center = self.track.position(start_s)
-        normal = self.track.normal(start_s)
-        tangent = np.asarray(
-            [
-                np.cos(self.track.heading(start_s)),
-                np.sin(self.track.heading(start_s)),
-            ]
+        gate = self._gate
+        previous_longitudinal = float(
+            np.dot(previous_position - gate.center, gate.tangent)
         )
-        gate_start = gate_center - raw_track.width / 2.0 * normal
-        gate_end = gate_center + raw_track.width / 2.0 * normal
-        previous_longitudinal = float(np.dot(previous_position - gate_center, tangent))
-        current_longitudinal = float(np.dot(current_position - gate_center, tangent))
+        current_longitudinal = float(
+            np.dot(current_position - gate.center, gate.tangent)
+        )
         return (
             previous_longitudinal < 0.0 <= current_longitudinal
             and segments_intersect(
                 previous_position,
                 current_position,
-                gate_start,
-                gate_end,
+                gate.start,
+                gate.end,
             )
         )
 
