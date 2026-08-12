@@ -1638,4 +1638,6 @@ and `docs/DIARY.md`.
 
 **Commits**: `feature: add grip-limited physics, sampled starts and lap-time
 reward [ai]`, `feature: bound exploration scale and shorten PPO rollout reuse
-[ai]`, `feature: report signed throttle, outcome mix and lap time [ai]`.
+[ai]`, `feature: report signed throttle, outcome mix and lap time [ai]`,
+`fix: initialize the policy neutral in acceleration, not in action [ai]`,
+`docs: specify the grip-limited MDP and the three reward orderings [ai]`.
