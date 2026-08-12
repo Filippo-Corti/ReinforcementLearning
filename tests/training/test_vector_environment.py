@@ -140,10 +140,11 @@ def test_optional_collision_info_is_safe_when_only_one_worker_crashes() -> None:
     ) as pool:
         pool.reset()
         actions = np.asarray(((1.0, 1.0), (0.0, 0.0)), dtype=np.float32)
-        for _ in range(50):
-            _, _, terminated, _, infos = pool.step(actions)
+        _, _, terminated, _, infos = pool.step(actions)
+        for _ in range(49):
             if terminated[0]:
                 break
+            _, _, terminated, _, infos = pool.step(actions)
 
         assert terminated[0]
         assert vector_worker_info(infos, 0)["collision_substep"] is not None
