@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from math import log
+from typing import cast
 
 import numpy as np
 import torch
@@ -188,6 +189,15 @@ class GaussianPolicy(nn.Module, Policy):
             device=device,
             dtype=dtype,
         )
+        with torch.no_grad():
+            output_layer = cast(nn.Linear, self._mean[-1])
+            output_layer.bias.copy_(
+                torch.as_tensor(
+                    config.initial_action_bias,
+                    device=output_layer.bias.device,
+                    dtype=output_layer.bias.dtype,
+                )
+            )
         self.log_standard_deviation = nn.Parameter(
             torch.full(
                 (config.action_dimensions,),

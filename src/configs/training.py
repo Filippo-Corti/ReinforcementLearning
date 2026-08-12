@@ -72,6 +72,16 @@ class ActorConfig(SerializableConfig):
     being identifiable. Capping the scale at one keeps samples inside the
     responsive part of the squashing function.
 
+    The initial action bias exists for the same reason, one level down. A mean of
+    zero is neutral in the *action*, but not in the physical quantity the action
+    controls: braking is more than twice as strong as acceleration, so symmetric
+    exploration noise around zero throttle decelerates the car by about
+    `2.2 m/s^2` on average. An untrained policy therefore brakes to a standstill
+    within seconds and every episode ends as a stall, which is precisely the
+    degenerate behaviour the reward orderings are designed to avoid. The default
+    throttle bias is the value at which the initial policy's expected
+    acceleration is zero, so the untrained car coasts instead of braking.
+
     Fields:
         * name: Human-readable actor-size identity.
         * hidden_sizes: Width of each hidden layer.
@@ -82,6 +92,7 @@ class ActorConfig(SerializableConfig):
         * output_initialization_gain: Orthogonal gain for the mean output layer.
         * initial_log_standard_deviation: Initial log exploration scale.
         * log_standard_deviation_bounds: Bounds on the learned log scale.
+        * initial_action_bias: Output-layer bias of the mean network per action.
     """
 
     name: Literal["small", "medium", "large"]
@@ -93,6 +104,7 @@ class ActorConfig(SerializableConfig):
     output_initialization_gain: float = 0.01
     initial_log_standard_deviation: float = -0.5
     log_standard_deviation_bounds: tuple[float, float] = (-5.0, 0.0)
+    initial_action_bias: tuple[float, float] = (0.2, 0.0)
 
 
 SMALL_ACTOR_CONFIG = ActorConfig(name="small", hidden_sizes=(32, 32))

@@ -4,7 +4,12 @@ from math import exp, log
 
 import torch
 
-from configs import LARGE_ACTOR_CONFIG, MEDIUM_ACTOR_CONFIG, SMALL_ACTOR_CONFIG
+from configs import (
+    LARGE_ACTOR_CONFIG,
+    MEDIUM_ACTOR_CONFIG,
+    SMALL_ACTOR_CONFIG,
+    CarConfig,
+)
 from models import ActorNetwork, agent_parameter_counts
 
 
@@ -166,3 +171,29 @@ def test_deterministic_action_does_not_consume_sampling_generator() -> None:
     assert torch.equal(
         torch.rand(4, generator=generator), torch.rand(4, generator=expected_generator)
     )
+
+
+def test_untrained_policy_neither_accelerates_nor_brakes_on_average() -> None:
+    """
+    A policy neutral in the action must also be neutral in what the action does.
+
+    Braking is more than twice as strong as acceleration, so symmetric
+    exploration noise around a zero throttle mean decelerates the car. Without
+    the initial action bias an untrained policy brakes to a standstill within
+    seconds and every episode ends as a stall, which is the degenerate behaviour
+    the reward orderings exist to prevent.
+    """
+    vehicle = CarConfig()
+    actor = _actor(MEDIUM_ACTOR_CONFIG)
+    observations = torch.zeros(4_096, 4)
+
+    throttle = actor.sample(observations, torch.Generator().manual_seed(3)).env_action[
+        :, 0
+    ]
+    acceleration = torch.where(
+        throttle >= 0.0,
+        vehicle.max_acceleration * throttle,
+        vehicle.max_braking * throttle,
+    )
+
+    assert abs(float(acceleration.mean())) < 0.5
