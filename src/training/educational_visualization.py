@@ -310,16 +310,28 @@ def plot_driving_behavior(
     moving_average_window: int,
 ) -> Figure:
     """
-    Plot mean episode speed and mean absolute throttle/brake action.
+    Plot mean episode speed and both the signed and absolute throttle action.
+
+    The magnitude alone cannot distinguish a learned throttle from exploration
+    noise: a zero mean squashed by `tanh` already produces a large and perfectly
+    flat magnitude. The signed mean is the curve that moves only when the policy
+    itself has learned to accelerate.
     """
     episodes = _episode_indices(episode_rows)
     speeds = _episode_values(episode_rows, "mean_speed")
+    signed_throttles = _episode_values(episode_rows, "mean_throttle")
     throttle_magnitudes = _episode_values(episode_rows, "mean_throttle_magnitude")
-    figure, axes = plt.subplots(1, 2, figsize=(14, 4.5), constrained_layout=True)
+    figure, axes = plt.subplots(1, 3, figsize=(19, 4.5), constrained_layout=True)
     for axis, values, title, ylabel in (
         (axes[0], speeds, "Mean training speed", "speed"),
         (
             axes[1],
+            signed_throttles,
+            "Mean signed throttle",
+            "throttle/brake",
+        ),
+        (
+            axes[2],
             throttle_magnitudes,
             "Mean throttle magnitude",
             "absolute throttle/brake",
@@ -334,6 +346,67 @@ def plot_driving_behavior(
         )
         axis.set(title=title, xlabel="episode", ylabel=ylabel)
         axis.legend()
+    axes[1].axhline(0.0, color="black", linewidth=0.9, linestyle="--")
+    _style_axes(axes)
+    return figure
+
+
+def plot_outcomes_and_lap_time(
+    episode_rows: Sequence[Mapping[str, object]],
+    *,
+    moving_average_window: int,
+) -> Figure:
+    """
+    Plot the training outcome mix and the lap times of completed episodes.
+
+    A return curve cannot say whether a policy is crashing, idling or lapping
+    slowly, and a lap that completes says nothing about how fast it was. These
+    are the two questions the reward alone leaves ambiguous.
+    """
+    episodes = _episode_indices(episode_rows)
+    outcomes = [str(row["outcome"]) for row in episode_rows]
+    figure, axes = plt.subplots(1, 2, figsize=(14, 4.5), constrained_layout=True)
+
+    for name in ("completed", "crashed", "stalled", "time_limit"):
+        indicator = np.asarray(
+            [1.0 if outcome == name else 0.0 for outcome in outcomes],
+            dtype=np.float64,
+        )
+        if not indicator.any():
+            continue
+        axes[0].plot(
+            episodes,
+            trailing_average(indicator, moving_average_window),
+            linewidth=2.0,
+            label=name,
+        )
+    axes[0].set(
+        title="Training outcome mix",
+        xlabel="episode",
+        ylabel=f"fraction (w={moving_average_window})",
+        ylim=(-0.02, 1.02),
+    )
+    axes[0].legend()
+
+    completed = [
+        (index, float(row["lap_time"]))
+        for index, row in zip(episodes, episode_rows, strict=True)
+        if row.get("lap_time") is not None
+    ]
+    if completed:
+        completed_episodes, lap_times = zip(*completed, strict=True)
+        axes[1].plot(
+            completed_episodes, lap_times, alpha=0.35, label="completed episode"
+        )
+        axes[1].plot(
+            completed_episodes,
+            trailing_average(np.asarray(lap_times), moving_average_window),
+            linewidth=2.2,
+            label=f"moving average (w={moving_average_window})",
+        )
+    axes[1].set(title="Completed lap time", xlabel="episode", ylabel="seconds")
+    if completed:
+        axes[1].legend()
     _style_axes(axes)
     return figure
 
