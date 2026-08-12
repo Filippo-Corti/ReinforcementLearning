@@ -263,15 +263,25 @@ reported.
 Hidden weights use orthogonal initialization with gain $\sqrt2$ (the gain is
 the scalar that multiplies the initial orthogonal matrix, so it controls the
 initial weight norm of the network) and zero bias.
-The actor mean output uses gain $0.01$, making initial mean actions close to
-neutral; the critic output uses gain $1$. These gains are project engineering
-choices, not consequences of the policy-gradient theorem.
+The actor mean output uses gain $0.01$; the critic output uses gain $1$. The
+actor's output bias is not zero: it starts at $(0.2, 0)$, so the initial policy
+is neutral in **acceleration** rather than in the normalized action. Braking
+reaches $20\,\mathrm{m\,s^{-2}}$ while the engine gives $9.26$, so symmetric
+exploration noise around a zero throttle mean has expected acceleration
+$9.26\,\mathbb E[\tanh^+] - 20\,\mathbb E[\tanh^-] \approx -2.17\,\mathrm{m\,s^{-2}}$;
+an untrained policy brakes to a standstill within seconds and every episode ends
+as a stall. The bias is the value at which that expectation is zero. These gains
+are project engineering choices, not consequences of the policy-gradient theorem.
 
 The learned log standard deviations start at $-0.5$, corresponding to
 $\sigma\approx0.61$ before squashing. This is a deliberately moderate initial
-exploration scale. Values are constrained to $[-5,2]$ during use to avoid
-numerical collapse or explosion. These three dispersion values are also project
-choices and are checked during the pre-experiment configuration work.
+exploration scale. Values are constrained to $[-5,0]$ during use. The lower
+bound avoids numerical collapse. The upper bound is $0$, not $2$, because
+actions are squashed by $\tanh$: at $\sigma\approx1.9$, which a PPO run reached
+under the old bound, nearly every sample saturates at a control limit, the
+policy degenerates into random bang-bang steering, and its mean stops being
+identifiable from the data. These dispersion values are project choices and are
+checked during the pre-experiment configuration work.
 
 ## Input normalization and optimization safeguards
 
@@ -349,13 +359,16 @@ moved too far from the behaviour policy. It changes PPO's objective but does not
 directly clip its gradients. PPO value clipping would be a third, separate
 mechanism; it is disabled here.
 
-REINFORCE optionally applies an explicit Adam L2 penalty to the MLP weight
-matrices only. Biases and the learned log standard deviations are excluded, so
-this regularization cannot directly pull the exploration scale toward
-$\exp(0)=1$. The coefficient is part of `ReinforceConfig`; it defaults to zero,
-while the exploratory setting in `notebooks/reinforce.ipynb` is $10^{-4}$.
-A2C and PPO weight decay remain disabled. No entropy bonus, learning-rate
-scheduler, PPO value clipping or KL early stop is enabled. The sampled value
+Weight decay is disabled for all three algorithms. REINFORCE previously carried
+an optional Adam L2 penalty on its MLP weights, set to $10^{-4}$ in its
+notebook. It has been removed: no other algorithm had it, which broke the
+comparison, and over a 2,000,000-interaction run it shrank the actor weight norm
+monotonically toward a zero-output mean while the policy-gradient term made no
+net progress.
+
+No entropy bonus, learning-rate scheduler or PPO value clipping is enabled. PPO
+**does** stop an update early when the mean approximate KL of an epoch exceeds
+$0.02$; see the PPO section. The sampled value
 $-\log\pi_{\mathbf\theta}(A_t\mid O_t)$ is logged only as a dispersion diagnostic.
 
 ## Episode endings and value bootstrap
@@ -656,9 +669,17 @@ improvements while retaining the sampled data.
 
 The original PPO paper defines this repeated-minibatch structure. Its
 continuous-control configuration motivates the starting choices of $2048$
-rollout transitions, $10$ epochs and clipping parameter $\epsilon=0.2$. This
-project uses minibatches of $64$, matching that reference configuration rather
-than the previously unexplained value $256$.
+rollout transitions and clipping parameter $\epsilon=0.2$. This project uses
+minibatches of $64$, matching that reference configuration rather than the
+previously unexplained value $256$.
+
+Epochs are $4$, not the paper's $10$. Clipping bounds how far one minibatch step
+may move the policy, but nothing bounds the drift accumulated across many reuses
+of the same rollout, and a 2,000,000-interaction run under $10$ epochs showed
+PPO repeatedly collapsing from a completed lap to near-zero return and relearning.
+Four epochs also cost less than half the optimizer time: at $10$ epochs the
+optimizer alone accounted for roughly fourteen minutes of a run in which A2C's
+optimizer took seconds.
 
 The implementation-only learning gate uses the same deterministic one-step task
 as REINFORCE and A2C: a constant observation $(1)$ with reward equal to the
@@ -700,11 +721,15 @@ $$
 $$
 
 Old log-probabilities, standardized advantages and value targets remain fixed
-for all ten epochs. Each seeded epoch permutation covers every rollout row once.
+for every epoch. Each seeded epoch permutation covers every rollout row once.
 The approximate-KL diagnostic is the nonnegative sample mean
 $((\omega_t-1)-\log\omega_t)$, while clip fraction is the sample fraction with
-$|\omega_t-1|>\epsilon$. Both are diagnostics only: the approved PPO update has
-neither KL early stopping nor value clipping.
+$|\omega_t-1|>\epsilon$.
+
+The approximate KL is also a control, not only a diagnostic. After each complete
+epoch, if its mean exceeds the target $0.02$ the update ends and the remaining
+epochs are skipped. The number of epochs actually run is recorded as
+`completed_epochs`. Value clipping remains disabled.
 
 ### PPO pseudocode
 
@@ -714,7 +739,7 @@ Input:
     actor and critic learning rates
     gamma = 0.9995, lambda = 0.95
     rollout capacity = 2048, minibatch size = 64
-    update epochs = 10, clipping epsilon = 0.2
+    update epochs = 4, clipping epsilon = 0.2, target KL = 0.02
     training-interaction budget and indexed per-worker RNG streams
 
 Initialize:
@@ -784,7 +809,9 @@ The following distinction is intentional:
 | Actor widths | Scientific factor fixed by the experiment design |
 | Fixed `(64, 64)` critic | Project control that prevents a critic-capacity confound |
 | Adam $\beta_1$, $\beta_2$ and $10^{-8}$ | Defaults recommended in the original Adam paper |
-| PPO rollout 2048, 10 epochs, minibatch 64 and clip 0.2 | Starting configuration reported for continuous control in the original PPO paper |
+| PPO rollout 2048, minibatch 64 and clip 0.2 | Starting configuration reported for continuous control in the original PPO paper |
+| PPO 4 epochs and target KL 0.02 | Project stability choice after observing repeated policy collapse under 10 unconditional epochs |
+| Actor output bias $(0.2, 0)$ | Makes the initial policy neutral in acceleration, which a zero bias is not |
 | $\lambda=0.95$ | Conventional GAE/PPO starting value, checked before reported runs |
 | Squashed Gaussian, state-independent dispersion and its bounds | Explicit project policy-class choice required by the bounded action space |
 | Naive running-sum normalization | Explicit project simplicity choice |
