@@ -517,15 +517,19 @@ power calculation. Every generated integer seed and geometry summary is stored.
 The Frenet actor and critic receive
 
 $$
-O_t^{\mathrm{Frenet}}=(d_t,\phi_{e,t},v_t,\bar\kappa_t).
+O_t^{\mathrm{Frenet}}=(d_t,\phi_{e,t},v_t,\delta_t,\bar\kappa_t).
 $$
 
 The LiDAR actor and critic receive
 
 $$
-O_t^{\mathrm{LiDAR}}=(v_t,\widetilde r_t^{(1)},\ldots,
+O_t^{\mathrm{LiDAR}}=(v_t,\delta_t,\widetilde r_t^{(1)},\ldots,
 \widetilde r_t^{(16)}).
 $$
+
+Both conditions carry the speed and the steering angle, which are vehicle state
+rather than perception. Only the track representation differs, which is the
+comparison the experiment is about.
 
 Neither critic receives privileged information. Each condition learns its own
 observation-normalization statistics from training only and freezes them during
