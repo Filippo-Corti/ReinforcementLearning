@@ -143,7 +143,7 @@ can be driven without learning:
 
 $$
 A_t^{\mathrm{steer}}=
-\operatorname{clip}(-0.15d_t-0.8\phi_{e,t}+50\bar\kappa_t,-1,1),
+\operatorname{clip}(-0.15d_t-0.8\phi_{e,t}+10\bar\kappa_t,-1,1),
 $$
 
 $$
@@ -159,7 +159,7 @@ theory:
 
 - `0.15` makes a one-metre lateral error contribute `0.15` steering;
 - `0.8` gives a heading error in radians a stronger corrective effect;
-- `50` makes curvature $0.01\,\mathrm{m^{-1}}$ contribute `0.5` steering;
+- `10` makes curvature $0.01\,\mathrm{m^{-1}}$ contribute `0.1` steering;
 - $12\,\mathrm{m\,s^{-2}}$ defines a curvature-dependent target through
   $v^2|\kappa|$, deliberately below the car's $20\,\mathrm{m\,s^{-2}}$ friction
   budget: preview curvature is averaged over the lookahead and so understates a
@@ -178,27 +178,20 @@ solvable with the current physics and reward.
 
 ### Fixed circuit for Experiment 1
 
-Generate 100 candidate circuits from dedicated deterministic identities. A
-candidate is eligible when:
-
-- at least 15% of its arc-length samples have
-  $|\kappa|\le0.002\,\mathrm{m^{-1}}$, representing approximately straight
-  sections with radius at least $500\,\mathrm m$; and
-- at least 5% have $|\kappa|\ge0.01\,\mathrm{m^{-1}}$, representing materially
-  curved sections with radius at most $100\,\mathrm m$.
-
-These thresholds ensure the selected circuit contains both behaviours needed
-for the racing question. A dry run found 85 eligible candidates out of 100, so
-the rule is selective without being fragile.
-
-For every eligible circuit, compute track length, median $|\kappa|$ and the 90th
-percentile of $|\kappa|$. Center each feature on its eligible-set median and
-divide it by its eligible-set interquartile range. Omit a feature only if that
-range is zero. Select the circuit with the smallest Euclidean norm of the
-resulting vector, breaking an exact tie by lower logical identity. Save the
+Generate candidate circuits from dedicated deterministic identities and choose
+one by inspection. Record its logical identity and generated seed, and save the
 complete circuit as `tracks/experiment_1.json`.
 
-No learned return, completion or lap time can influence this selection.
+There is no automatic selection rule. An earlier revision scored candidates on
+curvature quantiles behind a two-part eligibility filter, but the generator it
+was written for produced circuits that curve almost everywhere, and the filter
+admitted none of them. A rule that encodes what a circuit should look like is
+worth less here than looking at it: the circuit is a fixed condition of
+Experiment 1, not one of its results, and every algorithm and actor size meets
+the same one.
+
+The single binding requirement is that the choice is made before any learned
+outcome exists. No return, completion count or lap time may influence it.
 
 ### Physics version
 
