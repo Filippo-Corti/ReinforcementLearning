@@ -176,6 +176,12 @@ collection and update boundaries can be read from top to bottom. These simpler
 engines return episode and update records for notebooks and teaching; they do
 not replace the shared engine used by `experiments/train.py`.
 
+The readable engines also accept an episode-indexed procedural-track schedule.
+When enabled, each episode reset generates the circuit associated with that
+episode identity instead of selecting from a hand-picked in-memory pool. A
+fixed root and episode index reproduce the same circuit independently of policy
+sampling and environment-reset randomness.
+
 [`notebooks/reinforce.ipynb`](notebooks/reinforce.ipynb) walks through a
 REINFORCE run with the readable engine. Its first cell exposes the actor,
 algorithm, seed, episode, rendering and circuit settings, including a switch

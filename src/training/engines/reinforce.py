@@ -56,6 +56,7 @@ class ReinforceTrainingEngine:
         ),
         track_selection_generator: np.random.Generator | Sequence[np.random.Generator],
         *,
+        track_seed_for_episode: Callable[[int], int] | None = None,
         execution_config: ExecutionConfig | None = None,
     ) -> None:
         """
@@ -85,6 +86,7 @@ class ReinforceTrainingEngine:
         self.tracks = tuple(tracks)
         self.environment_config = environment_config
         self.normalizer = normalizer
+        self.track_seed_for_episode = track_seed_for_episode
         self.history = EducationalTrainingHistory()
         self._episode_batch: list[OnPolicyRollout] = []
         self.environments = PersistentRacingVectorEnv(
@@ -144,7 +146,10 @@ class ReinforceTrainingEngine:
                     next_episode_index + wave_size,
                     dtype=np.int64,
                 )
-                observations, reset_infos = self.environments.reset(active)
+                observations, reset_infos = self.environments.reset(
+                    active,
+                    track_seeds=self._track_seeds(episode_indices, active),
+                )
                 transitions: list[list[TrainingTransition]] = [
                     [] for _ in range(self.execution_config.environment_workers)
                 ]
@@ -317,6 +322,25 @@ class ReinforceTrainingEngine:
         finally:
             progress_bar.close()
         return self.history
+
+    def _track_seeds(
+        self,
+        episode_indices: np.ndarray,
+        reset_mask: np.ndarray,
+    ) -> list[int | None] | None:
+        """
+        Derive one procedural circuit seed for each episode selected to reset.
+        """
+        if self.track_seed_for_episode is None:
+            return None
+        return [
+            (
+                self.track_seed_for_episode(int(episode_indices[index]))
+                if reset_mask[index]
+                else None
+            )
+            for index in range(self.execution_config.environment_workers)
+        ]
 
     def close(self) -> None:
         """

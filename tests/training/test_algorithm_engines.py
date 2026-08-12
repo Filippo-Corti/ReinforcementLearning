@@ -133,6 +133,7 @@ def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
         _normalizer(),
         (np.random.default_rng(4), np.random.default_rng(5)),
         (np.random.default_rng(6), np.random.default_rng(7)),
+        track_seed_for_episode=lambda episode_index: 100 + episode_index,
         execution_config=ExecutionConfig(device="cpu", environment_workers=2),
     )
 
@@ -147,6 +148,11 @@ def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
     assert len(history.episodes) == 3
     assert [record.transition_count for record in history.updates] == [2, 1]
     assert completed_episodes == [(0, 1), (1, 2), (2, 3)]
+    assert [record.circuit_identity for record in history.episodes] == [
+        "100",
+        "101",
+        "102",
+    ]
     assert all(np.isfinite(record.mean_speed) for record in history.episodes)
     assert all(
         np.isfinite(record.mean_throttle_magnitude) for record in history.episodes

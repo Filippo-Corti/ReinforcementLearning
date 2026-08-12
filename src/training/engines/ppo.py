@@ -57,6 +57,7 @@ class PPOTrainingEngine:
         ),
         track_selection_generator: np.random.Generator | Sequence[np.random.Generator],
         *,
+        track_seed_for_episode: Callable[[int], int] | None = None,
         execution_config: ExecutionConfig | None = None,
     ) -> None:
         """
@@ -74,6 +75,7 @@ class PPOTrainingEngine:
         self.tracks = tuple(tracks)
         self.environment_config = environment_config
         self.normalizer = normalizer
+        self.track_seed_for_episode = track_seed_for_episode
         self.history = EducationalTrainingHistory()
         self._rollout_buffer = VectorRolloutBuffer(agent.collection_size, worker_count)
         self.environments = PersistentRacingVectorEnv(
@@ -117,7 +119,10 @@ class PPOTrainingEngine:
         for environment_index in range(initial_episodes):
             episode_identities[environment_index] = next_episode_identity
             next_episode_identity += 1
-        observations, reset_infos = self.environments.reset(active)
+        observations, reset_infos = self.environments.reset(
+            active,
+            track_seeds=self._track_seeds(episode_identities, active),
+        )
         episode_steps = np.zeros(worker_count, dtype=np.int64)
         episode_returns = np.zeros(worker_count, dtype=np.float64)
         maximum_progress = np.zeros(worker_count, dtype=np.float64)
@@ -275,7 +280,8 @@ class PPOTrainingEngine:
 
                 if np.any(reset_mask):
                     reset_observations, reset_infos = self.environments.reset(
-                        reset_mask
+                        reset_mask,
+                        track_seeds=self._track_seeds(episode_identities, reset_mask),
                     )
                     observations = reset_observations
                     for environment_index_value in np.flatnonzero(reset_mask):
@@ -293,6 +299,25 @@ class PPOTrainingEngine:
         if self._rollout_buffer.transition_count:
             self._apply_rollout_update()
         return self.history
+
+    def _track_seeds(
+        self,
+        episode_identities: np.ndarray,
+        reset_mask: np.ndarray,
+    ) -> list[int | None] | None:
+        """
+        Derive one procedural circuit seed for each episode selected to reset.
+        """
+        if self.track_seed_for_episode is None:
+            return None
+        return [
+            (
+                self.track_seed_for_episode(int(episode_identities[index]))
+                if reset_mask[index]
+                else None
+            )
+            for index in range(self.execution_config.environment_workers)
+        ]
 
     def close(self) -> None:
         """

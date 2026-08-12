@@ -9,7 +9,7 @@ import numpy as np
 
 from configs import EnvironmentConfig, ExecutionConfig, SimulationConfig
 from envs.tracks import TrackWithGeometry
-from training import PersistentRacingVectorEnv, vector_worker_info
+from training import PersistentRacingVectorEnv, vector_info, vector_worker_info
 from utils.random import RunSeedStreams, SeedNamespace, SeedStream
 
 
@@ -104,6 +104,17 @@ def test_vector_state_restores_worker_and_scheduler_progress() -> None:
         np.testing.assert_array_equal(actual[1], expected[1])
         np.testing.assert_array_equal(actual[2], expected[2])
         np.testing.assert_array_equal(actual[3], expected[3])
+
+
+def test_explicit_seeds_generate_a_new_procedural_track_at_reset() -> None:
+    with _pool() as pool:
+        _, infos = pool.reset(track_seeds=(101, 202))
+        state = pool.state()
+
+        assert vector_info(infos, "circuit_identity", 0) == "101"
+        assert vector_info(infos, "circuit_identity", 1) == "202"
+        assert tuple(worker.track_seed for worker in state.workers) == (101, 202)
+        assert state.next_track_seeds == (101, 202)
 
 
 def test_optional_collision_info_is_safe_when_only_one_worker_crashes() -> None:

@@ -1446,3 +1446,29 @@ test files.
 `docs/DIARY.md`.
 
 **Commit**: `feature: budget educational training by interactions [ai]`
+
+## 2026-08-12 — Episode-indexed procedural training circuits
+
+**Task**: Replace the educational notebooks' three hand-picked training
+circuits with a reproducible fresh procedural circuit at every episode reset.
+
+**Result**: The persistent vector workers can now replace their fixed-pool
+circuit with a procedurally generated circuit from an explicit seed during
+reset, while retaining fixed-pool behaviour for single-circuit runs. The
+readable engines accept an episode-to-seed function and request the circuit for
+the logical episode identity before resetting a worker. This makes circuit
+identity independent of worker completion order and allows REINFORCE, A2C and
+PPO to share the same root-and-episode schedule. Worker snapshots retain both
+fixed track indexes and procedural seeds for exact reconstruction.
+
+**Validation**: Vector tests verified explicit procedural identities and saved
+worker seeds. The educational-engine test verified that episode identities
+`0..2` received procedural seeds `100..102`. The focused engine and vector
+suite passed all eight tests; Black and Ruff passed.
+
+**Files**: `src/training/vector_environment.py`,
+`src/training/engines/reinforce.py`, `src/training/engines/a2c.py`,
+`src/training/engines/ppo.py`, `tests/training/test_vector_environment.py`,
+`tests/training/test_algorithm_engines.py`, `README.md`, and `docs/DIARY.md`.
+
+**Commit**: `feature: generate a circuit for each training episode [ai]`

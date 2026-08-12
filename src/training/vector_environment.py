@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from functools import partial
@@ -56,13 +57,15 @@ class RacingWorkerState:
     Store one worker's selected track and resumable environment state.
 
     Fields:
-        * track_index: Index of the current track in the immutable worker pool.
+        * track_index: Index of the current fixed track, when using the pool.
+        * track_seed: Seed of the current procedural track, when generated at reset.
         * environment: Racing dynamics and lifecycle state.
         * last_observation: Observation returned by the most recent reset or step.
         * last_info: Diagnostics paired with the most recent observation.
     """
 
-    track_index: int
+    track_index: int | None
+    track_seed: int | None
     environment: RacingEnvState
     last_observation: NDArray[np.float32]
     last_info: dict[str, Any]
@@ -78,12 +81,14 @@ class VectorRacingState:
         * reset_generators: Ordered NumPy bit-generator states for reset seeds.
         * track_generators: Ordered NumPy bit-generator states for track selection.
         * next_track_indices: Track indices last assigned to each worker.
+        * next_track_seeds: Procedural track seeds last assigned to each worker.
     """
 
     workers: tuple[RacingWorkerState, ...]
     reset_generators: tuple[dict[str, Any], ...]
     track_generators: tuple[dict[str, Any], ...]
     next_track_indices: tuple[int, ...]
+    next_track_seeds: tuple[int | None, ...]
 
 
 class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
@@ -98,6 +103,7 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         * tracks: Immutable circuits available to this worker.
         * environment_config: Shared racing configuration.
         * next_track_index: Circuit selected by the parent for the next reset.
+        * next_track_seed: Procedural circuit seed selected for the next reset.
         * torch_determinism: Deterministic PyTorch settings applied in this process.
     """
 
@@ -113,8 +119,10 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         self.tracks = tracks
         self.environment_config = environment_config
         self.next_track_index = 0
+        self.next_track_seed: int | None = None
         self.torch_determinism = torch_determinism
-        self._track_index = 0
+        self._track_index: int | None = 0
+        self._track_seed: int | None = None
         self._environment = RacingEnv(tracks[0], config=environment_config)
         self._last_observation = np.zeros(4, dtype=np.float32)
         self._last_info: dict[str, Any] = {}
@@ -138,9 +146,20 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         super().reset(seed=seed)
         del options
         self._environment.close()
-        self._track_index = int(self.next_track_index)
+        if self.next_track_seed is None:
+            self._track_index = int(self.next_track_index)
+            self._track_seed = None
+            track = self.tracks[self._track_index]
+        else:
+            self._track_index = None
+            self._track_seed = int(self.next_track_seed)
+            track = TrackWithGeometry.generate(
+                self._track_seed,
+                track_config=self.environment_config.track,
+                vehicle_config=self.environment_config.vehicle,
+            )
         self._environment = RacingEnv(
-            self.tracks[self._track_index],
+            track,
             config=self.environment_config,
         )
         observation, info = self._environment.reset(seed=seed)
@@ -193,6 +212,7 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         """
         return RacingWorkerState(
             track_index=self._track_index,
+            track_seed=self._track_seed,
             environment=self._environment.snapshot(),
             last_observation=self._last_observation.copy(),
             last_info=deepcopy(self._last_info),
@@ -202,9 +222,22 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
     def worker_state(self, state: RacingWorkerState) -> None:
         self._environment.close()
         self._track_index = state.track_index
-        self.next_track_index = state.track_index
+        self._track_seed = state.track_seed
+        if state.track_seed is None:
+            if state.track_index is None:
+                raise ValueError("A fixed worker state requires a track index.")
+            self.next_track_index = state.track_index
+            self.next_track_seed = None
+            track = self.tracks[state.track_index]
+        else:
+            self.next_track_seed = state.track_seed
+            track = TrackWithGeometry.generate(
+                state.track_seed,
+                track_config=self.environment_config.track,
+                vehicle_config=self.environment_config.vehicle,
+            )
         self._environment = RacingEnv(
-            self.tracks[self._track_index],
+            track,
             config=self.environment_config,
         )
         self._environment.restore(state.environment)
@@ -224,11 +257,11 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
             if enriched.get(key) is None:
                 # Gymnasium merges worker infos into one homogeneous NumPy array.
                 enriched[key] = -1
-        track = self.tracks[self._track_index].track
+        track = self._environment.track
         enriched.update(
             {
                 "transition_valid": transition_valid,
-                "track_index": self._track_index,
+                "track_index": -1 if self._track_index is None else self._track_index,
                 "track_length": track.track_length,
                 "circuit_identity": str(track.generation.seed),
             }
@@ -290,6 +323,7 @@ class PersistentRacingVectorEnv:
         self.reset_generators = reset_generators
         self.track_generators = track_generators
         self._next_track_indices = np.zeros(self.num_envs, dtype=np.int64)
+        self._next_track_seeds: list[int | None] = [None] * self.num_envs
         environment_functions = tuple(
             partial(
                 _make_racing_worker,
@@ -309,9 +343,11 @@ class PersistentRacingVectorEnv:
     def reset(
         self,
         mask: NDArray[np.bool_] | None = None,
+        *,
+        track_seeds: Sequence[int | None] | None = None,
     ) -> tuple[NDArray[np.float32], dict[str, Any]]:
         """
-        Reset all workers or only those selected by a boolean mask.
+        Reset selected workers on fixed-pool or explicitly seeded procedural tracks.
         """
         reset_mask = (
             np.ones(self.num_envs, dtype=np.bool_)
@@ -322,13 +358,24 @@ class PersistentRacingVectorEnv:
             raise ValueError("The reset mask must contain one value per worker.")
         if not np.any(reset_mask):
             raise ValueError("At least one worker must be selected for reset.")
+        if track_seeds is not None and len(track_seeds) != self.num_envs:
+            raise ValueError("Track seeds must contain one value per worker.")
 
         seeds: list[int | None] = [None] * self.num_envs
         for environment_index in np.flatnonzero(reset_mask):
             index = int(environment_index)
-            self._next_track_indices[index] = int(
-                self.track_generators[index].integers(0, len(self.tracks))
-            )
+            if track_seeds is None:
+                self._next_track_indices[index] = int(
+                    self.track_generators[index].integers(0, len(self.tracks))
+                )
+                self._next_track_seeds[index] = None
+            else:
+                track_seed = track_seeds[index]
+                if track_seed is None:
+                    raise ValueError(
+                        "Each reset worker requires a procedural track seed."
+                    )
+                self._next_track_seeds[index] = int(track_seed)
             seeds[index] = int(
                 self.reset_generators[index].integers(
                     0,
@@ -340,6 +387,7 @@ class PersistentRacingVectorEnv:
             "next_track_index",
             [int(value) for value in self._next_track_indices],
         )
+        self._vector.set_attr("next_track_seed", self._next_track_seeds)
         options = None if mask is None else {"reset_mask": reset_mask.copy()}
         observations, infos = self._vector.reset(seed=seeds, options=options)
         return np.asarray(observations, dtype=np.float32), infos
@@ -398,6 +446,7 @@ class PersistentRacingVectorEnv:
                 for generator in self.track_generators
             ),
             next_track_indices=tuple(int(value) for value in self._next_track_indices),
+            next_track_seeds=tuple(self._next_track_seeds),
         )
 
     def restore(self, state: VectorRacingState) -> None:
@@ -417,6 +466,7 @@ class PersistentRacingVectorEnv:
         self._next_track_indices = np.asarray(
             state.next_track_indices, dtype=np.int64
         ).copy()
+        self._next_track_seeds = list(state.next_track_seeds)
         self._vector.set_attr("worker_state", state.workers)
 
     @property
