@@ -106,12 +106,14 @@ def _engine(
     size: int = 4,
     *,
     evaluation_interval: int | None = None,
+    workers: int | None = None,
 ) -> tuple[OnPolicyTrainingEngine, _FixedAgent]:
     agent = _FixedAgent(mode, size)
     normalizer = RunningObservationNormalizer(
         FrenetObservation.DIMENSIONS, ObservationNormalizationConfig()
     )
-    worker_count = size if mode is CollectionMode.COMPLETE_EPISODES else 1
+    default_workers = size if mode is CollectionMode.COMPLETE_EPISODES else 1
+    worker_count = default_workers if workers is None else workers
     engine = OnPolicyTrainingEngine(
         agent,
         _environment(),
@@ -162,6 +164,63 @@ def test_complete_episode_collection_waits_for_complete_batch() -> None:
     assert agent.updates == [6]
     assert engine.state().counters.finished_episodes == 2
     assert engine.state().counters.optimizer_updates == 1
+
+
+def test_complete_episode_batch_is_filled_over_several_worker_waves() -> None:
+    """
+    Fewer workers than batch episodes must still produce one update per batch.
+
+    Each three-step episode ends by truncation, so two workers need two waves to
+    supply a four-episode batch, and no optimizer step may happen in between.
+    """
+    engine, agent = _engine(CollectionMode.COMPLETE_EPISODES, size=4, workers=2)
+
+    engine.train(12)
+
+    assert agent.updates == [12]
+    assert engine.state().counters.finished_episodes == 4
+    assert engine.state().counters.optimizer_updates == 1
+
+
+def test_construction_consumes_the_reset_stream_independently_of_collection_mode() -> (
+    None
+):
+    """
+    Paired roots line up only if construction draws the same reset randomness.
+
+    Complete-episode collection parks the workers a batch has no room for, and
+    parking must not cost an extra environment reset relative to the fixed
+    rollout used by A2C and PPO.
+    """
+    rollout, _ = _engine(CollectionMode.FIXED_ROLLOUT, size=4, workers=2)
+    episodes, _ = _engine(CollectionMode.COMPLETE_EPISODES, size=4, workers=2)
+
+    assert rollout.environment_reset_generator.integers(0, 2**32) == (
+        episodes.environment_reset_generator.integers(0, 2**32)
+    )
+
+
+def test_complete_episode_batch_survives_a_checkpoint_between_waves(
+    tmp_path: Path,
+) -> None:
+    uninterrupted, uninterrupted_agent = _engine(
+        CollectionMode.COMPLETE_EPISODES, size=4, workers=2
+    )
+    uninterrupted.train(12)
+
+    interrupted, _ = _engine(CollectionMode.COMPLETE_EPISODES, size=4, workers=2)
+    interrupted.train(6, finalize=False)
+    checkpoint = tmp_path / "training.pt"
+    interrupted.save(str(checkpoint))
+    resumed, resumed_agent = _engine(
+        CollectionMode.COMPLETE_EPISODES, size=4, workers=2
+    )
+    resumed.restore(str(checkpoint))
+    resumed.train(12)
+
+    assert resumed_agent.updates == uninterrupted_agent.updates == [12]
+    assert resumed.state().counters == uninterrupted.state().counters
+    assert resumed.episode_records == uninterrupted.episode_records
 
 
 def test_evaluation_runs_at_exact_boundary_inside_active_episode() -> None:

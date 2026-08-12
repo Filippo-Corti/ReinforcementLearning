@@ -118,6 +118,43 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
     engine.close()
 
 
+def test_reinforce_engine_fills_a_batch_larger_than_its_worker_count() -> None:
+    """
+    A batch may need more trajectories than there are workers.
+
+    The worker count is an execution choice shared with A2C and PPO, while the
+    batch size belongs to the algorithm, so the engine fills one batch over as
+    many collection waves as it needs and updates only once it is complete.
+    """
+    agent = ReinforceAgent(
+        observation_dimensions=FrenetObservation.DIMENSIONS,
+        actor_config=_actor_config(),
+        config=ReinforceConfig(completed_episodes_per_update=4),
+        initialization_generator=torch.Generator().manual_seed(1),
+        sampling_generator=(
+            torch.Generator().manual_seed(2),
+            torch.Generator().manual_seed(3),
+        ),
+    )
+    engine = ReinforceTrainingEngine(
+        agent,
+        _tracks(),
+        _environment_config(),
+        _normalizer(),
+        (np.random.default_rng(3), np.random.default_rng(4)),
+        (np.random.default_rng(19), np.random.default_rng(20)),
+        execution_config=ExecutionConfig(device="cpu", environment_workers=2),
+    )
+
+    history = engine.train(8)
+
+    assert history.training_interactions == 8
+    assert [record.episode_index for record in history.episodes] == list(range(8))
+    assert len(history.updates) == 2
+    assert [record.transition_count for record in history.updates] == [4, 4]
+    engine.close()
+
+
 def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
     completed_episodes: list[tuple[int, int]] = []
     agent = A2CAgent(

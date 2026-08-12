@@ -31,9 +31,14 @@ class ReinforceTrainingEngine:
     Train REINFORCE from one concurrent complete episode per environment.
 
     Each trajectory remains separate because its return-to-go uses only its own
-    rewards. The eight documented batch trajectories are collected concurrently
-    in persistent CPU workers, then their trajectory-sum losses are averaged by
-    the unchanged agent update. A partial final batch remains recorded but unused.
+    rewards. Trajectories are collected concurrently in persistent CPU workers,
+    then their trajectory-sum losses are averaged by the unchanged agent update.
+
+    The worker count and the batch size are independent, so every algorithm can
+    use the same number of workers. When a batch needs more trajectories than
+    there are workers, it is filled over several collection waves; no update
+    happens between them, so all of its trajectories still come from one policy.
+    A partial final batch remains recorded but unused.
 
     Fields:
         * agent: REINFORCE policy, optimizer, and per-worker sampling streams.
@@ -68,10 +73,6 @@ class ReinforceTrainingEngine:
         self.execution_config = execution_config or ExecutionConfig(
             device="cpu", environment_workers=worker_count
         )
-        if self.execution_config.environment_workers != agent.collection_size:
-            raise ValueError(
-                "REINFORCE requires one environment per complete trajectory."
-            )
         if worker_count != self.execution_config.environment_workers:
             raise ValueError(
                 "REINFORCE requires one policy-sampling stream per environment."
@@ -133,6 +134,7 @@ class ReinforceTrainingEngine:
                 wave_size = min(
                     interaction_budget - self.history.training_interactions,
                     needed_for_update,
+                    self.execution_config.environment_workers,
                 )
                 active = np.zeros(
                     self.execution_config.environment_workers, dtype=np.bool_

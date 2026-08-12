@@ -77,17 +77,7 @@ def run_reinforce_training(
         raise ValueError("Actor learning rate must be positive.")
     environment_config = environment_config or EnvironmentConfig()
     reinforce_config = reinforce_config or ReinforceConfig()
-    execution_config = execution_config or replace(
-        ExecutionConfig(),
-        environment_workers=reinforce_config.completed_episodes_per_update,
-    )
-    if (
-        execution_config.environment_workers
-        != reinforce_config.completed_episodes_per_update
-    ):
-        raise ValueError(
-            "REINFORCE needs one environment worker per episode in its update batch."
-        )
+    execution_config = execution_config or ExecutionConfig()
     configure_torch_determinism(execution_config)
     resolved_actor_config = replace(actor_config, learning_rate=actor_learning_rate)
     base_training_config = TrainingConfig(actor=resolved_actor_config)

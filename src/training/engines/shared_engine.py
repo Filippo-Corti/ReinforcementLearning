@@ -187,13 +187,6 @@ class OnPolicyTrainingEngine:
         sampling_generators = getattr(agent, "sampling_generators", None)
         if sampling_generators is not None and len(sampling_generators) != worker_count:
             raise ValueError("One policy-sampling stream is required per worker.")
-        if (
-            agent.collection_mode is CollectionMode.COMPLETE_EPISODES
-            and worker_count != agent.collection_size
-        ):
-            raise ValueError(
-                "REINFORCE requires one worker per complete trajectory in its batch."
-            )
 
         reset_generators = _resolve_generators(
             environment_reset_generators,
@@ -246,14 +239,13 @@ class OnPolicyTrainingEngine:
                 )
             )
         self._reinforce_active: list[list[TrainingTransition]] | None = None
-        self._reinforce_completed: list[OnPolicyRollout | None] | None = None
+        self._reinforce_batch: list[OnPolicyRollout] | None = None
         self._parked = np.zeros(worker_count, dtype=np.bool_)
         self._rollout_buffer: VectorRolloutBuffer | None = None
         if agent.collection_mode is CollectionMode.COMPLETE_EPISODES:
             self._reinforce_active = [[] for _ in range(worker_count)]
-            self._reinforce_completed = [
-                cast(OnPolicyRollout | None, None) for _ in range(worker_count)
-            ]
+            self._reinforce_batch = []
+            self._parked = ~self._reinforce_wave_mask()
         else:
             self._rollout_buffer = VectorRolloutBuffer(
                 agent.collection_size, worker_count
@@ -282,6 +274,8 @@ class OnPolicyTrainingEngine:
             active_indices = np.flatnonzero(available)[:maximum_rows]
             if active_indices.size == 0:
                 self._update_ready_collection(final=False)
+                if self._reinforce_batch is not None and self._parked.all():
+                    self._start_reinforce_wave()
                 continue
             active = np.zeros(self.execution_config.environment_workers, dtype=np.bool_)
             active[active_indices] = True
@@ -464,23 +458,51 @@ class OnPolicyTrainingEngine:
             self._reinforce_active[environment_index].append(transition)
 
     def _finish_reinforce_trajectory(self, environment_index: int) -> None:
-        if self._reinforce_active is None or self._reinforce_completed is None:
+        if self._reinforce_active is None or self._reinforce_batch is None:
             raise RuntimeError("REINFORCE collector was not constructed.")
-        episode = OnPolicyRollout(tuple(self._reinforce_active[environment_index]))
-        self._reinforce_completed[environment_index] = episode
+        self._reinforce_batch.append(
+            OnPolicyRollout(tuple(self._reinforce_active[environment_index]))
+        )
         self._reinforce_active[environment_index] = []
         self._parked[environment_index] = True
 
+    def _reinforce_wave_mask(self) -> np.ndarray:
+        """
+        Select only the workers the current update batch still has room for.
+
+        The worker count is an execution choice shared with A2C and PPO, while
+        the batch size belongs to REINFORCE, so a batch that needs more
+        trajectories than there are workers is filled over several waves. No
+        optimizer step happens between waves, so one batch still holds
+        trajectories from a single policy.
+        """
+        if self._reinforce_batch is None:
+            raise RuntimeError("REINFORCE collector was not constructed.")
+        wave_size = min(
+            self.agent.collection_size - len(self._reinforce_batch),
+            self.execution_config.environment_workers,
+        )
+        wave = np.zeros(self.execution_config.environment_workers, dtype=np.bool_)
+        wave[:wave_size] = True
+        return wave
+
+    def _start_reinforce_wave(self) -> None:
+        """
+        Reset and unpark the workers that collect the next group of trajectories.
+        """
+        wave = self._reinforce_wave_mask()
+        self._parked = ~wave
+        self._reset_workers(wave)
+
     def _update_ready_collection(self, *, final: bool) -> None:
         update_input: AgentUpdateInput | None = None
-        if self._reinforce_completed is not None and all(
-            episode is not None for episode in self._reinforce_completed
+        if (
+            self._reinforce_batch is not None
+            and len(self._reinforce_batch) == self.agent.collection_size
         ):
-            episodes = tuple(
-                episode for episode in self._reinforce_completed if episode is not None
-            )
             update_input = AgentUpdateInput(
-                mode=CollectionMode.COMPLETE_EPISODES, episodes=episodes
+                mode=CollectionMode.COMPLETE_EPISODES,
+                episodes=tuple(self._reinforce_batch),
             )
         elif self._rollout_buffer is not None and (
             self._rollout_buffer.transition_count == self.agent.collection_size
@@ -505,15 +527,9 @@ class OnPolicyTrainingEngine:
             )
         )
         self.counters.optimizer_updates += 1
-        if self._reinforce_completed is not None:
-            self._reinforce_completed = [
-                cast(OnPolicyRollout | None, None)
-                for _ in range(self.execution_config.environment_workers)
-            ]
-            self._parked[:] = False
-            self._reset_workers(
-                np.ones(self.execution_config.environment_workers, dtype=np.bool_)
-            )
+        if self._reinforce_batch is not None:
+            self._reinforce_batch = []
+            self._start_reinforce_wave()
 
     def _evaluate_if_due(self) -> None:
         if (
@@ -730,7 +746,7 @@ class OnPolicyTrainingEngine:
 
     def _collector_state(self) -> dict[str, Any]:
         if self._reinforce_active is not None:
-            if self._reinforce_completed is None:
+            if self._reinforce_batch is None:
                 raise RuntimeError("REINFORCE completed collector is missing.")
             return {
                 "mode": CollectionMode.COMPLETE_EPISODES.value,
@@ -739,12 +755,8 @@ class OnPolicyTrainingEngine:
                     for episode in self._reinforce_active
                 ],
                 "completed": [
-                    (
-                        None
-                        if episode is None
-                        else [_transition_to_dict(row) for row in episode.transitions]
-                    )
-                    for episode in self._reinforce_completed
+                    [_transition_to_dict(row) for row in episode.transitions]
+                    for episode in self._reinforce_batch
                 ],
             }
         if self._rollout_buffer is None:
@@ -766,20 +778,14 @@ class OnPolicyTrainingEngine:
         if mode is not self.agent.collection_mode:
             raise ValueError("checkpoint collection mode does not match the agent.")
         if mode is CollectionMode.COMPLETE_EPISODES:
-            if self._reinforce_active is None or self._reinforce_completed is None:
+            if self._reinforce_active is None or self._reinforce_batch is None:
                 raise RuntimeError("REINFORCE collector was not constructed.")
             self._reinforce_active = [
                 [_transition_from_dict(row) for row in episode]
                 for episode in state["active"]
             ]
-            self._reinforce_completed = [
-                (
-                    None
-                    if episode is None
-                    else OnPolicyRollout(
-                        tuple(_transition_from_dict(row) for row in episode)
-                    )
-                )
+            self._reinforce_batch = [
+                OnPolicyRollout(tuple(_transition_from_dict(row) for row in episode))
                 for episode in state["completed"]
             ]
             return
