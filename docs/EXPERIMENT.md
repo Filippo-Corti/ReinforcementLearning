@@ -49,7 +49,7 @@ A2C and PPO so that neither algorithm is offered an option the other is denied;
 each still selects its own pair. The reason is that the original grid could not
 express the range the two algorithms need. A2C applies **one** critic step per
 2048-transition rollout, which is 977 Adam steps across a 2,000,000-interaction
-run, while PPO applies several hundred minibatch steps per rollout. Adam's
+run, while PPO applies $128$ of them, four epochs over thirty-two minibatches. Adam's
 per-parameter displacement is bounded by its learning rate, so an A2C critic at
 $10^{-3}$ cannot traverse the distance to a value target of order $200$ within
 its update count: refitting the same critic architecture on a constant target of

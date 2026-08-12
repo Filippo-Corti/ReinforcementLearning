@@ -274,16 +274,26 @@ are project engineering choices, not consequences of the policy-gradient theorem
 
 The learned log standard deviations start at $-0.5$, corresponding to
 $\sigma\approx0.61$ before squashing. This is a deliberately moderate initial
-exploration scale. Values are constrained to $[-5,0]$ during use. The lower
-bound avoids numerical collapse. The upper bound is $0$, not $2$, because
-actions are squashed by $\tanh$: at $\sigma\approx1.9$, which a PPO run reached
-under the old bound, nearly every sample saturates at a control limit, the
-policy degenerates into random bang-bang steering, and its mean stops being
-identifiable from the data. These dispersion values are project choices and are
-checked during the pre-experiment configuration work.
+exploration scale. Values are constrained to $[-5,-0.3]$ during use, a scale of
+at most $\sigma\approx0.74$. The lower bound avoids numerical collapse.
+
+The upper bound has been lowered twice, for the same reason each time. Actions
+are squashed by $\tanh$, so a large scale makes nearly every sample saturate at
+a control limit, the policy degenerates into random bang-bang control, and its
+mean stops being identifiable from the data. At the original bound of $2$ a PPO
+run reached $\sigma\approx1.9$. At a bound of $0$ a PPO run pressed against the
+ceiling from roughly 650,000 interactions to the end of its budget, and its
+finished deterministic policy still alternated between control limits, while
+REINFORCE and A2C settled near $0.58$ without ever approaching it. The bound is
+now $-0.3$. It applies to every algorithm, as every design choice here does, but
+only PPO has ever reached one.
+
+These dispersion values are project choices and are checked during the
+pre-experiment configuration work. The recorded learning-rate calibration was
+run under the previous bound of $0$.
 
 **How the bounds are enforced.** After each actor optimizer step, the learned
-log standard deviations are *projected* back into $[-5,0]$; the log density
+log standard deviations are *projected* back into their interval; the log density
 itself uses the parameter unmodified. The distinction matters. Enforcing the
 bounds with a clamp inside the log density instead leaves the parameter free to
 drift outside the interval, and a clamp has exactly zero gradient there: a log
@@ -303,9 +313,9 @@ the mean: about $+6.9$ at $U_t=2$ and $+18.9$ at $U_t=3$, against $-1.0$ at
 $U_t=0.4$. Whenever the actions with positive advantage are saturated ones —
 which cornering makes routine — the actor objective is improved by widening the
 policy. REINFORCE and A2C take one gradient step per batch and their dispersion
-drifts slowly downward in practice; PPO takes several hundred minibatch steps on
-each rollout, so the same per-step pressure compounds and only PPO reaches the
-bound.
+drifts slowly downward in practice; PPO takes $128$ minibatch steps on each
+rollout, four epochs over thirty-two minibatches, so the same per-step pressure
+compounds and only PPO reaches the bound.
 
 ## Input normalization and optimization safeguards
 

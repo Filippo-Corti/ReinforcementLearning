@@ -68,9 +68,19 @@ class ActorConfig(SerializableConfig):
 
     The upper bound matters more than it looks. Because actions are squashed by
     `tanh`, a large scale makes almost every sample saturate at a control limit,
-    so the policy degenerates into random bang-bang steering while its mean stops
-    being identifiable. Capping the scale at one keeps samples inside the
-    responsive part of the squashing function.
+    so the policy degenerates into random bang-bang control while its mean stops
+    being identifiable. The bound keeps samples inside the responsive part of the
+    squashing function.
+
+    It is `-0.3`, a scale of about `0.74`, rather than `0`. At a scale of one PPO
+    pressed against the bound for the last two thirds of a run and its finished
+    policy still alternated between control limits, because the `tanh` change of
+    variables rewards a wider policy whenever the actions with positive advantage
+    are saturated ones, and PPO compounds that pressure over the many gradient
+    steps it takes on each rollout. The bound applies to every algorithm, though
+    only PPO has reached it: REINFORCE and A2C settle near `0.58` on their own.
+    This lower ceiling is under evaluation, and the recorded learning-rate
+    calibration was run at the previous one.
 
     The initial action bias exists for the same reason, one level down. A mean of
     zero is neutral in the *action*, but not in the physical quantity the action
@@ -103,7 +113,7 @@ class ActorConfig(SerializableConfig):
     hidden_initialization_gain: float = 2**0.5
     output_initialization_gain: float = 0.01
     initial_log_standard_deviation: float = -0.5
-    log_standard_deviation_bounds: tuple[float, float] = (-5.0, 0.0)
+    log_standard_deviation_bounds: tuple[float, float] = (-5.0, -0.3)
     initial_action_bias: tuple[float, float] = (0.2, 0.0)
 
 

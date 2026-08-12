@@ -114,15 +114,21 @@ def test_log_probability_reaches_mean_and_dispersion_parameters() -> None:
 
 def test_dispersion_bounds_and_extreme_actions_have_finite_log_probability() -> None:
     actor = _actor()
+    minimum, maximum = actor.policy.log_standard_deviation_bounds
+
     with torch.no_grad():
         actor.policy.log_standard_deviation.fill_(100.0)
     actor.project_parameters()
-    assert torch.allclose(actor.policy.standard_deviation, torch.full((2,), exp(0.0)))
+    assert torch.allclose(
+        actor.policy.standard_deviation, torch.full((2,), exp(maximum))
+    )
 
     with torch.no_grad():
         actor.policy.log_standard_deviation.fill_(-100.0)
     actor.project_parameters()
-    assert torch.allclose(actor.policy.standard_deviation, torch.full((2,), exp(-5.0)))
+    assert torch.allclose(
+        actor.policy.standard_deviation, torch.full((2,), exp(minimum))
+    )
 
     log_probability = actor.log_probability(
         torch.zeros(2, 4),
@@ -140,8 +146,9 @@ def test_dispersion_at_its_bound_can_still_be_learned_back_inside() -> None:
     maximum dispersion could never reduce it again.
     """
     actor = _actor()
+    _, maximum = actor.policy.log_standard_deviation_bounds
     with torch.no_grad():
-        actor.policy.log_standard_deviation.fill_(0.0)
+        actor.policy.log_standard_deviation.fill_(maximum)
 
     actor.log_probability(torch.randn(5, 4), torch.randn(5, 2)).mean().backward()
     gradient = actor.policy.log_standard_deviation.grad
