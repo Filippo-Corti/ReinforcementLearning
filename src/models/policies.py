@@ -52,9 +52,16 @@ class ScriptedFrenetPolicy(Policy):
     used to turn, so a controller aiming at the limit arrives at corners already
     over it.
 
+    The heading gain is what damps the lateral loop. Linearizing the bicycle
+    model about a straight gives `d'' + k*h*d' + k*l*v*d = 0` with
+    `k = delta_max * v / L`, whose damping ratio `h * sqrt(delta_max / (4*L*l))`
+    is independent of speed. At the original gains that ratio was `0.39`, and on
+    circuits with straights long enough for the oscillation to develop the car
+    left one corner off line and diverged into the boundary before the next.
+
     Fields:
         * lateral_gain: Steering correction for lateral distance.
-        * heading_gain: Steering correction for heading error.
+        * heading_gain: Steering correction for heading error, which sets the damping.
         * curvature_gain: Steering feed-forward from preview curvature.
         * lateral_acceleration_limit: Curvature-dependent speed-target constant.
         * maximum_target_speed: Upper bound for target speed.
@@ -62,7 +69,7 @@ class ScriptedFrenetPolicy(Policy):
     """
 
     lateral_gain: float = 0.15
-    heading_gain: float = 0.8
+    heading_gain: float = 1.8
     curvature_gain: float = 10.0
     lateral_acceleration_limit: float = 12.0
     maximum_target_speed: float = 50.0

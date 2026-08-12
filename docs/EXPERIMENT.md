@@ -143,7 +143,7 @@ can be driven without learning:
 
 $$
 A_t^{\mathrm{steer}}=
-\operatorname{clip}(-0.15d_t-0.8\phi_{e,t}+10\bar\kappa_t,-1,1),
+\operatorname{clip}(-0.15d_t-1.8\phi_{e,t}+10\bar\kappa_t,-1,1),
 $$
 
 $$
@@ -158,7 +158,14 @@ These constants are hand-designed project values, not results from the course
 theory:
 
 - `0.15` makes a one-metre lateral error contribute `0.15` steering;
-- `0.8` gives a heading error in radians a stronger corrective effect;
+- `1.8` gives a heading error in radians a stronger corrective effect, and is
+  what damps the lateral loop. Linearizing the bicycle model about a straight
+  gives a damping ratio $h\sqrt{\delta_{\max}/(4Ll)}$ that does not depend on
+  speed: $0.39$ at the earlier value `0.8`, and $0.89$ here. The earlier value
+  was stable enough on circuits that curved everywhere, but once circuits
+  contained straights long enough for the oscillation to develop, a car that
+  left a corner off line diverged into the boundary before reaching the next
+  one;
 - `10` makes curvature $0.01\,\mathrm{m^{-1}}$ contribute `0.1` steering;
 - $12\,\mathrm{m\,s^{-2}}$ defines a curvature-dependent target through
   $v^2|\kappa|$, deliberately below the car's $20\,\mathrm{m\,s^{-2}}$ friction
@@ -172,17 +179,17 @@ theory:
 
 The controller is neither an expert demonstrator nor training data. Its purpose
 is to expose a broken observation, reward or control convention before neural
-learning is blamed. On twenty-four generated circuits of $397$ to $540\,\mathrm m$
-it completes twenty-three laps, from $19.6$ to $28.2\,\mathrm s$ and averaging
-$22.3\,\mathrm s$. That is the standing evidence that the task is solvable with
-the current physics and reward.
+learning is blamed. On forty generated circuits it completes every lap, from
+$19.1$ to $28.0\,\mathrm s$ and averaging $22.4\,\mathrm s$, reaching at most
+$4.56\,\mathrm m$ of lateral offset against the $6\,\mathrm m$ boundary. That is
+the standing evidence that the task is solvable with the current physics and
+reward.
 
-It completed all twenty-four of the circuits the previous generator produced,
-averaging $15.9\,\mathrm s$ over their shorter laps. The one circuit it now
-crashes on is not treated as a defect in the task: its gains are hand-set
-constants tuned against gentle curvature, and circuits now contain corners tight
-enough to demand real braking. A learned policy is not held to this controller's
-line, and the controller is a diagnostic rather than a target.
+The heading gain was raised from `0.8` to `1.8` when the circuits gained
+straights; at the earlier value the controller crashed on one circuit in forty
+and came within $0.31\,\mathrm m$ of the boundary on others. Its lap times are
+otherwise unchanged. On the shorter circuits of the previous generator it
+averaged $15.9\,\mathrm s$.
 
 ### Fixed circuit for Experiment 1
 
@@ -425,15 +432,13 @@ the lap in at most $34$ simulated seconds. A run that never meets the rule is
 right-censored at 2,000,000 interactions and remains in every success-rate and
 learning-curve summary.
 
-**This threshold is provisional and needs confirming before any reported run.**
-It was twice the reference controller's average lap, which was $32\,\mathrm s$
-when that average was $15.9\,\mathrm s$. The reference now averages
-$22.3\,\mathrm s$ on longer circuits, and twice that is $44.6\,\mathrm s$, above
-the $40\,\mathrm s$ episode cap — which would make the time condition vacuous and
-silently reduce the rule to three consecutive completed laps. The value above is
-instead about $1.5\times$ the reference average, sitting between its slowest lap
-of $28.2\,\mathrm s$ and the cap, but the multiple is a project choice and not a
-measurement.
+The threshold was previously twice the reference controller's average lap, which
+was $32\,\mathrm s$ when that average was $15.9\,\mathrm s$. Doubling no longer
+works: the reference averages $22.3\,\mathrm s$ on the current circuits and twice
+that is $44.6\,\mathrm s$, above the $40\,\mathrm s$ episode cap, which would make
+the time condition vacuous and silently reduce the rule to three consecutive
+completed laps. The value is now about $1.5\times$ the reference average, between
+its slowest lap and the cap. The multiple is a project choice, not a measurement.
 
 Evaluation records the episode outcome, not only its return. A return alone
 cannot distinguish crashing from idling from lapping slowly, and the outcomes
