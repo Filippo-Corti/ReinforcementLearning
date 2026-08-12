@@ -1472,3 +1472,44 @@ suite passed all eight tests; Black and Ruff passed.
 `tests/training/test_algorithm_engines.py`, `README.md`, and `docs/DIARY.md`.
 
 **Commit**: `feature: generate a circuit for each training episode [ai]`
+
+## 2026-08-12 — Aligned algorithm explanations and result dashboards
+
+**Task**: Perfect the REINFORCE, A2C and PPO notebooks with the same narrative,
+configurable before/after rendering, common statistics and categorized result
+presentation.
+
+**Result**: Rebuilt all three notebooks around the same progression: full
+algorithm motivation and project equations, common interaction-budget and
+procedural-circuit configuration, short initial dashboard, scheduled greedy
+evaluation, training, four common result categories, algorithm-specific
+diagnostics where applicable, and a full-length final dashboard. The A2C
+description now motivates the critic and GAE from REINFORCE's variance and
+delayed updates; PPO motivates clipped sample reuse from A2C's one-update-per-
+rollout limitation.
+
+Added one shared educational visualization module. Its live deterministic
+viewer takes `max_steps` explicitly, combines the RGB circuit with current
+progress, return, speed, throttle and steering, and plots speed plus both
+controls over time. Notebook calls use 20 actions before training and the
+configured 1000-action episode limit afterwards. Its common figures separate
+task performance, progress/episode efficiency, driving behaviour, and
+optimization/exploration. They show every requested moving average, greedy
+return mean plus/minus one standard deviation, actor/critic norms, and the
+learned throttle/steering sigmas as the policy-gradient exploration trace.
+A2C and PPO retain critic diagnostics, and PPO retains clip fraction and
+approximate KL.
+
+**Validation**: Black and Ruff passed, targeted Pyright reported no issues, and
+the complete project suite passed all 204 tests. All notebook JSON and Python
+cells parsed. Per the user's request, no notebook-focused test file was added.
+Instead, reduced in-memory Jupyter executions ran every code cell in REINFORCE,
+A2C and PPO without errors while leaving the committed 2,000,000-interaction
+configurations and output-free notebooks unchanged. Separate runtime smokes
+exercised the live dashboard and every shared figure builder.
+
+**Files**: `src/training/educational_visualization.py`,
+`notebooks/reinforce.ipynb`, `notebooks/a2c.ipynb`, `notebooks/ppo.ipynb`,
+`README.md`, and `docs/DIARY.md`.
+
+**Commit**: `feature: align algorithm notebook dashboards [ai]`

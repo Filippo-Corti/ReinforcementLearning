@@ -183,23 +183,26 @@ fixed root and episode index reproduce the same circuit independently of policy
 sampling and environment-reset randomness.
 
 [`notebooks/reinforce.ipynb`](notebooks/reinforce.ipynb) walks through a
-REINFORCE run with the readable engine. Its first cell exposes the actor,
-algorithm, seed, episode, rendering and circuit settings, including a switch
-between one generated circuit and several circuits. Its live viewer updates an
-inline notebook figure at every action; set `VIEWER_MODE` to `"window"` for the
-Pygame display when a notebook frontend does not animate inline output.
+REINFORCE run with the readable engine. Its configuration exposes one exact
+training-interaction budget and a switch between a fixed reference circuit and
+a fresh episode-indexed procedural training circuit. The live viewer accepts a
+step count: the initial policy shows 20 actions, while the final policy can use
+the full 1000-step episode. Inline mode places the circuit beside current
+progress, return, speed, throttle and steering plus speed/control histories;
+window mode synchronizes the Pygame view with a Matplotlib statistics window.
 
 [`notebooks/a2c.ipynb`](notebooks/a2c.ipynb) and
 [`notebooks/ppo.ipynb`](notebooks/ppo.ipynb) present the corresponding readable
-actor-critic engines. Both show raw and 20-episode moving-average returns,
-actor/critic weight norms at optimizer steps, and deterministic evaluations at
-an episode cadence configured at the start of the notebook. The A2C notebook
-focuses on GAE and critic diagnostics; the PPO notebook additionally exposes
-clipping and approximate-KL diagnostics. Like the REINFORCE notebook, both have
-live deterministic viewers before and after training, with inline updates and a
-Pygame-window fallback. Persistent CPU workers collect one synchronous
-observation batch at a time; A2C and PPO retain an explicit
-time-by-environment rollout so GAE remains independent between workers.
+actor-critic engines. All three use the same section order and categorized
+figures for task performance, progress/episode efficiency, driving behaviour,
+and optimization/exploration. Common plots include moving-average training
+return, greedy return with a standard-deviation band, training and greedy
+maximum progress, episode length, actor loss, actor/critic weight norms,
+learned throttle/steering sigma, mean speed and mean throttle magnitude. A2C
+retains GAE and critic-fit diagnostics; PPO additionally shows clipping and
+approximate KL. Persistent CPU workers collect one synchronous observation
+batch at a time; A2C and PPO retain an explicit time-by-environment rollout so
+GAE remains independent between workers.
 
 ## Train an agent
 
