@@ -33,7 +33,7 @@ def circle_geometry() -> TrackWithGeometry:
         Track(
             generation=TrackGenerationMetadata(
                 seed=0,
-                n_checkpoints=12,
+                n_corners=12,
                 base_radius=radius,
                 radial_jitter=0.0,
                 angular_jitter=0.0,

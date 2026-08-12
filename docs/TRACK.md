@@ -58,29 +58,114 @@ computed from it, rather than being independently implemented.
 
 ### Track Generation and Table Representation
 
-Track geometry is generated using a seeded **checkpoint-and-smoothing
-algorithm: random checkpoints are scattered around a circle with angular and
-radial jitter. A periodic cubic spline passes through those checkpoints, and
-the resulting closed curve is rescaled by less than half a requested sample
-interval before being resampled at the configured constant arc-length spacing.
-This construction requires no smoothing hyperparameters beyond the checkpoint
-configuration below.
+A circuit is built the way a real one is described: **a sequence of straights
+and constant-radius corners**, rather than one smooth closed curve.
 
-The proposed version 0 generation defaults are explicit configuration values:
+An earlier generator passed a periodic cubic spline through jittered polar
+checkpoints. A spline through points has continuously varying curvature
+everywhere by construction, so it can never hold $\kappa=0$ for the length of a
+straight, and measurement bore this out: only $3.7\%$ of a generated lap was
+straighter than $500\,\mathrm m$ of radius while $81.6\%$ of it was curving at
+$100\,\mathrm m$ or tighter. The result was a wobbly ring with nothing to brake
+for, because there was nowhere to build speed. The generator below produces
+circuits that are about $63\%$ straight.
+
+#### The construction
+
+**1. Sample a closed polygon.** `n_corners` vertices are placed around one
+centre at evenly spaced angles with jitter, and at `base_radius` with radial
+jitter. Sorting the vertices by angle makes the polygon *star-shaped* and so
+guaranteed simple, which is what lets the next step assume that only
+neighbouring edges can interfere. This polygon is the route the circuit takes;
+it is never part of the final track.
+
+**2. Round off every vertex into a corner.** At a vertex whose direction changes
+by $\Delta$, a corner of radius $R$ meets each of the two edges at a **tangent
+distance**
+
+$$ T = R\tan\left(\frac{|\Delta|}{2}\right) $$
+
+from the vertex, and sweeps an arc of length $R|\Delta|$. The corner radius and
+the surrounding straights therefore trade off directly: a larger radius eats
+further back along both edges. Each corner may claim at most **half** of each
+edge it touches, which leaves every straight non-negative without any search.
+
+**3. Choose each radius as a fraction of what fits.** The radius is drawn as
+$R=\rho R_{\max}$, where $R_{\max}$ is the largest radius the two adjacent edges
+admit and $\rho\sim\mathcal U(\texttt{corner\_radius\_fraction})$, then clipped
+to $[\texttt{min\_corner\_radius},\texttt{max\_corner\_radius}]$. Drawing a
+*fraction* rather than an absolute length is what makes the contrast
+controllable: a small $\rho$ gives a tight corner between long straights and a
+large $\rho$ gives a sweeper, on a vertex of any size. A vertex too sharp for
+the edges meeting it, so that $R_{\max}$ falls below the minimum radius, rejects
+the candidate.
+
+**4. Emit the segment list.** Walking the polygon gives, for each vertex in
+turn, its arc followed by whatever survives of the outgoing edge:
+
+$$ \text{straight}_i = \lVert e_i\rVert - T_i - T_{i+1} \ \ge 0. $$
+
+Because both corners keep their tangent points *on* the polygon edges, the
+circuit closes exactly when the polygon does. No numerical closure solve is
+needed, which is the reason for building on a polygon rather than integrating a
+sampled curvature profile.
+
+**5. Scale to a whole number of samples.** The total length is rescaled by
+under half a sample interval so it is an exact multiple of
+$\Delta s_{\text{gen}}$. Scaling every radius and every straight by the same
+factor is a similarity transform, so closure survives it. The radius band of
+step 3 is applied before this rescale, so a finished corner may sit a fraction
+of a percent outside it.
+
+**6. Put the seam in the middle of the longest straight.** The start and finish
+line then sits where a real one does, and the seam joins two samples that both
+have zero curvature, so the periodic table is continuous in position, heading
+and curvature with no special handling.
+
+#### Defaults
 
 | Parameter | Default | Meaning |
 |---|---:|---|
-| `n_checkpoints` | 12 | Checkpoints distributed around the loop |
-| `base_radius` | $50m$ | Radius before radial jitter |
-| `radial_jitter` | $\pm25\%$ | Independent checkpoint-radius variation |
-| `angular_jitter` | $\pm\frac{1}{4}$ sector | Variation from equally spaced checkpoint angles |
+| `n_corners` | 9 | Corners, and so polygon vertices |
+| `base_radius` | $70m$ | Radius the polygon is sampled around |
+| `radial_jitter` | $\pm55\%$ | Independent vertex-radius variation |
+| `angular_jitter` | $\pm\frac{3}{10}$ sector | Variation from equally spaced vertex angles |
+| `corner_radius_fraction` | $[0.25,0.80]$ | Corner radius as a fraction of the largest that fits |
+| `min_corner_radius` | $12m$ | Tightest corner the generator may produce |
+| `max_corner_radius` | $200m$ | Most open corner the generator may produce |
 | $\Delta s_{\text{gen}}$ | $0.5m$ | Spacing of the final lookup table |
 | $w$ | $12m$ | Constant version 0 track width |
 | `max_attempts` | 100 | Deterministic retries before generation fails |
 
-Every generation request requires an integer seed. Retries must derive their
-random streams deterministically from that seed, so the same configuration and
-seed produce byte-equivalent track data with the same generator version.
+The radial jitter is large on purpose. At $\pm35\%$ a fifth of generated
+circuits had *no right-hand corner at all*, because a polygon that stays close
+to its circle stays convex and every vertex then turns the same way. At
+$\pm55\%$ some vertices turn inward, every circuit contains corners in both
+directions, and $26\%$ of all corners are right-handers.
+
+With these defaults, 60 of 60 consecutive seeds generate a valid circuit of
+$414$ to $756\,\mathrm m$, about $63\%$ of it straight, with corner radii whose
+median is $31\,\mathrm m$ and whose tenth and ninetieth percentiles are $12$ and
+$104\,\mathrm m$.
+
+Every generation request requires an integer seed. Retries derive their random
+streams deterministically from that seed, so the same configuration and seed
+produce byte-equivalent track data with the same generator version.
+
+#### What this model omits
+
+Real circuits ease into a corner along a **clothoid**, a transition whose
+curvature grows linearly with distance, instead of stepping from zero curvature
+to $1/R$ at a point. This generator makes that step. The consequence is bounded
+and visible: curvature is piecewise constant, so $\kappa$ jumps at a corner's
+entry and exit. It does not make the circuit undrivable, because the steering
+rate limit of $180°\,\mathrm s^{-1}$ already prevents the car from following any
+such step instantly, and the preview curvature $\bar\kappa_t$ in the Frenet
+observation is an integral and therefore stays continuous. Transitions are a
+refinement this project has not needed.
+
+The polygon is star-shaped, so a circuit cannot fold back on itself the way
+Monaco does. Every ray from the centre crosses the track exactly once.
 
 Generated tracks must satisfy all of the following:
 
@@ -98,28 +183,41 @@ $$ \frac{1}{|\kappa(s)|} \ge R_{\min} = \frac{L}{\tan(\delta_{max})} \quad \fora
    sides.
 5. The left and right boundaries are themselves simple closed curves and never
    intersect each other.
-6. The total length is between $200m$ and $600m$. This configurable training
-   scale is approximately one fifth of the original $1000m$--$3000m$ range.
+6. The total length is between $300m$ and $700m$. This configurable training
+   scale keeps a lap well inside the $T_{\max}$ episode cap.
 
 The turning-radius check guarantees only kinematic steerability. It does not
-guarantee that a future grip-limited car can take every corner at every speed.
-If a generated candidate fails any validation, the generator retries until
+guarantee that the grip-limited car can take every corner at every speed. If a
+generated candidate fails any validation, the generator retries until
 `max_attempts` and then raises an error rather than returning an invalid track.
+
+Rule 4 needs one qualification, because it would otherwise reject tight corners
+rather than the folding it is meant to catch. The straight-line distance across
+an arc is shorter than the arc itself, and at the minimum corner radius it drops
+below $w+2m$ while the corner is still turning. The rule therefore ignores pairs
+of samples closer together along the track than $\pi\,\texttt{min\_corner\_radius}$,
+half a turn at the tightest permitted radius, within which a corner cannot have
+come back around towards itself.
 
 The final dense lookup table stores:
 
 $$ \texttt{table}[i] = (s_i, x_i, y_i, \psi_i, \kappa_i) $$
 
-In particular:
+Every column is evaluated in closed form from the segment the sample falls in,
+rather than integrated numerically and then differenced:
 
 * $s_i=i\Delta s_{\text{gen}}$.
-* $(x_i, y_i)$ are sampled from the final smoothed curve.
-* $\psi_i$ is computed from the tangent of the final resampled curve.
-* $\kappa_i$ is computed with periodic indexing:
+* $(x_i, y_i)$ and $\psi_i$ come from advancing the segment's start pose by the
+  sample's offset into it. A straight advances along its heading; an arc of
+  signed curvature $\kappa$ turns about a centre offset $1/\kappa$ to its left,
+  so one expression covers left-hand and right-hand corners.
+* $\kappa_i$ is the curvature of that segment: exactly $0$ on a straight and
+  exactly $\pm1/R$ in a corner.
 
-    $$ \kappa_i = \frac{\text{wrap}(\psi_{i+1} - \psi_{i-1})}{2 \Delta s_{\text{gen}}} $$
-
-  where `wrap` maps angular differences to $[-\pi,\pi)$.
+This is the practical gain of the segment construction over a spline. The
+previous generator inverted arc length numerically to place its samples and then
+recovered curvature by differencing neighbouring headings; both steps are now
+unnecessary, and $\kappa$ is exact rather than a finite difference.
 
 ### Persistent Track Format
 
@@ -131,15 +229,15 @@ Version 0 files contain:
   "format_version": 1,
   "generation": {
     "seed": 0,
-    "n_checkpoints": 12,
-    "base_radius": 50.0,
-    "radial_jitter": 0.25,
-    "angular_jitter": 0.25,
+    "n_corners": 9,
+    "base_radius": 70.0,
+    "radial_jitter": 0.55,
+    "angular_jitter": 0.3,
     "max_attempts": 100
   },
   "width": 12.0,
   "sample_spacing": 0.5,
-  "track_length": 300.0,
+  "track_length": 500.0,
   "start_index": 0,
   "samples": [
     {"s": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0, "curvature": 0.0}

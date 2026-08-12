@@ -338,24 +338,25 @@ algorithm can bootstrap from a $0\%$ completion rate. REINFORCE, A2C and PPO all
 converged to the stall.
 
 The maximum episode length is $T_{\max}=1000$ agent steps, corresponding to
-$40s$. With the friction budget in force, the deterministic reference controller
-laps a generated circuit in about $16s$, or $400$ agent steps, so the cap keeps a
-safety margin of roughly two and a half times the target lap. Both the circuit
-scale and the cap are configuration values and can be increased together for a
-longer task.
+$40s$. The deterministic reference controller laps the generated circuits in
+about $22s$, or $550$ agent steps, and takes at most $28s$ on the slowest of
+twenty-four of them, so the cap leaves roughly a $1.8\times$ margin over a
+reference lap. Both the circuit scale and the cap are configuration values and
+can be changed together for a longer task; the circuit scale was chosen to keep
+a lap inside this cap once circuits gained real straights and became longer.
 
 Here is an example of what may be going on with these values:
 
-* The step penalty over a $16s$ lap is
-  $-c_{\text{step}}\times 16/\Delta_{t_{agent}}=-16$.
+* The step penalty over a $22s$ lap is
+  $-c_{\text{step}}\times 22/\Delta_{t_{agent}}=-22$.
 * The normalized progress accumulated over one forward lap is approximately
   $+100$.
-* The completion reward for a $16s$ lap is $100 + 100\times(1-0.4)=+160$.
-* A $16s$ lap therefore returns approximately $100+160-16=244$. The exact value
+* The completion reward for a $22s$ lap is $100 + 100\times(1-0.55)=+145$.
+* A $22s$ lap therefore returns approximately $100+145-22=223$. The exact value
   differs by at most one shaped transition because the terminal branch replaces
   the normal step reward.
-* A $28s$ lap returns approximately $100+130-28=202$, seventeen percent less for
-  the same completed circuit.
+* A $33s$ lap returns approximately $100+117.5-33=184.5$, seventeen percent less
+  for the same completed circuit.
 * Never leaving the start line returns $-c_{\text{step}}\times T_{\max}=-40$, the
   worst outcome available, whether the episode is truncated at $T_{\max}$ or
   ended early by the stall rule.

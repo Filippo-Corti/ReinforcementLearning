@@ -36,7 +36,7 @@ def _polyline_track(points: list[tuple[float, float]]) -> Track:
     return Track(
         generation=TrackGenerationMetadata(
             seed=0,
-            n_checkpoints=count,
+            n_corners=count,
             base_radius=100.0,
             radial_jitter=0.0,
             angular_jitter=0.0,

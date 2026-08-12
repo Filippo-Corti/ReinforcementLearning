@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
+
+from .serialization import to_plain_dict
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +37,7 @@ class EnvironmentConfig:
         """
         Return a deterministic plain-dictionary representation.
         """
-        return asdict(self)
+        return to_plain_dict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,14 +134,27 @@ class CarConfig:
 class TrackGenerationConfig:
     """
     Configuration for procedural track generation and geometric validation.
-    The track is generated starting from a circle of radius ``base_radius``
-    and then jittered radially and angularly to create a smooth, closed track.
+
+    A circuit is a closed polygon whose vertices have been rounded off into
+    constant-radius corners. The polygon is sampled around a circle of radius
+    ``base_radius`` with angular and radial jitter, and fixes where the circuit
+    goes; what is left of each polygon edge after its two corners have claimed
+    their share becomes a straight.
+
+    The corner radius is drawn as a fraction of the largest radius that fits
+    between the two edges meeting at that vertex, not as an absolute length. A
+    small fraction produces a tight corner separated by long straights and a
+    large one produces a sweeper, so ``corner_radius_fraction`` is the control
+    over how much a circuit alternates between braking and full throttle.
 
     Fields:
-        * n_checkpoints: The number of checkpoints used to define the track's shape. Must be at least 3.
-        * base_radius: The base radius of the track, in meters.
-        * radial_jitter: The fraction of the base radius by which checkpoints can vary radially.
-        * angular_jitter: The fraction of the angular range by which checkpoints can vary.
+        * n_corners: The number of corners, and so of polygon vertices. Must be at least 3.
+        * base_radius: The radius of the circle the polygon is sampled around, in meters.
+        * radial_jitter: The fraction of the base radius by which vertices can vary radially.
+        * angular_jitter: The fraction of one vertex sector by which vertices can vary.
+        * corner_radius_fraction: Bounds on the corner radius as a fraction of the largest one that fits.
+        * min_corner_radius: The tightest corner the generator may produce, in meters.
+        * max_corner_radius: The most open corner the generator may produce, in meters.
         * sample_spacing: The spacing between samples along the track, in meters.
         * width: The width of the track, in meters.
         * max_attempts: The maximum number of attempts to generate a valid track.
@@ -148,15 +163,18 @@ class TrackGenerationConfig:
         * nonlocal_centerline_margin: The margin around the centerline that must be free of obstacles, in meters.
     """
 
-    n_checkpoints: int = 12
-    base_radius: float = 50.0
-    radial_jitter: float = 0.25
-    angular_jitter: float = 0.25
+    n_corners: int = 9
+    base_radius: float = 70.0
+    radial_jitter: float = 0.55
+    angular_jitter: float = 0.30
+    corner_radius_fraction: tuple[float, float] = (0.25, 0.80)
+    min_corner_radius: float = 12.0
+    max_corner_radius: float = 200.0
     sample_spacing: float = 0.5
     width: float = 12.0
     max_attempts: int = 100
-    min_length: float = 200.0
-    max_length: float = 600.0
+    min_length: float = 300.0
+    max_length: float = 700.0
     nonlocal_centerline_margin: float = 2.0
 
 

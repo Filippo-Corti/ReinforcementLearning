@@ -2,7 +2,7 @@
   "format_version": 1,
   "generation": {
     "seed": 0,
-    "n_checkpoints": 8,
+    "n_corners": 8,
     "base_radius": 254.64790894703253,
     "radial_jitter": 0.0,
     "angular_jitter": 0.0,

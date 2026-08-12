@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from math import radians, tan
+from math import pi, radians, tan
 
 import numpy as np
 
@@ -66,6 +66,11 @@ def validate_track_geometry(
         geometry.centerline_projector,
         sample_spacing=track.sample_spacing,
         required_separation=required_separation,
+        # Half a turn at the tightest permitted radius: within that arc length a
+        # corner cannot have come back around towards itself.
+        local_arc_separation=max(
+            required_separation, pi * generation.min_corner_radius
+        ),
     )
     _validate_simple_closed_polyline(
         geometry.left_boundary_projector,
@@ -128,7 +133,18 @@ def _validate_nonlocal_centerline_separation(
     *,
     sample_spacing: float,
     required_separation: float,
+    local_arc_separation: float,
 ) -> None:
+    """
+    Reject a centerline that runs close to a *different* part of itself.
+
+    Two samples on one tight corner are legitimately close in space: the chord
+    across an arc is shorter than the arc, and at the tightest permitted radius
+    it falls below the required separation well before the corner has turned far
+    enough to be considered another part of the circuit. Pairs closer than
+    ``local_arc_separation`` along the track are therefore skipped, so this rule
+    sees folding rather than cornering.
+    """
     pairs = index.candidate_pairs(required_separation)
     for first, second in pairs:
         first_index = int(first)
@@ -138,7 +154,7 @@ def _validate_nonlocal_centerline_separation(
         index_delta = abs(first_index - second_index)
         cyclic_delta = min(index_delta, index.segment_count - index_delta)
         arc_separation = max(0.0, (cyclic_delta - 1) * sample_spacing)
-        if arc_separation <= required_separation:
+        if arc_separation <= local_arc_separation:
             continue
         distance = segment_distance(
             index.starts[first],

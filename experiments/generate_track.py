@@ -17,7 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="destination JSON track file")
     parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--checkpoints", type=int, default=defaults.n_checkpoints)
+    parser.add_argument("--corners", type=int, default=defaults.n_corners)
     parser.add_argument("--radius", type=float, default=defaults.base_radius)
     parser.add_argument(
         "--radial-jitter",
@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     """
     arguments = build_parser().parse_args(argv)
     config = TrackGenerationConfig(
-        n_checkpoints=arguments.checkpoints,
+        n_corners=arguments.corners,
         base_radius=arguments.radius,
         radial_jitter=arguments.radial_jitter,
         angular_jitter=arguments.angular_jitter,

@@ -36,15 +36,18 @@ def test_defaults_match_the_environment_specification() -> None:
         max_speed=70.0,
     )
     assert config.track == TrackGenerationConfig(
-        n_checkpoints=12,
-        base_radius=50.0,
-        radial_jitter=0.25,
-        angular_jitter=0.25,
+        n_corners=9,
+        base_radius=70.0,
+        radial_jitter=0.55,
+        angular_jitter=0.30,
+        corner_radius_fraction=(0.25, 0.80),
+        min_corner_radius=12.0,
+        max_corner_radius=200.0,
         sample_spacing=0.5,
         width=12.0,
         max_attempts=100,
-        min_length=200.0,
-        max_length=600.0,
+        min_length=300.0,
+        max_length=700.0,
         nonlocal_centerline_margin=2.0,
     )
     assert config.reward == RewardConfig(

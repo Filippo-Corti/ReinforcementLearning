@@ -346,15 +346,15 @@ class TrackGenerationMetadata:
 
     Fields:
         * seed: The random seed used to generate the track.
-        * n_checkpoints: The number of checkpoints used to generate the track.
+        * n_corners: The number of corners used to generate the track.
         * base_radius: The base radius of the track.
         * radial_jitter: The fraction of the base radius used for radial jitter.
-        * angular_jitter: The fraction of one checkpoint sector used for angular jitter.
+        * angular_jitter: The fraction of one vertex sector used for angular jitter.
         * max_attempts: The maximum number of generation attempts.
     """
 
     seed: int
-    n_checkpoints: int
+    n_corners: int
     base_radius: float
     radial_jitter: float
     angular_jitter: float
@@ -367,7 +367,7 @@ class TrackGenerationMetadata:
         """
         return cls(
             seed=data["seed"],
-            n_checkpoints=data["n_checkpoints"],
+            n_corners=data["n_corners"],
             base_radius=data["base_radius"],
             radial_jitter=data["radial_jitter"],
             angular_jitter=data["angular_jitter"],
@@ -380,7 +380,7 @@ class TrackGenerationMetadata:
         """
         return {
             "seed": self.seed,
-            "n_checkpoints": self.n_checkpoints,
+            "n_corners": self.n_corners,
             "base_radius": self.base_radius,
             "radial_jitter": self.radial_jitter,
             "angular_jitter": self.angular_jitter,

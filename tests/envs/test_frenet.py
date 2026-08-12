@@ -29,7 +29,7 @@ def circle_track() -> TrackWithGeometry:
         Track(
             generation=TrackGenerationMetadata(
                 seed=0,
-                n_checkpoints=12,
+                n_corners=12,
                 base_radius=radius,
                 radial_jitter=0.0,
                 angular_jitter=0.0,
@@ -72,7 +72,7 @@ def _rectangle_track() -> TrackWithGeometry:
         Track(
             generation=TrackGenerationMetadata(
                 seed=0,
-                n_checkpoints=10,
+                n_corners=10,
                 base_radius=150.0,
                 radial_jitter=0.0,
                 angular_jitter=0.0,

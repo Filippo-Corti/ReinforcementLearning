@@ -172,9 +172,17 @@ theory:
 
 The controller is neither an expert demonstrator nor training data. Its purpose
 is to expose a broken observation, reward or control convention before neural
-learning is blamed. On twenty-four generated circuits it completes every lap,
-averaging $15.9\,\mathrm s$, which is the standing evidence that the task is
-solvable with the current physics and reward.
+learning is blamed. On twenty-four generated circuits of $397$ to $540\,\mathrm m$
+it completes twenty-three laps, from $19.6$ to $28.2\,\mathrm s$ and averaging
+$22.3\,\mathrm s$. That is the standing evidence that the task is solvable with
+the current physics and reward.
+
+It completed all twenty-four of the circuits the previous generator produced,
+averaging $15.9\,\mathrm s$ over their shorter laps. The one circuit it now
+crashes on is not treated as a defect in the task: its gains are hand-set
+constants tuned against gentle curvature, and circuits now contain corners tight
+enough to demand real braking. A learned policy is not held to this controller's
+line, and the controller is a diagnostic rather than a target.
 
 ### Fixed circuit for Experiment 1
 
@@ -413,10 +421,19 @@ episodes are identical; earlier runs took sixteen of them and reported a
 standard deviation that was exactly zero at every checkpoint.
 
 Stable convergence is the first of three consecutive evaluations that complete
-the lap in at most $32$ simulated seconds, twice the reference controller's
-$15.9\,\mathrm s$ average. A run that never meets the rule is right-censored at
-2,000,000 interactions and remains in every success-rate and learning-curve
-summary.
+the lap in at most $34$ simulated seconds. A run that never meets the rule is
+right-censored at 2,000,000 interactions and remains in every success-rate and
+learning-curve summary.
+
+**This threshold is provisional and needs confirming before any reported run.**
+It was twice the reference controller's average lap, which was $32\,\mathrm s$
+when that average was $15.9\,\mathrm s$. The reference now averages
+$22.3\,\mathrm s$ on longer circuits, and twice that is $44.6\,\mathrm s$, above
+the $40\,\mathrm s$ episode cap — which would make the time condition vacuous and
+silently reduce the rule to three consecutive completed laps. The value above is
+instead about $1.5\times$ the reference average, sitting between its slowest lap
+of $28.2\,\mathrm s$ and the cap, but the multiple is a project choice and not a
+measurement.
 
 Evaluation records the episode outcome, not only its return. A return alone
 cannot distinguish crashing from idling from lapping slowly, and the outcomes
