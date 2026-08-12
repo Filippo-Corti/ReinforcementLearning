@@ -1420,3 +1420,29 @@ Black and Ruff pass. The three notebooks were deliberately not re-executed.
 `tests/configs/test_environment_config.py`, `docs/MDP.md`, and `docs/DIARY.md`.
 
 **Commit**: `fix: rebalance reward coefficients [ai]`
+
+## 2026-08-12 — Interaction-budgeted educational training
+
+**Task**: Give the three readable notebook engines the same exact environment-
+interaction stopping rule and complete the common episode summaries needed for
+aligned result plots.
+
+**Result**: Replaced episode-count stopping in the REINFORCE, A2C and PPO
+educational engines with an absolute interaction budget. Vector collection now
+limits the active worker columns at the final boundary, so the counter ends at
+the requested value even when it is not divisible by the worker count. A2C and
+PPO optimize their final short rollout; REINFORCE retains completed episode
+records but does not update from an incomplete Monte Carlo batch, matching the
+learning contract. A2C and PPO now record the same per-episode mean speed and
+mean throttle magnitude already exposed by REINFORCE.
+
+**Validation**: The focused educational-engine and vector-environment suite
+passed all eight tests. Black and Ruff passed on the changed engine, record and
+test files.
+
+**Files**: `src/training/engines/records.py`,
+`src/training/engines/reinforce.py`, `src/training/engines/a2c.py`,
+`src/training/engines/ppo.py`, `tests/training/test_algorithm_engines.py`, and
+`docs/DIARY.md`.
+
+**Commit**: `feature: budget educational training by interactions [ai]`

@@ -97,7 +97,7 @@ class ReinforceTrainingEngine:
 
     def train(
         self,
-        episode_count: int,
+        interaction_budget: int,
         *,
         on_episode_end: (
             Callable[[EducationalEpisodeRecord, EducationalTrainingHistory], None]
@@ -105,52 +105,77 @@ class ReinforceTrainingEngine:
         ) = None,
     ) -> EducationalTrainingHistory:
         """
-        Collect concurrent trajectories and report them after each possible update.
+        Collect complete trajectories until the exact interaction budget is exhausted.
         """
-        if episode_count <= 0:
-            raise ValueError("Episode count must be positive.")
+        if interaction_budget <= 0:
+            raise ValueError("Interaction budget must be positive.")
+        if interaction_budget < self.history.training_interactions:
+            raise ValueError(
+                "Interaction budget cannot be below consumed interactions."
+            )
+        remaining_budget = interaction_budget - self.history.training_interactions
+        if remaining_budget == 0:
+            return self.history
 
         next_episode_index = len(self.history.episodes)
-        remaining_episodes = episode_count
         progress_bar = tqdm(
-            total=episode_count,
-            desc="Training episodes",
-            unit="episode",
+            total=remaining_budget,
+            desc="Training interactions",
+            unit="interaction",
         )
         try:
-            while remaining_episodes:
+            while self.history.training_interactions < interaction_budget:
                 needed_for_update = self.agent.collection_size - len(
                     self._episode_batch
                 )
-                wave_size = min(remaining_episodes, needed_for_update)
+                wave_size = min(
+                    interaction_budget - self.history.training_interactions,
+                    needed_for_update,
+                )
                 active = np.zeros(
                     self.execution_config.environment_workers, dtype=np.bool_
                 )
                 active[:wave_size] = True
-                observations, reset_infos = self.environments.reset(active)
-                episode_indices = np.arange(
+                episode_indices = np.full(
+                    self.execution_config.environment_workers, -1, dtype=np.int64
+                )
+                episode_indices[:wave_size] = np.arange(
                     next_episode_index,
                     next_episode_index + wave_size,
                     dtype=np.int64,
                 )
+                observations, reset_infos = self.environments.reset(active)
                 transitions: list[list[TrainingTransition]] = [
-                    [] for _ in range(wave_size)
+                    [] for _ in range(self.execution_config.environment_workers)
                 ]
-                returns = np.zeros(wave_size, dtype=np.float64)
-                maximum_progress = np.zeros(wave_size, dtype=np.float64)
-                speed_totals = np.zeros(wave_size, dtype=np.float64)
-                throttle_totals = np.zeros(wave_size, dtype=np.float64)
+                returns = np.zeros(
+                    self.execution_config.environment_workers, dtype=np.float64
+                )
+                maximum_progress = np.zeros_like(returns)
+                speed_totals = np.zeros_like(returns)
+                throttle_totals = np.zeros_like(returns)
                 circuit_identities = [
                     str(vector_info(reset_infos, "circuit_identity", index))
                     for index in range(wave_size)
                 ]
                 completed_records: list[EducationalEpisodeRecord] = []
+                completed_indices: list[int] = []
 
-                while np.any(active):
-                    normalized = self.normalizer.update_and_normalize_batch(
-                        observations, active
+                while (
+                    np.any(active)
+                    and self.history.training_interactions < interaction_budget
+                ):
+                    collection_active = active.copy()
+                    active_indices = np.flatnonzero(collection_active)
+                    maximum_rows = (
+                        interaction_budget - self.history.training_interactions
                     )
-                    active_indices = np.flatnonzero(active)
+                    if active_indices.size > maximum_rows:
+                        collection_active[active_indices[maximum_rows:]] = False
+                        active_indices = active_indices[:maximum_rows]
+                    normalized = self.normalizer.update_and_normalize_batch(
+                        observations, collection_active
+                    )
                     decisions = self.agent.collect_actions(
                         normalized[active_indices],
                         environment_indices=[int(index) for index in active_indices],
@@ -161,7 +186,7 @@ class ReinforceTrainingEngine:
                     )
                     actions[active_indices] = decisions.env_actions
                     next_observations, rewards, terminated, truncated, infos = (
-                        self.environments.step(actions, active)
+                        self.environments.step(actions, collection_active)
                     )
 
                     for decision_index, environment_index_value in enumerate(
@@ -216,6 +241,7 @@ class ReinforceTrainingEngine:
                             or truncated[environment_index]
                         ):
                             active[environment_index] = False
+                            completed_indices.append(environment_index)
                             completed_records.append(
                                 EducationalEpisodeRecord(
                                     episode_index=int(
@@ -247,17 +273,19 @@ class ReinforceTrainingEngine:
                                     ),
                                 )
                             )
+                    progress_bar.update(int(active_indices.size))
                     observations = next_observations
 
                 completed_records.sort(key=lambda record: record.episode_index)
                 self.history.episodes.extend(completed_records)
                 self._episode_batch.extend(
                     OnPolicyRollout(tuple(transitions[index]))
-                    for index in range(wave_size)
+                    for index in sorted(
+                        completed_indices,
+                        key=lambda index: int(episode_indices[index]),
+                    )
                 )
                 next_episode_index += wave_size
-                remaining_episodes -= wave_size
-                progress_bar.update(wave_size)
 
                 if len(self._episode_batch) == self.agent.collection_size:
                     output = self.agent.update(

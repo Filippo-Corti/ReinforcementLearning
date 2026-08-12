@@ -32,8 +32,8 @@ class EducationalEpisodeRecord:
     outcome: EpisodeOutcome
     final_progress: float
     maximum_progress: float
-    mean_speed: float | None = None
-    mean_throttle_magnitude: float | None = None
+    mean_speed: float
+    mean_throttle_magnitude: float
 
 
 @dataclass(frozen=True, slots=True)

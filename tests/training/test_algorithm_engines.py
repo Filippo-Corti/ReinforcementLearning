@@ -104,6 +104,10 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
     assert len(history.updates) == 2
     assert [record.transition_count for record in history.updates] == [2, 2]
     assert completed_episodes == [(0, 1), (1, 1), (2, 2), (3, 2), (4, 2)]
+    assert all(np.isfinite(record.mean_speed) for record in history.episodes)
+    assert all(
+        np.isfinite(record.mean_throttle_magnitude) for record in history.episodes
+    )
     engine.close()
 
 
@@ -143,6 +147,10 @@ def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
     assert len(history.episodes) == 3
     assert [record.transition_count for record in history.updates] == [2, 1]
     assert completed_episodes == [(0, 1), (1, 2), (2, 3)]
+    assert all(np.isfinite(record.mean_speed) for record in history.episodes)
+    assert all(
+        np.isfinite(record.mean_throttle_magnitude) for record in history.episodes
+    )
     engine.close()
 
 
@@ -187,4 +195,8 @@ def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
     assert len(history.episodes) == 3
     assert [record.transition_count for record in history.updates] == [2, 1]
     assert completed_episodes == [(0, 1), (1, 2), (2, 3)]
+    assert all(np.isfinite(record.mean_speed) for record in history.episodes)
+    assert all(
+        np.isfinite(record.mean_throttle_magnitude) for record in history.episodes
+    )
     engine.close()

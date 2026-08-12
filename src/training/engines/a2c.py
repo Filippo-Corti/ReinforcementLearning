@@ -88,7 +88,7 @@ class A2CTrainingEngine:
 
     def train(
         self,
-        episode_count: int,
+        interaction_budget: int,
         *,
         on_episode_end: (
             Callable[[EducationalEpisodeRecord, EducationalTrainingHistory], None]
@@ -96,26 +96,33 @@ class A2CTrainingEngine:
         ) = None,
     ) -> EducationalTrainingHistory:
         """
-        Collect exactly the requested episodes across synchronous CPU workers.
+        Collect and optimize until the exact interaction budget is exhausted.
         """
-        if episode_count <= 0:
-            raise ValueError("Episode count must be positive.")
+        if interaction_budget <= 0:
+            raise ValueError("Interaction budget must be positive.")
+        if interaction_budget < self.history.training_interactions:
+            raise ValueError(
+                "Interaction budget cannot be below consumed interactions."
+            )
+        remaining_budget = interaction_budget - self.history.training_interactions
+        if remaining_budget == 0:
+            return self.history
 
         worker_count = self.execution_config.environment_workers
         active = np.zeros(worker_count, dtype=np.bool_)
-        initial_episodes = min(worker_count, episode_count)
+        initial_episodes = min(worker_count, remaining_budget)
         active[:initial_episodes] = True
-        observations, reset_infos = self.environments.reset(active)
         next_episode_identity = len(self.history.episodes)
         episode_identities = np.full(worker_count, -1, dtype=np.int64)
         for environment_index in range(initial_episodes):
             episode_identities[environment_index] = next_episode_identity
             next_episode_identity += 1
-        started_episodes = initial_episodes
-        completed_episodes = 0
+        observations, reset_infos = self.environments.reset(active)
         episode_steps = np.zeros(worker_count, dtype=np.int64)
         episode_returns = np.zeros(worker_count, dtype=np.float64)
         maximum_progress = np.zeros(worker_count, dtype=np.float64)
+        speed_totals = np.zeros(worker_count, dtype=np.float64)
+        throttle_totals = np.zeros(worker_count, dtype=np.float64)
         circuit_identities = ["" for _ in range(worker_count)]
         for environment_index in range(initial_episodes):
             circuit_identities[environment_index] = str(
@@ -123,18 +130,21 @@ class A2CTrainingEngine:
             )
 
         progress_bar = tqdm(
-            total=episode_count,
-            desc="Training episodes",
-            unit="episode",
+            total=remaining_budget,
+            desc="Training interactions",
+            unit="interaction",
         )
         try:
-            while completed_episodes < episode_count:
+            while self.history.training_interactions < interaction_budget:
                 collection_active = active.copy()
                 active_indices = np.flatnonzero(collection_active)
-                remaining_capacity = self._rollout_buffer.remaining_capacity
-                if active_indices.size > remaining_capacity:
-                    collection_active[active_indices[remaining_capacity:]] = False
-                    active_indices = active_indices[:remaining_capacity]
+                maximum_rows = min(
+                    interaction_budget - self.history.training_interactions,
+                    self._rollout_buffer.remaining_capacity,
+                )
+                if active_indices.size > maximum_rows:
+                    collection_active[active_indices[maximum_rows:]] = False
+                    active_indices = active_indices[:maximum_rows]
 
                 normalized = self.normalizer.update_and_normalize_batch(
                     observations, collection_active
@@ -189,6 +199,12 @@ class A2CTrainingEngine:
                     )
                     episode_steps[environment_index] += 1
                     episode_returns[environment_index] += rewards[environment_index]
+                    speed_totals[environment_index] += observations[
+                        environment_index, 2
+                    ]
+                    throttle_totals[environment_index] += abs(
+                        float(decisions.env_actions[decision_index, 0])
+                    )
                     progress = float(info["episode_progress"]) / float(
                         info["track_length"]
                     )
@@ -217,12 +233,21 @@ class A2CTrainingEngine:
                                     maximum_progress=float(
                                         maximum_progress[environment_index]
                                     ),
+                                    mean_speed=float(
+                                        speed_totals[environment_index]
+                                        / episode_steps[environment_index]
+                                    ),
+                                    mean_throttle_magnitude=float(
+                                        throttle_totals[environment_index]
+                                        / episode_steps[environment_index]
+                                    ),
                                 ),
                             )
                         )
 
                 self._rollout_buffer.append_step(transition_step)
                 self.history.training_interactions += int(active_indices.size)
+                progress_bar.update(int(active_indices.size))
                 observations = next_observations
                 if self._rollout_buffer.transition_count == self.agent.collection_size:
                     self._apply_rollout_update()
@@ -231,15 +256,18 @@ class A2CTrainingEngine:
                 for environment_index, episode_record in ended_records:
                     active[environment_index] = False
                     self.history.episodes.append(episode_record)
-                    completed_episodes += 1
-                    progress_bar.update(1)
-                    if started_episodes < episode_count:
+                    remaining_interactions = (
+                        interaction_budget - self.history.training_interactions
+                    )
+                    active_episode_count = int(np.count_nonzero(active))
+                    if remaining_interactions > active_episode_count:
                         episode_identities[environment_index] = next_episode_identity
                         next_episode_identity += 1
-                        started_episodes += 1
                         episode_steps[environment_index] = 0
                         episode_returns[environment_index] = 0.0
                         maximum_progress[environment_index] = 0.0
+                        speed_totals[environment_index] = 0.0
+                        throttle_totals[environment_index] = 0.0
                         active[environment_index] = True
                         reset_mask[environment_index] = True
                     if on_episode_end is not None:
