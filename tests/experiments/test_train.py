@@ -10,6 +10,7 @@ from configs import (
     EnvironmentConfig,
     ExecutionConfig,
     PPOConfig,
+    ReinforceConfig,
     SimulationConfig,
     TrackGenerationConfig,
 )
@@ -32,7 +33,7 @@ def test_train_entry_point_runs_reinforce_and_writes_shared_records(tmp_path) ->
         actor_learning_rate=0.01,
         training_interaction_budget=8,
         environment_config=_fixture_environment_config(),
-        execution_config=ExecutionConfig(device="cpu"),
+        execution_config=_reinforce_execution_config(),
     )
     run = RunDirectory.open(
         tmp_path / "run",
@@ -83,7 +84,7 @@ def test_reported_training_requires_explicit_steering_saturation_threshold(
             actor_config=SMALL_ACTOR_CONFIG,
             actor_learning_rate=0.01,
             training_interaction_budget=1,
-            execution_config=ExecutionConfig(device="cpu"),
+            execution_config=_reinforce_execution_config(),
             run_category=RunCategory.REPORTED,
         )
 
@@ -100,7 +101,7 @@ def test_train_entry_point_runs_a2c_and_writes_shared_records(tmp_path) -> None:
         training_interaction_budget=8,
         a2c_config=A2CConfig(transitions_per_rollout=8),
         environment_config=_fixture_environment_config(),
-        execution_config=ExecutionConfig(device="cpu"),
+        execution_config=_reinforce_execution_config(),
     )
     run = RunDirectory.open(
         tmp_path / "run",
@@ -133,7 +134,7 @@ def test_train_entry_point_runs_ppo_and_writes_shared_records(tmp_path) -> None:
             minibatch_size=4,
         ),
         environment_config=_fixture_environment_config(),
-        execution_config=ExecutionConfig(device="cpu"),
+        execution_config=_reinforce_execution_config(),
     )
     run = RunDirectory.open(
         tmp_path / "run",
@@ -156,6 +157,16 @@ def test_train_entry_point_runs_ppo_and_writes_shared_records(tmp_path) -> None:
     )
     assert '"current_curvature":' in trajectory
     assert '"lateral_acceleration_proxy":' in trajectory
+
+
+def _reinforce_execution_config() -> ExecutionConfig:
+    """
+    Pin one worker per REINFORCE trajectory instead of inheriting the host's cores.
+    """
+    return ExecutionConfig(
+        device="cpu",
+        environment_workers=ReinforceConfig().completed_episodes_per_update,
+    )
 
 
 def _fixture_environment_config() -> EnvironmentConfig:

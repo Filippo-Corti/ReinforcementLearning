@@ -230,6 +230,7 @@ class PPOAgent:
         minibatch_sizes: list[int] = []
         minibatch_orders: list[tuple[tuple[int, ...], ...]] = []
 
+        completed_epochs = 0
         for _ in range(self.config.optimization_epochs):
             permutation = torch.randperm(
                 len(rollout.transitions),
@@ -237,6 +238,7 @@ class PPOAgent:
                 device=self.device,
             )
             epoch_batches: list[tuple[int, ...]] = []
+            epoch_kl: list[float] = []
             for start in range(0, len(rollout.transitions), self.config.minibatch_size):
                 indices = permutation[start : start + self.config.minibatch_size]
                 epoch_batches.append(tuple(int(index) for index in indices.tolist()))
@@ -249,8 +251,15 @@ class PPOAgent:
                 )
                 for name, value in minibatch_metrics.items():
                     metrics[name].append(value)
+                epoch_kl.append(minibatch_metrics["approximate_kl"])
                 minibatch_sizes.append(len(indices))
             minibatch_orders.append(tuple(epoch_batches))
+            completed_epochs += 1
+            if (
+                self.config.kl_early_stop_enabled
+                and float(np.mean(epoch_kl)) > self.config.target_kl
+            ):
+                break
 
         self._last_minibatch_indices = tuple(minibatch_orders)
         with torch.inference_mode():
@@ -284,6 +293,7 @@ class PPOAgent:
                     value_targets, final_predictions
                 ),
                 "approximate_kl": weighted_mean("approximate_kl"),
+                "completed_epochs": float(completed_epochs),
                 "clip_fraction": weighted_mean("clip_fraction"),
                 "ratio_mean": ratio_mean,
                 "ratio_standard_deviation": ratio_standard_deviation,
@@ -561,10 +571,8 @@ class PPOAgent:
     def _validate_config(config: PPOConfig) -> None:
         if config.value_clipping_enabled:
             raise ValueError("PPO value clipping is disabled by the learning contract.")
-        if config.kl_early_stop_enabled:
-            raise ValueError(
-                "PPO KL early stopping is disabled by the learning contract."
-            )
+        if config.kl_early_stop_enabled and config.target_kl <= 0:
+            raise ValueError("PPO KL early stopping requires a positive target.")
         if config.entropy_bonus_enabled:
             raise ValueError(
                 "PPO entropy bonuses are disabled by the learning contract."

@@ -20,6 +20,8 @@ def _agent(
     critic_learning_rate: float = 0.02,
     optimization_epochs: int = 3,
     minibatch_size: int = 3,
+    kl_early_stop_enabled: bool = False,
+    target_kl: float = 0.02,
 ) -> PPOAgent:
     return PPOAgent(
         observation_dimensions=1,
@@ -33,6 +35,8 @@ def _agent(
             transitions_per_rollout=8,
             optimization_epochs=optimization_epochs,
             minibatch_size=minibatch_size,
+            kl_early_stop_enabled=kl_early_stop_enabled,
+            target_kl=target_kl,
         ),
         critic_learning_rate=critic_learning_rate,
         actor_initialization_generator=torch.Generator().manual_seed(seed),
@@ -164,6 +168,30 @@ def test_ppo_minibatches_cover_every_rollout_row_once_per_epoch() -> None:
     assert len(agent.last_minibatch_indices) == 4
     for epoch in agent.last_minibatch_indices:
         assert sorted(index for batch in epoch for index in batch) == list(range(8))
+
+
+def test_ppo_kl_early_stop_ends_an_update_that_moves_the_policy_too_far() -> None:
+    """
+    Clipping bounds one step; the KL stop bounds the drift accumulated over epochs.
+    """
+    unbounded = _agent(6, optimization_epochs=4, minibatch_size=3)
+    stopped = _agent(
+        6,
+        optimization_epochs=4,
+        minibatch_size=3,
+        kl_early_stop_enabled=True,
+        target_kl=1e-6,
+    )
+
+    unbounded_output = unbounded.update(
+        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(unbounded))
+    )
+    stopped_output = stopped.update(
+        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(stopped))
+    )
+
+    assert unbounded_output.diagnostics["completed_epochs"] == 4.0
+    assert stopped_output.diagnostics["completed_epochs"] == 1.0
 
 
 def test_ppo_keeps_collection_log_probabilities_fixed_for_all_epochs() -> None:

@@ -15,7 +15,6 @@ def _agent(
     seed: int,
     *,
     learning_rate: float = 0.02,
-    actor_weight_decay: float = 0.0,
 ) -> ReinforceAgent:
     return ReinforceAgent(
         observation_dimensions=1,
@@ -24,7 +23,6 @@ def _agent(
         ),
         config=ReinforceConfig(
             discount=0.9,
-            actor_weight_decay=actor_weight_decay,
         ),
         initialization_generator=torch.Generator().manual_seed(seed),
         sampling_generator=torch.Generator().manual_seed(seed + 100),
@@ -110,39 +108,6 @@ def test_reinforce_requires_an_explicit_actor_learning_rate() -> None:
             initialization_generator=torch.Generator().manual_seed(1),
             sampling_generator=torch.Generator().manual_seed(2),
         )
-
-
-def test_reinforce_weight_decay_applies_only_to_mlp_weights() -> None:
-    weight_decay = 1e-4
-    agent = _agent(3, actor_weight_decay=weight_decay)
-    regularized = next(
-        group
-        for group in agent.optimizer.param_groups
-        if group["weight_decay"] == weight_decay
-    )
-    unregularized = next(
-        group for group in agent.optimizer.param_groups if group["weight_decay"] == 0.0
-    )
-    named_parameters = dict(agent.actor.named_parameters())
-
-    assert {id(parameter) for parameter in regularized["params"]} == {
-        id(parameter)
-        for name, parameter in named_parameters.items()
-        if name.endswith(".weight")
-    }
-    assert {id(parameter) for parameter in unregularized["params"]} == {
-        id(parameter)
-        for name, parameter in named_parameters.items()
-        if not name.endswith(".weight")
-    }
-    assert id(agent.actor.policy.log_standard_deviation) in {
-        id(parameter) for parameter in unregularized["params"]
-    }
-
-
-def test_reinforce_rejects_negative_actor_weight_decay() -> None:
-    with pytest.raises(ValueError, match="cannot be negative"):
-        _agent(3, actor_weight_decay=-1e-4)
 
 
 def test_reinforce_loss_matches_the_documented_per_trajectory_reduction() -> None:

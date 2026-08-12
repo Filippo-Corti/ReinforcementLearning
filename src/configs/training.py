@@ -66,6 +66,12 @@ class ActorConfig(SerializableConfig):
     standard deviation is clamped to the configured bounds before exponentiation,
     preventing numerical collapse or excessive sampling variance.
 
+    The upper bound matters more than it looks. Because actions are squashed by
+    `tanh`, a large scale makes almost every sample saturate at a control limit,
+    so the policy degenerates into random bang-bang steering while its mean stops
+    being identifiable. Capping the scale at one keeps samples inside the
+    responsive part of the squashing function.
+
     Fields:
         * name: Human-readable actor-size identity.
         * hidden_sizes: Width of each hidden layer.
@@ -86,7 +92,7 @@ class ActorConfig(SerializableConfig):
     hidden_initialization_gain: float = 2**0.5
     output_initialization_gain: float = 0.01
     initial_log_standard_deviation: float = -0.5
-    log_standard_deviation_bounds: tuple[float, float] = (-5.0, 2.0)
+    log_standard_deviation_bounds: tuple[float, float] = (-5.0, 0.0)
 
 
 SMALL_ACTOR_CONFIG = ActorConfig(name="small", hidden_sizes=(32, 32))

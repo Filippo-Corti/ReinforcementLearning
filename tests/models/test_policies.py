@@ -111,7 +111,7 @@ def test_dispersion_bounds_and_extreme_actions_have_finite_log_probability() -> 
     actor = _actor()
     with torch.no_grad():
         actor.policy.log_standard_deviation.fill_(100.0)
-    assert torch.allclose(actor.policy.standard_deviation, torch.full((2,), exp(2.0)))
+    assert torch.allclose(actor.policy.standard_deviation, torch.full((2,), exp(0.0)))
 
     with torch.no_grad():
         actor.policy.log_standard_deviation.fill_(-100.0)
