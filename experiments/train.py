@@ -24,6 +24,7 @@ from configs import (
     ExecutionConfig,
     PPOConfig,
     ReinforceConfig,
+    StartStateConfig,
     TrainingConfig,
 )
 from envs.racing import RacingEnv
@@ -395,6 +396,12 @@ def _run_training(
         ),
     )
     environment = RacingEnv(track, config=environment_config)
+    # Training samples a start pose for coverage, but deterministic evaluation
+    # must always launch from the canonical start line: a reported evaluation
+    # curve has to answer the same question at every checkpoint.
+    evaluation_config = replace(
+        environment_config, start=StartStateConfig(randomized=False)
+    )
     observation_shape = environment.observation_space.shape
     if observation_shape is None or observation_shape[0] is None:
         raise ValueError("RacingEnv must expose a fixed observation dimension.")
@@ -408,7 +415,7 @@ def _run_training(
         ),
         run_category=run_category,
         evaluation_environment_factory=lambda: RacingEnv(
-            track, config=environment_config
+            track, config=evaluation_config
         ),
         evaluation_interval=training_config.evaluation.evaluation_interval,
         environment_reset_generators=tuple(

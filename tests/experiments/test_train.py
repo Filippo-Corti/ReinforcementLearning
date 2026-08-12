@@ -177,3 +177,41 @@ def _fixture_environment_config() -> EnvironmentConfig:
         simulation=SimulationConfig(max_episode_steps=1),
         track=TrackGenerationConfig(min_length=1_000.0, max_length=3_000.0),
     )
+
+
+def test_reported_evaluation_uses_the_canonical_start(tmp_path) -> None:
+    """
+    Training samples a start pose; a reported evaluation curve must not.
+
+    Every checkpoint has to answer the same question, so the deterministic
+    evaluation environment always launches from the canonical start line even
+    though the training environments do not.
+    """
+    root = Path(__file__).parents[1]
+    engine = run_ppo_training(
+        seed=3,
+        track_path=root / "fixtures" / "tracks" / "valid_circle.json",
+        run_path=tmp_path / "run",
+        actor_config=SMALL_ACTOR_CONFIG,
+        actor_learning_rate=0.01,
+        critic_learning_rate=0.01,
+        training_interaction_budget=8,
+        evaluation_interval=8,
+        near_saturated_steering_threshold=0.9,
+        ppo_config=PPOConfig(
+            transitions_per_rollout=8,
+            optimization_epochs=2,
+            minibatch_size=4,
+        ),
+        environment_config=_fixture_environment_config(),
+        execution_config=_reinforce_execution_config(),
+    )
+
+    assert engine.environment.config.start.randomized
+    factory = engine.evaluation_environment_factory
+    assert factory is not None
+    evaluation_environment = factory()
+    try:
+        assert not evaluation_environment.config.start.randomized
+    finally:
+        evaluation_environment.close()
