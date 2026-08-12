@@ -218,10 +218,13 @@ exact resume on the supported hardware and software stack.
 
 Neural-network training and evaluation use the available NVIDIA GeForce RTX
 2060 with CUDA and PyTorch `float32`. Racing environments and their geometry
-queries execute in persistent CPU worker processes: REINFORCE uses eight workers
-to collect its eight complete episodes concurrently, while A2C and PPO start
-with the number of physical CPU cores and store a pooled 2048-transition
-rollout. The selected worker count is configurable and recorded. The main
+queries execute in persistent CPU worker processes. All three algorithms use the
+same worker count, the number of physical CPU cores, so that reported collection
+throughput and wall time compare like with like. What differs is only what each
+algorithm does with the collected data: REINFORCE fills a batch of eight
+complete episodes, over several waves when there are fewer workers than
+episodes, while A2C and PPO store a pooled 2048-transition rollout. The selected
+worker count is configurable and recorded. The main
 process and every worker apply one PyTorch intra-op thread, one inter-op thread,
 deterministic algorithms and disabled cuDNN benchmarking. CPU-only neural
 execution remains valid for unit tests and reduced development checks, but it

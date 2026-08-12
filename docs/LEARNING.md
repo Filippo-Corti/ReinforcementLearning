@@ -283,6 +283,31 @@ policy degenerates into random bang-bang steering, and its mean stops being
 identifiable from the data. These dispersion values are project choices and are
 checked during the pre-experiment configuration work.
 
+**How the bounds are enforced.** After each actor optimizer step, the learned
+log standard deviations are *projected* back into $[-5,0]$; the log density
+itself uses the parameter unmodified. The distinction matters. Enforcing the
+bounds with a clamp inside the log density instead leaves the parameter free to
+drift outside the interval, and a clamp has exactly zero gradient there: a log
+scale that once crossed the upper bound would be frozen at maximum dispersion
+for the remainder of the run, because the gradient that should pull it back is
+identically zero. A run under that implementation did exactly this — both
+components crossed $0$ after roughly 350,000 interactions and stayed pinned at
+$\sigma=1$ for the remaining 1,650,000. Projection instead leaves the parameter
+resting *on* the bound, where its gradient is live, so the optimizer can move it
+inward as soon as the data asks for that.
+
+The upward pressure is not incidental, which is why the enforcement mechanism
+matters. Under the $\tanh$ change of variables the log density of a saturated
+action grows without bound, so
+$\partial\log\pi/\partial\log\sigma$ is strongly positive for samples far from
+the mean: about $+6.9$ at $U_t=2$ and $+18.9$ at $U_t=3$, against $-1.0$ at
+$U_t=0.4$. Whenever the actions with positive advantage are saturated ones —
+which cornering makes routine — the actor objective is improved by widening the
+policy. REINFORCE and A2C take one gradient step per batch and their dispersion
+drifts slowly downward in practice; PPO takes several hundred minibatch steps on
+each rollout, so the same per-step pressure compounds and only PPO reaches the
+bound.
+
 ## Input normalization and optimization safeguards
 
 ### Observation normalization
@@ -443,12 +468,21 @@ until that episode ends.
 
 Because there is no value function from which to bootstrap, REINFORCE collects
 complete episodes. Eight episodes form one update batch so the update averages
-several independently generated trajectories. The eight trajectories are
-collected concurrently, one in each persistent CPU environment worker. A worker
-that reaches an episode boundary is parked until the other workers finish their
-trajectories, so one update still contains exactly one trajectory per worker.
-The choice of eight is a project trade-off: fewer episodes update more
-frequently but noisily, while more delay every update and require more memory.
+several independently generated trajectories. The choice of eight is a project
+trade-off: fewer episodes update more frequently but noisily, while more delay
+every update and require more memory.
+
+The batch size and the number of environment workers are independent. Workers
+are an execution resource shared with A2C and PPO, and all three algorithms use
+the same count so that reported timing compares like with like; the batch size
+belongs to REINFORCE alone. Trajectories are collected concurrently, one per
+active worker, and a worker that reaches an episode boundary is parked. When a
+batch needs more trajectories than there are workers, it is filled over several
+successive waves. No optimizer step happens between the waves of one batch, so
+all eight trajectories are still drawn from a single policy, which is what the
+Monte Carlo estimator requires. If a batch has room for fewer trajectories than
+there are workers, only that many workers are activated, so a batch never
+overshoots its size.
 
 The implementation-only learning gate uses a deterministic one-step task with
 constant observation $(1)$ and reward equal to the bounded throttle action.
@@ -491,18 +525,20 @@ $$
 Input:
     actor architecture and actor learning rate
     training-interaction budget
-    independent actor-initialization RNG and eight indexed policy/reset RNGs
+    batch size of 8 complete trajectories
+    independent actor-initialization RNG and one indexed policy/reset RNG per worker
 
 Initialize:
     actor parameters theta and learned log standard deviations
     observation running statistics
     actor Adam optimizer
     total_training_interactions <- 0
-    spawn eight environment workers once and reset each worker
+    spawn the configured environment workers once and reset each worker
+    batch <- empty list of complete trajectories
 
 While enough budget remains to continue collecting:
-    trajectories <- one empty trajectory for each worker
-    mark every worker active
+    wave_size <- min(8 - size of batch, worker count)
+    mark the first wave_size workers active and park the rest
 
     While at least one worker is active and budget remains:
         update observation statistics with all active current observations
@@ -513,19 +549,19 @@ While enough budget remains to continue collecting:
         step all active workers concurrently
         store each transition in its worker's trajectory
         increment total_training_interactions by the active-worker count
-        park a worker when it terminates or truncates
+        when a worker terminates or truncates, append its trajectory to batch
+            and park it
 
     If the budget interrupted any trajectory before its environment boundary:
         retain all interactions and episode metrics for accounting
         do not use this incomplete batch in a Monte Carlo update
         stop collection
 
-    If fewer than 8 complete trajectories were collected before the budget:
-        retain all interactions and episode records for accounting
-        do not optimize from this incomplete batch
-        stop training
+    If the batch holds fewer than 8 complete trajectories:
+        reset the workers of the next wave and continue collecting
+        no optimizer step separates the waves of one batch
 
-    For every completed trajectory, moving backward from its last transition:
+    For every trajectory in the batch, moving backward from its last transition:
         set G_t <- R_(t+1) at termination or time-limit truncation
         otherwise set G_t <- R_(t+1) + gamma * G_(t+1)
 
@@ -537,8 +573,9 @@ While enough budget remains to continue collecting:
     backpropagate L_REINFORCE
     record the actor gradient norm and clip it if it exceeds 0.5
     apply one Adam update to theta and the log standard deviations
+    project the log standard deviations back into their approved interval
     log losses, dispersion, parameter norms, update size and interaction count
-    reset all eight workers for the next collection wave
+    empty the batch and start the next collection wave
 
 Save the final actor, normalizer, optimizer, RNG states and counters.
 ```
@@ -650,6 +687,7 @@ While total_training_interactions < budget:
     recompute corrected log pi_theta(A_t | O_t) from stored inputs and U_t
     flatten only valid rows and compute the mean actor loss over the rollout
     clear actor gradients, backpropagate, record norm, clip and update theta
+    project the log standard deviations back into their approved interval
     compute the mean half-squared critic loss over the valid rollout rows
     clear critic gradients, backpropagate, record norm, clip and update w
     log actor, critic, advantage, target and optimization diagnostics
@@ -785,6 +823,7 @@ While total_training_interactions < budget:
             compute omega_t from current minus old log-probability
             compute the clipped actor loss using fixed advantages
             clear actor gradients, backpropagate, record norm, clip and update theta
+            project the log standard deviations back into their approved interval
 
             compute the unclipped half-squared critic loss using fixed y_t
             clear critic gradients, backpropagate, record norm, clip and update w

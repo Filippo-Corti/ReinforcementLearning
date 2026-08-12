@@ -1670,3 +1670,75 @@ reward [ai]`, `feature: bound exploration scale and shorten PPO rollout reuse
 [ai]`, `feature: report signed throttle, outcome mix and lap time [ai]`,
 `fix: initialize the policy neutral in acceleration, not in action [ai]`,
 `docs: specify the grip-limited MDP and the three reward orderings [ai]`.
+
+## 2026-08-12 — Diagnosis of the three final-policy anomalies
+
+**Task**: Decide whether PPO's bang-bang steering, A2C's failure beside
+REINFORCE's success, and REINFORCE's fastest 2,000,000-interaction lap are
+results to report or defects to fix.
+
+**Result**: Two defects and one reporting artefact. The diagnosis used the
+existing notebook runs; the conversion `lap_time = (300.04 - R) / 3.5` seconds
+follows from the reward coefficients and reproduces all three recorded finals to
+within a step, so evaluation return reads directly as lap time.
+
+**PPO's bang-bang controls are a defect.** The learned log standard deviation was
+bounded by a clamp inside the log density. A clamp has zero gradient outside its
+interval, so the bound was absorbing: the recorded final values `+0.00039` and
+`+0.00015` sit just above the upper bound of `0`, and the exploration-scale panel
+is exactly flat at `sigma = 1` from 350,000 interactions to the end of the run.
+The pressure upward is systematic rather than incidental: under the `tanh` change
+of variables, `d log pi / d log sigma` is `+6.9` at `U_t = 2` and `+18.9` at
+`U_t = 3` against `-1.0` at `U_t = 0.4`, so saturated actions with positive
+advantage widen the policy. Only PPO reaches the bound because it takes several
+hundred minibatch steps per rollout where REINFORCE and A2C take one. The cost is
+visible: greedy return peaks at `254` (`13.2 s`) at 100,000 interactions and
+settles at `245` (`15.6 s`), a regression of `2.4 s` per lap that never recovers.
+The steering dither itself is largely absorbed by the `180 deg/s` rate limit,
+which turns an alternating command into a `7.2 deg` band and lets the duty cycle
+set the mean angle; the throttle chatter is what costs time, because braking
+spends the whole friction budget and leaves no grip to turn with.
+
+**A2C's critic is starved of updates, but A2C did not fail.** Its greedy
+evaluation is bimodal, returning `251, 251, 252` at 1.45-1.55M and `252, 251, 251`
+at 1.70-1.80M against `29` at the checkpoints between; it therefore meets the
+stable-convergence rule of `EXPERIMENT.md` twice, at a lap time near `14.0 s`,
+faster than both other algorithms. Only the snapshot at exactly 2,000,000 lands
+on a crash. Underneath, explained variance climbs to `0.8` early and collapses to
+`0` once completed laps push value targets toward `200`: A2C takes one critic
+step per 2048-transition rollout, which is 977 Adam steps for the whole run, and
+Adam's per-parameter displacement is bounded by its learning rate. Refitting the
+same critic on a constant target of `200` reaches `79.7` after 977 steps and
+`200.0` after 5,000, so the limit is the update count, not capacity. With a
+near-constant baseline, GAE at `lambda = 0.95` truncates the advantage to
+`1 / (1 - gamma * lambda) = 19.8` steps, or `0.79 s`: nothing tells the policy
+that a corner three seconds away needs braking now, which is what the final
+trajectory shows, accelerating monotonically to `31 m/s` without braking.
+
+**REINFORCE being fastest is an artefact of the other two.** Best deterministic
+lap achieved during each run: PPO `13.2 s` at 100,000 interactions, A2C `14.0 s`,
+REINFORCE `15.1 s`. REINFORCE leads at the common budget only because it is the
+one algorithm that never regresses, and it is also the slowest to converge, at
+400,000 interactions against PPO's 100,000. The primary-result rule is unchanged;
+the final-window regression and instability outcomes the protocol already
+specifies are where these belong.
+
+**Fixes applied**: the dispersion bounds are now enforced by projecting the
+parameter after each actor step, so a policy resting on a bound keeps a live
+gradient. The worker count is no longer set by REINFORCE's batch size, so all
+three algorithms use the physical core count and their collection timings are
+comparable. The notebooks were realigned with the learning contract: PPO ran ten
+optimization epochs where the contract specifies four, its markdown claimed the
+approximate-KL early stop was inactive when the configuration enables it, and
+REINFORCE used a batch of ten against the contract's eight.
+
+**Not yet addressed**: the A2C critic learning rate, which the pre-experiment
+calibration must now choose from a grid that reaches beyond `1e-3`.
+
+**Files**: `src/models/policies.py`, `src/models/actor.py`, `src/agents/`,
+`src/training/engines/`, `experiments/train.py`, `tests/`, `notebooks/`,
+`docs/LEARNING.md`, `docs/EXPERIMENT.md`, `docs/DIARY.md`.
+
+**Commits**: `fix: keep the exploration scale learnable at its bound [ai]`,
+`feature: let every algorithm use the same worker count [ai]`,
+`docs: align the notebooks and the contract with the code [ai]`.
