@@ -1629,6 +1629,35 @@ trace over three circuits is bit-identical before and after the projection
 optimization. The full suite passes, including two `test_train.py` failures that
 predated this work and depended on the host's core count.
 
+**Controlled runs**: 300,000 interactions each, identical networks, learning
+rates, discount, seeds and ten workers; only the algorithm differs. Greedy
+evaluation runs one episode from the canonical start.
+
+| interactions | 30k | 60k | 90k | 120k | 180k | 240k | 300k |
+|---|---|---|---|---|---|---|---|
+| PPO lap fraction | 0.554 | **1.000** | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| PPO lap time | - | 13.84 | 13.60 | 13.64 | 13.96 | 14.04 | 17.84 |
+| PPO return | 41.1 | 251.3 | 252.3 | 252.0 | 250.9 | 250.6 | 237.5 |
+| A2C lap fraction | 0.148 | 0.273 | 0.161 | 0.125 | 0.112 | 0.137 | 0.517 |
+| REINFORCE lap fraction | 0.117 | 0.140 | 0.185 | 0.219 | 0.380 | 0.361 | 0.372 |
+
+PPO completes every training episode from 120,000 interactions onward and laps
+in `13.6 s`, faster than the reference controller's `15.9 s`. A2C and REINFORCE
+are both still climbing at 300,000 and neither completes a lap deterministically,
+though REINFORCE's final training bucket completes 14% of its episodes. The
+grip-limited task is materially harder than the one these three learned before,
+and the 2,000,000-interaction budget matters now in a way it did not when A2C
+converged by 300,000.
+
+Two of the reviewed symptoms are resolved and one is reduced rather than
+eliminated. Greedy evaluation now tracks training instead of diverging from it:
+the deterministic policy that used to score exactly `-20` with zero progress at
+every checkpoint now completes laps. Lap time is a visible fraction of the
+return, `252` for a `13.6 s` lap against `237` for a `17.8 s` one. PPO's
+degradation is much smaller than before, `340 -> 446` steps at one late
+checkpoint against the previous `232 -> 703`, but it has not gone away and
+should be watched over the full budget.
+
 **Files**: `src/configs/environment.py`, `src/configs/training.py`,
 `src/configs/algorithms.py`, `src/envs/vehicle/`, `src/envs/observations/frenet.py`,
 `src/envs/racing/`, `src/models/policies.py`, `src/agents/ppo.py`,
