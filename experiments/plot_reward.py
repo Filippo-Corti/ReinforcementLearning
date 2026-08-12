@@ -175,7 +175,7 @@ def _lap_steps(model: RewardModel, speed: float) -> float:
     return REFERENCE_TRACK_LENGTH / speed / model.simulation.agent_timestep
 
 
-def build_figure(speed: float) -> plt.Figure:
+def build_figure(speed: float) -> plt.Figure: # type: ignore
     """
     Build the three-panel comparison of the current and original coefficients.
     """

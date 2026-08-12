@@ -23,6 +23,8 @@ Where:
 The steering angle is part of the state because it is rate limited: an action
 requests an angle and the wheels travel toward it over several physics substeps,
 so the angle in force at $t+1$ depends on the angle at $t$.
+This is the same reason why the velocity is part of the state: the throttle does 
+not tell how fast the car is moving.
 
 This represents fully the environment but it is not what the agent observes.
 
@@ -36,10 +38,6 @@ Where:
 * $v_t$ is the current velocity.
 * $\delta_t$ is the current front-wheel steering angle.
 * $\bar{\kappa}_t$ is a velocity-dependent summary of the track curvature ahead.
-
-The steering angle is observed rather than hidden. It is a state variable the
-agent's own action acts on, so withholding it would make the task partially
-observable for no modelling reason.
 
 This is a richer, **Markov-like** observation of the environment. It assumes that the
 car can localize itself on the track and has access to the circuit geometry. It is
@@ -56,7 +54,7 @@ $$ o_t^{\text{LiDAR}} = (v_t, \delta_t, R) $$
 
 Where:
 * $v_t$ describes current velocity.
-* $\delta_t$ is the current front-wheel steering angle.
+* $\delta_t$ describes current front-wheel steering angle.
 * $R$ represents the readings from a LiDAR.
 
 This is a lower-level observation, harder to interpret directly and which assumes that the robot does not know the full circuit.
@@ -92,13 +90,15 @@ where:
 * $b_{max} = 20 m/s^2$ is the grip-limited braking deceleration.
 * $\delta_{max} = 30°$ is the maximum steering angle.
 
-Acceleration and braking differ because they are limited by different things: the
+Acceleration and braking differ, as it happens in real cars.
+This is due to being limited by different things: the
 engine cannot deliver more than $a_{max}$, while the brakes are limited only by
 the tyres and therefore reach the full friction budget $\mu g$ defined below.
 
 The steering component is a **requested** angle $\delta_t^{\star}$, not the angle
 that takes effect. The action is a demand; the transition kernel decides what the
 car actually does with it.
+Again, this matches a real car: steering at eccessive speed causes underrotations.
 
 Reversing is not allowed, as assumed not necessary in an F1 circuit.
 
@@ -344,7 +344,7 @@ safety margin of roughly two and a half times the target lap. Both the circuit
 scale and the cap are configuration values and can be increased together for a
 longer task.
 
-The signs and approximate undiscounted totals are:
+Here is an example of what may be going on with these values:
 
 * The step penalty over a $16s$ lap is
   $-c_{\text{step}}\times 16/\Delta_{t_{agent}}=-16$.

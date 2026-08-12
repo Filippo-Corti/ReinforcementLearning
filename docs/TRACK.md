@@ -233,9 +233,7 @@ $$
 
 Here $\theta_t$ is the car's heading from the true environment state, $\delta_t$
 is the current front-wheel angle, and $\bar{\kappa}$ is the runtime preview
-defined above. The steering angle is observed because the rate limit described in
-[`MDP.md`](MDP.md) makes it a state variable rather than a property of the
-action. The environment exposes values in physical units; observation
+defined above. The environment exposes values in physical units; observation
 normalization, if enabled for an agent, belongs in a wrapper or training utility
 and must not alter the environment dynamics.
 
@@ -336,7 +334,3 @@ The progress requirement prevents the reset pose on the finish line, local
 oscillation across the gate, or a nearby geometric shortcut from completing a
 lap. If collision and finish are detected in the same physics substep,
 collision takes precedence.
-
-A mode that instead asks every sampled start to reach the canonical finish line
-would be a different task, with a lap length that depends on where the car
-happened to be placed, and must be configured explicitly.
