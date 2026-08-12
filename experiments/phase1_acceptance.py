@@ -65,7 +65,7 @@ class ReplayTransition:
         * terminated: Whether the episode reached an MDP terminal state.
         * truncated: Whether the episode reached its time limit.
         * info: Environment diagnostics returned for the transition.
-        * state: Complete vehicle state after the transition.
+        * state: Pose, speed and front-wheel angle after the transition.
     """
 
     observation: tuple[float, ...]
@@ -73,7 +73,7 @@ class ReplayTransition:
     terminated: bool
     truncated: bool
     info: tuple[tuple[str, Any], ...]
-    state: tuple[float, float, float, float]
+    state: tuple[float, float, float, float, float]
 
 
 def build_parser() -> argparse.ArgumentParser:

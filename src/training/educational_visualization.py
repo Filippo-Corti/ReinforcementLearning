@@ -389,7 +389,7 @@ def plot_outcomes_and_lap_time(
     axes[0].legend()
 
     completed = [
-        (index, float(row["lap_time"]))
+        (index, _as_float(row["lap_time"]))
         for index, row in zip(episodes, episode_rows, strict=True)
         if row.get("lap_time") is not None
     ]

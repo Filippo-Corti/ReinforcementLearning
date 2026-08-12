@@ -31,7 +31,8 @@ filterwarnings = [
 target-version = ["py312"]
 
 [tool.pyright]
-include = ["src", "tests"]
+# Matches what CI type checks, so a bare `pyright` run cannot miss what CI sees.
+include = ["src", "tests", "experiments"]
 extraPaths = ["src"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"

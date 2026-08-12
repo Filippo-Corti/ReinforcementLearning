@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from agents import (
     AgentUpdateInput,
     AgentUpdateOutput,
     CollectedAction,
+    CollectedActionBatch,
     CollectionMode,
 )
 from configs import (
@@ -50,6 +52,22 @@ class _FixedAgent:
         self.training_actions.append((float(action[0]), float(action[1])))
         return CollectedAction(action, action, 0.0, 0.0)
 
+    def collect_actions(
+        self,
+        normalized_observations: np.ndarray,
+        environment_indices: Sequence[int] | None = None,
+    ) -> CollectedActionBatch:
+        # Delegating keeps one draw per row in the same order the engine's own
+        # single-row fallback would have used.
+        del environment_indices
+        rows = [self.collect_action(row) for row in normalized_observations]
+        return CollectedActionBatch(
+            raw_actions=np.stack([row.raw_action for row in rows]),
+            env_actions=np.stack([row.env_action for row in rows]),
+            behaviour_log_probabilities=np.zeros(len(rows), dtype=np.float32),
+            current_values=np.zeros(len(rows), dtype=np.float32),
+        )
+
     def deterministic_action(self, normalized_observation: np.ndarray) -> np.ndarray:
         del normalized_observation
         return np.asarray((0.0, 0.0), dtype=np.float32)
@@ -57,6 +75,9 @@ class _FixedAgent:
     def bootstrap_value(self, normalized_observation: np.ndarray) -> float:
         del normalized_observation
         return 0.0
+
+    def bootstrap_values(self, normalized_observations: np.ndarray) -> np.ndarray:
+        return np.zeros(len(normalized_observations), dtype=np.float32)
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
         rows = (

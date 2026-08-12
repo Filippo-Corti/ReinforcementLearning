@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
 
-from agents import AgentUpdateInput, AgentUpdateOutput, CollectedAction, CollectionMode
+from agents import (
+    AgentUpdateInput,
+    AgentUpdateOutput,
+    CollectedAction,
+    CollectedActionBatch,
+    CollectionMode,
+)
 from configs import (
     EnvironmentConfig,
     ObservationNormalizationConfig,
@@ -26,6 +33,20 @@ class _EvaluationAgent:
         action = self.deterministic_action(normalized_observation)
         return CollectedAction(action, action, 0.0, 0.0)
 
+    def collect_actions(
+        self,
+        normalized_observations: np.ndarray,
+        environment_indices: Sequence[int] | None = None,
+    ) -> CollectedActionBatch:
+        del environment_indices
+        rows = [self.collect_action(row) for row in normalized_observations]
+        return CollectedActionBatch(
+            raw_actions=np.stack([row.raw_action for row in rows]),
+            env_actions=np.stack([row.env_action for row in rows]),
+            behaviour_log_probabilities=np.zeros(len(rows), dtype=np.float32),
+            current_values=np.zeros(len(rows), dtype=np.float32),
+        )
+
     def deterministic_action(self, normalized_observation: np.ndarray) -> np.ndarray:
         del normalized_observation
         return np.asarray((0.0, 0.0), dtype=np.float32)
@@ -33,6 +54,9 @@ class _EvaluationAgent:
     def bootstrap_value(self, normalized_observation: np.ndarray) -> float:
         del normalized_observation
         return 0.0
+
+    def bootstrap_values(self, normalized_observations: np.ndarray) -> np.ndarray:
+        return np.zeros(len(normalized_observations), dtype=np.float32)
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
         del update_input

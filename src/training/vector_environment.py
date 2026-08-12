@@ -125,9 +125,10 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         self._track_seed: int | None = None
         self._environment = RacingEnv(tracks[0], config=environment_config)
         self.observation_space = self._environment.observation_space
-        self._last_observation = np.zeros(
-            self.observation_space.shape[0], dtype=np.float32
-        )
+        observation_shape = self.observation_space.shape
+        if observation_shape is None:
+            raise ValueError("The racing observation space must declare a shape.")
+        self._last_observation = np.zeros(observation_shape[0], dtype=np.float32)
         self._last_info: dict[str, Any] = {}
         self.action_space = gym.spaces.Dict(
             {

@@ -306,7 +306,9 @@ def _sample_segments(
     heading = start_heading
     for segment in segments:
         poses.append((position, heading))
-        position, heading = _advance(position, heading, segment.curvature, segment.length)
+        position, heading = _advance(
+            position, heading, segment.curvature, segment.length
+        )
 
     closure = float(np.hypot(*(position - np.asarray(start_position))))
     if not isclose(closure, 0.0, abs_tol=1e-6):
