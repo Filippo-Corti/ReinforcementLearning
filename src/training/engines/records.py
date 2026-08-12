@@ -22,7 +22,14 @@ class EducationalEpisodeRecord:
         * final_progress: Fraction of a lap reached at the episode boundary.
         * maximum_progress: Largest lap fraction reached during the episode.
         * mean_speed: Mean pre-action vehicle speed across the episode.
+        * mean_throttle: Mean signed throttle/brake action.
         * mean_throttle_magnitude: Mean absolute throttle/brake action.
+        * lap_time: Simulated seconds taken, when the lap was completed.
+
+    A bounded Gaussian policy whose mean output is zero still produces a large
+    mean absolute action, because the exploration noise alone saturates through
+    `tanh`. Only the signed mean separates a policy that has learned to
+    accelerate from one whose throttle is pure noise, so both are recorded.
     """
 
     episode_index: int
@@ -33,7 +40,9 @@ class EducationalEpisodeRecord:
     final_progress: float
     maximum_progress: float
     mean_speed: float
+    mean_throttle: float
     mean_throttle_magnitude: float
+    lap_time: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +91,8 @@ def racing_outcome(
         return EpisodeOutcome.COMPLETED
     if terminated and bool(info["collision"]):
         return EpisodeOutcome.CRASHED
+    if terminated and bool(info["stalled"]):
+        return EpisodeOutcome.STALLED
     if truncated:
         return EpisodeOutcome.TIME_LIMIT
     raise ValueError("Racing episode ended without a supported lifecycle outcome.")

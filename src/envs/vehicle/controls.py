@@ -41,11 +41,16 @@ class NormalizedAction:
 @dataclass(frozen=True, slots=True)
 class PhysicalControls:
     """
-    Store physical controls held constant during one agent action.
+    Store the controls an agent action requests for one agent step.
+
+    These are demands, not achieved values. The transition kernel still applies
+    the steering rate limit, aerodynamic drag and the tyre friction budget, so
+    the car may reach neither the requested acceleration nor the requested
+    steering angle.
 
     Fields:
-        * acceleration: The longitudinal acceleration command.
-        * steering_angle: The front-wheel steering angle in radians.
+        * acceleration: The requested longitudinal tyre acceleration.
+        * steering_angle: The requested front-wheel steering angle in radians.
     """
 
     acceleration: float
@@ -58,10 +63,16 @@ def normalized_to_physical_controls(
     vehicle_config: CarConfig | None = None,
 ) -> PhysicalControls:
     """
-    Convert a normalized action into the documented physical controls.
+    Convert a normalized action into the requested physical controls.
+
+    Braking uses its own larger limit because a car sheds speed through its
+    brakes far harder than its engine can add it.
     """
     vehicle = vehicle_config or CarConfig()
+    longitudinal_limit = (
+        vehicle.max_acceleration if action.throttle >= 0.0 else vehicle.max_braking
+    )
     return PhysicalControls(
-        acceleration=vehicle.max_acceleration * action.throttle,
+        acceleration=longitudinal_limit * action.throttle,
         steering_angle=radians(vehicle.max_steering_angle) * action.steering,
     )

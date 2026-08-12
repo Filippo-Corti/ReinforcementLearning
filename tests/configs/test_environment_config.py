@@ -10,6 +10,7 @@ from configs import (
     FrenetObservationConfig,
     RewardConfig,
     SimulationConfig,
+    StartStateConfig,
     TrackGenerationConfig,
 )
 
@@ -22,11 +23,16 @@ def test_defaults_match_the_environment_specification() -> None:
         physics_timestep=0.01,
         physics_substeps=4,
         max_episode_steps=1_000,
+        stall_time=3.0,
+        stall_progress=1.0,
     )
     assert config.vehicle == CarConfig(
         wheelbase=3.6,
         max_acceleration=9.26,
+        max_braking=20.0,
         max_steering_angle=30.0,
+        max_steering_rate=180.0,
+        max_lateral_acceleration=20.0,
         max_speed=70.0,
     )
     assert config.track == TrackGenerationConfig(
@@ -43,13 +49,20 @@ def test_defaults_match_the_environment_specification() -> None:
     )
     assert config.reward == RewardConfig(
         finish_reward=100.0,
+        lap_time_bonus=100.0,
         crash_penalty=5.0,
-        time_penalty_rate=0.5,
+        time_penalty_rate=1.0,
         progress_coefficient=100.0,
     )
     assert config.observation == FrenetObservationConfig(
         lookahead_base=5.0,
         lookahead_speed_factor=0.7,
+    )
+    assert config.start == StartStateConfig(
+        randomized=True,
+        lateral_fraction=0.5,
+        heading_error=0.2,
+        speed_fraction=0.15,
     )
 
 

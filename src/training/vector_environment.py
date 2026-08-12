@@ -124,9 +124,11 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         self._track_index: int | None = 0
         self._track_seed: int | None = None
         self._environment = RacingEnv(tracks[0], config=environment_config)
-        self._last_observation = np.zeros(4, dtype=np.float32)
-        self._last_info: dict[str, Any] = {}
         self.observation_space = self._environment.observation_space
+        self._last_observation = np.zeros(
+            self.observation_space.shape[0], dtype=np.float32
+        )
+        self._last_info: dict[str, Any] = {}
         self.action_space = gym.spaces.Dict(
             {
                 "action": self._environment.action_space,

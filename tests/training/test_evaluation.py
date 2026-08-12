@@ -5,7 +5,13 @@ from pathlib import Path
 import numpy as np
 
 from agents import AgentUpdateInput, AgentUpdateOutput, CollectedAction, CollectionMode
-from configs import EnvironmentConfig, ObservationNormalizationConfig, SimulationConfig
+from configs import (
+    EnvironmentConfig,
+    ObservationNormalizationConfig,
+    SimulationConfig,
+    StartStateConfig,
+)
+from envs.observations import FrenetObservation
 from envs.racing import RacingEnv
 from envs.tracks import Track, TrackWithGeometry
 from recording import RunCategory
@@ -46,13 +52,20 @@ def _environment() -> RacingEnv:
     )
     return RacingEnv(
         track,
-        config=EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=3)),
+        config=EnvironmentConfig(
+            simulation=SimulationConfig(max_episode_steps=3),
+            start=StartStateConfig(randomized=False),
+        ),
     )
 
 
 def test_deterministic_evaluation_freezes_normalizer_and_records_summary() -> None:
-    normalizer = RunningObservationNormalizer(4, ObservationNormalizationConfig())
-    normalizer.update_and_normalize(np.asarray((0.0, 0.0, 0.0, 0.0)))
+    normalizer = RunningObservationNormalizer(
+        FrenetObservation.DIMENSIONS, ObservationNormalizationConfig()
+    )
+    normalizer.update_and_normalize(
+        np.zeros(FrenetObservation.DIMENSIONS, dtype=np.float64)
+    )
     before = normalizer.state()
 
     evaluation = evaluate_deterministic(

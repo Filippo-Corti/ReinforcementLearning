@@ -18,7 +18,9 @@ from configs import (
     ExecutionConfig,
     ObservationNormalizationConfig,
     SimulationConfig,
+    StartStateConfig,
 )
+from envs.observations import FrenetObservation
 from envs.racing import RacingEnv
 from envs.tracks import Track, TrackWithGeometry
 from recording import RunCategory
@@ -92,7 +94,10 @@ def _environment() -> RacingEnv:
     track = TrackWithGeometry(
         Track.load(root / "fixtures" / "tracks" / "valid_circle.json")
     )
-    config = EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=3))
+    config = EnvironmentConfig(
+        simulation=SimulationConfig(max_episode_steps=3),
+        start=StartStateConfig(randomized=False),
+    )
     return RacingEnv(track, config=config)
 
 
@@ -103,7 +108,9 @@ def _engine(
     evaluation_interval: int | None = None,
 ) -> tuple[OnPolicyTrainingEngine, _FixedAgent]:
     agent = _FixedAgent(mode, size)
-    normalizer = RunningObservationNormalizer(4, ObservationNormalizationConfig())
+    normalizer = RunningObservationNormalizer(
+        FrenetObservation.DIMENSIONS, ObservationNormalizationConfig()
+    )
     worker_count = size if mode is CollectionMode.COMPLETE_EPISODES else 1
     engine = OnPolicyTrainingEngine(
         agent,

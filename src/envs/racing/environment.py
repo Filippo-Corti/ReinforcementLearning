@@ -82,10 +82,19 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             shape=(2,),
             dtype=np.float32,
         )
+        steering_limit = np.radians(self.config.vehicle.max_steering_angle)
         self.observation_space = gym.spaces.Box(
-            low=np.asarray([-np.inf, -np.pi, 0.0, -np.inf], dtype=np.float32),
+            low=np.asarray(
+                [-np.inf, -np.pi, 0.0, -steering_limit, -np.inf], dtype=np.float32
+            ),
             high=np.asarray(
-                [np.inf, np.pi, self.config.vehicle.max_speed, np.inf],
+                [
+                    np.inf,
+                    np.pi,
+                    self.config.vehicle.max_speed,
+                    steering_limit,
+                    np.inf,
+                ],
                 dtype=np.float32,
             ),
             dtype=np.float32,
@@ -98,21 +107,14 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
         options: dict[str, Any] | None = None,
     ) -> tuple[ObservationType, dict[str, Any]]:
         """
-        Reset at the prepared track's canonical start line with zero speed.
+        Reset at a sampled start pose, or the canonical start line when fixed.
         """
         super().reset(seed=seed)
         if self._renderer is not None:
             self._renderer.close()
             self._renderer = None
 
-        start_s = self.track.s[self.track.start_index]
-        start_position = self.track_with_geometry.position(float(start_s))
-        self.state = VehicleState(
-            x=float(start_position[0]),
-            y=float(start_position[1]),
-            heading=self.track_with_geometry.heading(float(start_s)),
-            speed=0.0,
-        )
+        self.state = self._sample_start_state()
         self._lifecycle = EpisodeLifecycle(
             self.track_with_geometry,
             simulation_config=self.config.simulation,
@@ -234,6 +236,43 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             raise ValueError("RacingEnv snapshot lifecycle state is missing.")
         self._lifecycle.restore(state.lifecycle_state)
 
+    def _sample_start_state(self) -> VehicleState:
+        """
+        Draw the pose the episode begins from using only this env's generator.
+
+        The lap always spans a full circuit from wherever the car is placed, so
+        the sampled arc length moves the finish line with the start rather than
+        shortening or lengthening the lap.
+        """
+        start = self.config.start
+        geometry = self.track_with_geometry
+        if not start.randomized:
+            arc_length = float(self.track.s[self.track.start_index])
+            return VehicleState(
+                x=float(geometry.position(arc_length)[0]),
+                y=float(geometry.position(arc_length)[1]),
+                heading=geometry.heading(arc_length),
+                speed=0.0,
+            )
+
+        arc_length = float(self.np_random.uniform(0.0, self.track.track_length))
+        lateral_limit = start.lateral_fraction * self.track.width / 2.0
+        lateral_offset = float(self.np_random.uniform(-lateral_limit, lateral_limit))
+        position = geometry.position(arc_length) + lateral_offset * geometry.normal(
+            arc_length
+        )
+        return VehicleState(
+            x=float(position[0]),
+            y=float(position[1]),
+            heading=geometry.heading(arc_length)
+            + float(self.np_random.uniform(-start.heading_error, start.heading_error)),
+            speed=float(
+                self.np_random.uniform(
+                    0.0, start.speed_fraction * self.config.vehicle.max_speed
+                )
+            ),
+        )
+
     def _observe(self) -> ObservationType:
         """
         Build the current Frenet observation in the declared Gymnasium dtype.
@@ -258,6 +297,7 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             "episode_progress": self._lifecycle.episode_progress,
             "collision": False if outcome is None else outcome.collision,
             "lap_completed": False if outcome is None else outcome.lap_completed,
+            "stalled": False if outcome is None else outcome.stalled,
             "elapsed_time": self._lifecycle.agent_steps
             * self.config.simulation.agent_timestep,
             "track_seed": self.track.generation.seed,

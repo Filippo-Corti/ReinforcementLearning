@@ -36,6 +36,7 @@ class EpisodeOutcome(StrEnum):
 
     COMPLETED = "completed"
     CRASHED = "crashed"
+    STALLED = "stalled"
     TIME_LIMIT = "time_limit"
 
 

@@ -45,6 +45,12 @@ class ScriptedFrenetPolicy(Policy):
     feed-forward. The target speed decreases with absolute curvature; its error
     determines throttle or braking. Every control is clipped to `[-1, 1]`.
 
+    Its target lateral acceleration sits below the car's friction budget rather
+    than at it. Preview curvature is averaged over the lookahead and therefore
+    understates a corner on entry, and braking spends grip that then cannot be
+    used to turn, so a controller aiming at the limit arrives at corners already
+    over it.
+
     Fields:
         * lateral_gain: Steering correction for lateral distance.
         * heading_gain: Steering correction for heading error.
@@ -57,9 +63,9 @@ class ScriptedFrenetPolicy(Policy):
     lateral_gain: float = 0.15
     heading_gain: float = 0.8
     curvature_gain: float = 10.0
-    lateral_acceleration_limit: float = 20.0
+    lateral_acceleration_limit: float = 12.0
     maximum_target_speed: float = 50.0
-    speed_error_scale: float = 10.0
+    speed_error_scale: float = 6.0
 
     def action(self, observation: NDArray[np.float32]) -> NDArray[np.float32]:
         """
@@ -73,7 +79,7 @@ class ScriptedFrenetPolicy(Policy):
         """
         Return the unbounded controls and the clipped environment action.
         """
-        lateral_distance, heading_error, speed, curvature = map(float, observation)
+        lateral_distance, heading_error, speed, _, curvature = map(float, observation)
         raw_steering = (
             -self.lateral_gain * lateral_distance
             - self.heading_gain * heading_error

@@ -126,7 +126,9 @@ def replay(
     environment = RacingEnv(TrackWithGeometry.generate(seed))
     results: list[ReplayTransition] = []
     try:
-        environment.reset()
+        # The start pose is sampled, so the seed has to reach reset for the
+        # replay to be reproducible.
+        environment.reset(seed=seed)
         for action in actions:
             observation, reward, terminated, truncated, info = environment.step(
                 np.asarray(action, dtype=np.float32)
@@ -145,6 +147,7 @@ def replay(
                         environment.state.y,
                         environment.state.heading,
                         environment.state.speed,
+                        environment.state.steering_angle,
                     ),
                 )
             )

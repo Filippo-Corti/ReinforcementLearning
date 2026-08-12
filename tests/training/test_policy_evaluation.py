@@ -6,6 +6,7 @@ from math import log
 
 import numpy as np
 
+from envs.observations import FrenetObservation
 from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry, generate_track
 from models import Policy, RandomPolicy, ScriptedFrenetPolicy
@@ -16,7 +17,7 @@ from utils.random import RunSeedStreams, SeedNamespace, SeedStream
 
 def test_scripted_policy_uses_the_documented_frenet_formula() -> None:
     policy = ScriptedFrenetPolicy()
-    observation = np.asarray((2.0, 0.5, 10.0, 0.01), dtype=np.float32)
+    observation = np.asarray((2.0, 0.5, 10.0, 0.1, 0.01), dtype=np.float32)
 
     assert isinstance(policy, Policy)
     sample = policy.sample(observation)
@@ -31,7 +32,7 @@ def test_random_policy_actions_are_reproducible_from_evaluation_stream() -> None
     streams = RunSeedStreams(SeedNamespace.REDUCED_BUDGET_VALIDATION, 7)
     first = RandomPolicy(streams.get_numpy_generator(SeedStream.EVALUATION))
     second = RandomPolicy(streams.get_numpy_generator(SeedStream.EVALUATION))
-    observation = np.zeros(4, dtype=np.float32)
+    observation = np.zeros(FrenetObservation.DIMENSIONS, dtype=np.float32)
 
     assert isinstance(first, Policy)
     assert np.array_equal(first.action(observation), second.action(observation))
@@ -40,7 +41,7 @@ def test_random_policy_actions_are_reproducible_from_evaluation_stream() -> None
 def test_random_policy_sample_reports_raw_and_environment_actions() -> None:
     streams = RunSeedStreams(SeedNamespace.REDUCED_BUDGET_VALIDATION, 8)
     sample = RandomPolicy(streams.get_numpy_generator(SeedStream.EVALUATION)).sample(
-        np.zeros(4, dtype=np.float32)
+        np.zeros(FrenetObservation.DIMENSIONS, dtype=np.float32)
     )
 
     assert np.array_equal(sample.raw_action, sample.env_action)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -25,6 +26,7 @@ class ActionOutcome:
         * truncated: Whether this action reached the episode time limit.
         * collision: Whether a physics substep left the track.
         * lap_completed: Whether a valid finish-gate crossing occurred.
+        * stalled: Whether the car failed to make progress for the stall window.
         * progress_delta: The signed progress accumulated during this action.
         * wrapped_progress: The final projected position along the track.
         * episode_progress: The signed progress accumulated since reset.
@@ -37,6 +39,7 @@ class ActionOutcome:
     truncated: bool
     collision: bool
     lap_completed: bool
+    stalled: bool
     progress_delta: float
     wrapped_progress: float
     episode_progress: float
@@ -77,6 +80,8 @@ class EpisodeLifecycleState:
         * agent_steps: Number of processed agent actions.
         * previous_position: Cartesian point used by finish-gate detection.
         * previous_segment_index: Projection hint used by the Frenet observer.
+        * gate_s: Arc length of this episode's finish gate.
+        * recent_progress: Progress of the actions inside the stall window.
     """
 
     wrapped_progress: float
@@ -84,6 +89,8 @@ class EpisodeLifecycleState:
     agent_steps: int
     previous_position: tuple[float, float]
     previous_segment_index: int | None
+    gate_s: float
+    recent_progress: tuple[float, ...]
 
 
 class EpisodeLifecycle:
@@ -123,13 +130,20 @@ class EpisodeLifecycle:
         self.agent_steps = 0
         self._previous_position = np.zeros(2, dtype=np.float64)
         self._previous_segment_index: int | None = None
-        self._gate = self._build_gate(
-            track.track.start_index * track.track.sample_spacing
+        self._gate_s = float(track.track.start_index * track.track.sample_spacing)
+        self._gate = self._build_gate(self._gate_s)
+        self._stall_steps = max(
+            1, round(self.simulation.stall_time / self.simulation.agent_timestep)
         )
+        self._recent_progress: deque[float] = deque(maxlen=self._stall_steps)
 
     def reset(self, state: VehicleState) -> FrenetProjection:
         """
         Reset episode counters and return the state's centerline projection.
+
+        The finish gate is placed where the car starts, so a lap is always one
+        full circuit from the sampled start pose rather than a partial run to a
+        fixed line somewhere else on the track.
         """
         _, projection = self.observer.observe(state)
         self.wrapped_progress = projection.s
@@ -137,6 +151,9 @@ class EpisodeLifecycle:
         self.agent_steps = 0
         self._previous_position = state.position()
         self._previous_segment_index = projection.segment_index
+        self._gate_s = projection.s
+        self._gate = self._build_gate(projection.s)
+        self._recent_progress.clear()
         return projection
 
     def process_transition(self, transition: KinematicTransition) -> ActionOutcome:
@@ -179,8 +196,10 @@ class EpisodeLifecycle:
                 break
 
         self.agent_steps += 1
+        self._recent_progress.append(progress_delta)
         collision = collision_substep is not None
-        terminated = collision or lap_completed
+        stalled = not collision and not lap_completed and self._is_stalled()
+        terminated = collision or lap_completed or stalled
         truncated = (
             not terminated and self.agent_steps >= self.simulation.max_episode_steps
         )
@@ -188,6 +207,7 @@ class EpisodeLifecycle:
             progress_delta,
             collision=collision,
             lap_completed=lap_completed,
+            stalled=stalled,
         )
         return ActionOutcome(
             reward=reward,
@@ -195,6 +215,7 @@ class EpisodeLifecycle:
             truncated=truncated,
             collision=collision,
             lap_completed=lap_completed,
+            stalled=stalled,
             progress_delta=progress_delta,
             wrapped_progress=self.wrapped_progress,
             episode_progress=self.episode_progress,
@@ -222,6 +243,8 @@ class EpisodeLifecycle:
                 float(self._previous_position[1]),
             ),
             previous_segment_index=self._previous_segment_index,
+            gate_s=self._gate_s,
+            recent_progress=tuple(self._recent_progress),
         )
 
     def restore(self, state: EpisodeLifecycleState) -> None:
@@ -233,6 +256,10 @@ class EpisodeLifecycle:
         self.agent_steps = state.agent_steps
         self._previous_position = np.asarray(state.previous_position, dtype=np.float64)
         self._previous_segment_index = state.previous_segment_index
+        self._gate_s = state.gate_s
+        self._gate = self._build_gate(state.gate_s)
+        self._recent_progress.clear()
+        self._recent_progress.extend(state.recent_progress)
 
     def _build_gate(self, gate_s: float) -> FinishGate:
         """
@@ -285,23 +312,61 @@ class EpisodeLifecycle:
             )
         )
 
+    def _is_stalled(self) -> bool:
+        """
+        Return whether the car has failed to advance for the whole stall window.
+        """
+        return (
+            len(self._recent_progress) == self._stall_steps
+            and sum(self._recent_progress) < self.simulation.stall_progress
+        )
+
     def _reward(
         self,
         progress_delta: float,
         *,
         collision: bool,
         lap_completed: bool,
+        stalled: bool,
     ) -> float:
         """
-        Select the documented crash, finish, or shaped reward branch.
+        Select the documented crash, finish, stall, or shaped reward branch.
+
+        A stall is charged the time penalty it would have paid by idling out the
+        remaining episode. Ending early therefore saves the simulation but not
+        the agent: standing still costs exactly what standing still has always
+        cost, so the ordering that keeps driving preferable is unaffected.
         """
+        step_cost = (
+            self.reward_config.time_penalty_rate * self.simulation.agent_timestep
+        )
         if collision:
             return -self.reward_config.crash_penalty
         if lap_completed:
-            return self.reward_config.finish_reward
+            return self._finish_reward()
+        if stalled:
+            return -step_cost * (
+                self.simulation.max_episode_steps - self.agent_steps + 1
+            )
         return (
-            -self.reward_config.time_penalty_rate * self.simulation.agent_timestep
+            -step_cost
             + self.reward_config.progress_coefficient
             * progress_delta
             / self.track.track.track_length
+        )
+
+    def _finish_reward(self) -> float:
+        """
+        Return the completion reward, increased for a faster lap.
+
+        Progress and the per-step time penalty alone leave a slow lap worth
+        almost as much as a fast one. Scaling part of the completion reward by
+        the unused share of the episode clock makes lap time, the actual racing
+        objective, a visible fraction of the return without ever making a crash
+        preferable to finishing.
+        """
+        unused_clock = 1.0 - self.agent_steps / self.simulation.max_episode_steps
+        return (
+            self.reward_config.finish_reward
+            + self.reward_config.lap_time_bonus * unused_clock
         )

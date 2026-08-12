@@ -17,7 +17,9 @@ from configs import (
     PPOConfig,
     ReinforceConfig,
     SimulationConfig,
+    StartStateConfig,
 )
+from envs.observations import FrenetObservation
 from envs.tracks import TrackWithGeometry
 from training.engines.a2c import A2CTrainingEngine
 from training.engines.ppo import PPOTrainingEngine
@@ -36,11 +38,16 @@ def _tracks() -> tuple[TrackWithGeometry, TrackWithGeometry]:
 
 
 def _environment_config() -> EnvironmentConfig:
-    return EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=1))
+    return EnvironmentConfig(
+        simulation=SimulationConfig(max_episode_steps=1),
+        start=StartStateConfig(randomized=False),
+    )
 
 
 def _normalizer() -> RunningObservationNormalizer:
-    return RunningObservationNormalizer(4, ObservationNormalizationConfig())
+    return RunningObservationNormalizer(
+        FrenetObservation.DIMENSIONS, ObservationNormalizationConfig()
+    )
 
 
 def _actor_config() -> ActorConfig:
@@ -56,7 +63,7 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
     selection_seed = 19
     completed_episodes: list[tuple[int, int]] = []
     agent = ReinforceAgent(
-        observation_dimensions=4,
+        observation_dimensions=FrenetObservation.DIMENSIONS,
         actor_config=_actor_config(),
         config=ReinforceConfig(completed_episodes_per_update=2),
         initialization_generator=torch.Generator().manual_seed(1),
@@ -114,7 +121,7 @@ def test_reinforce_engine_waits_for_complete_episode_batches() -> None:
 def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
     completed_episodes: list[tuple[int, int]] = []
     agent = A2CAgent(
-        observation_dimensions=4,
+        observation_dimensions=FrenetObservation.DIMENSIONS,
         actor_config=_actor_config(),
         critic_config=CriticConfig(hidden_sizes=(4, 4)),
         config=A2CConfig(transitions_per_rollout=2),
@@ -163,7 +170,7 @@ def test_a2c_engine_updates_full_and_final_short_rollouts() -> None:
 def test_ppo_engine_updates_full_and_final_short_rollouts() -> None:
     completed_episodes: list[tuple[int, int]] = []
     agent = PPOAgent(
-        observation_dimensions=4,
+        observation_dimensions=FrenetObservation.DIMENSIONS,
         actor_config=_actor_config(),
         critic_config=CriticConfig(hidden_sizes=(4, 4)),
         config=PPOConfig(

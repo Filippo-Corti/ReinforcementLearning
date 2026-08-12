@@ -8,6 +8,7 @@ from .environment import (
     FrenetObservationConfig,
     RewardConfig,
     SimulationConfig,
+    StartStateConfig,
     TrackGenerationConfig,
 )
 from .experiments import (
@@ -54,6 +55,7 @@ __all__ = [
     "ReinforceConfig",
     "RewardConfig",
     "SimulationConfig",
+    "StartStateConfig",
     "TrackGenerationConfig",
     "TrainingConfig",
     "physical_cpu_count",

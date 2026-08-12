@@ -128,6 +128,7 @@ class A2CTrainingEngine:
         maximum_progress = np.zeros(worker_count, dtype=np.float64)
         speed_totals = np.zeros(worker_count, dtype=np.float64)
         throttle_totals = np.zeros(worker_count, dtype=np.float64)
+        signed_throttle_totals = np.zeros(worker_count, dtype=np.float64)
         circuit_identities = ["" for _ in range(worker_count)]
         for environment_index in range(initial_episodes):
             circuit_identities[environment_index] = str(
@@ -210,6 +211,9 @@ class A2CTrainingEngine:
                     throttle_totals[environment_index] += abs(
                         float(decisions.env_actions[decision_index, 0])
                     )
+                    signed_throttle_totals[environment_index] += float(
+                        decisions.env_actions[decision_index, 0]
+                    )
                     progress = float(info["episode_progress"]) / float(
                         info["track_length"]
                     )
@@ -242,9 +246,18 @@ class A2CTrainingEngine:
                                         speed_totals[environment_index]
                                         / episode_steps[environment_index]
                                     ),
+                                    mean_throttle=float(
+                                        signed_throttle_totals[environment_index]
+                                        / episode_steps[environment_index]
+                                    ),
                                     mean_throttle_magnitude=float(
                                         throttle_totals[environment_index]
                                         / episode_steps[environment_index]
+                                    ),
+                                    lap_time=(
+                                        float(info["elapsed_time"])
+                                        if bool(info["lap_completed"])
+                                        else None
                                     ),
                                 ),
                             )
@@ -273,6 +286,7 @@ class A2CTrainingEngine:
                         maximum_progress[environment_index] = 0.0
                         speed_totals[environment_index] = 0.0
                         throttle_totals[environment_index] = 0.0
+                        signed_throttle_totals[environment_index] = 0.0
                         active[environment_index] = True
                         reset_mask[environment_index] = True
                     if on_episode_end is not None:

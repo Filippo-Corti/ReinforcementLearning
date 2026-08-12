@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from agents.types import OnPolicyAgent
+from envs.observations import FrenetObservation
 from envs.racing import RacingEnv
 from recording.records import (
     CircuitGeometrySummaryRecord,
@@ -258,7 +259,11 @@ def trajectory_state(
         ]
     )
     current_curvature = environment.track_with_geometry.curvature(s)
-    preview_curvature = float(observation[3]) if observation.shape == (4,) else None
+    preview_curvature = (
+        float(observation[-1])
+        if observation.shape == (FrenetObservation.DIMENSIONS,)
+        else None
+    )
     return TrajectoryState(
         position=(float(state.x), float(state.y)),
         heading=float(state.heading),
@@ -298,6 +303,8 @@ def _outcome(
         return EpisodeOutcome.COMPLETED
     if terminated and bool(info["collision"]):
         return EpisodeOutcome.CRASHED
+    if terminated and bool(info["stalled"]):
+        return EpisodeOutcome.STALLED
     if truncated:
         return EpisodeOutcome.TIME_LIMIT
     raise ValueError("Terminal transition lacks a supported RacingEnv outcome.")

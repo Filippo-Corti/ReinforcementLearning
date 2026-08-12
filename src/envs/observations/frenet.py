@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import ceil, isfinite
+from typing import ClassVar
 
 import numpy as np
 
@@ -20,16 +21,24 @@ class FrenetObservation:
     """
     Store the environment observation expressed in track-relative Frenet values.
 
+    The steering angle appears because it is rate limited and therefore part of
+    the vehicle state: without it the agent could not tell how far its wheels
+    already are from the angle it is about to request.
+
     Fields:
         * lateral_distance: The signed distance from the track centerline.
         * heading_error: The wrapped vehicle heading minus centerline heading.
         * speed: The vehicle's non-negative scalar speed.
+        * steering_angle: The current front-wheel angle in radians.
         * curvature_preview: The average centerline curvature over the lookahead.
     """
+
+    DIMENSIONS: ClassVar[int] = 5
 
     lateral_distance: float
     heading_error: float
     speed: float
+    steering_angle: float
     curvature_preview: float
 
     def as_array(self) -> FloatArray:
@@ -41,6 +50,7 @@ class FrenetObservation:
                 self.lateral_distance,
                 self.heading_error,
                 self.speed,
+                self.steering_angle,
                 self.curvature_preview,
             ],
             dtype=np.float64,
@@ -123,6 +133,7 @@ class FrenetObserver:
             lateral_distance=projection.lateral_distance,
             heading_error=self.heading_error(state.heading, projection.s),
             speed=state.speed,
+            steering_angle=state.steering_angle,
             curvature_preview=self.curvature_preview(
                 projection.s,
                 state.speed,

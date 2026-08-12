@@ -8,7 +8,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.utils.env_checker import check_env
 
-from configs import EnvironmentConfig, SimulationConfig
+from configs import EnvironmentConfig, SimulationConfig, StartStateConfig
 from envs import RacingEnv, TrackWithGeometry
 
 
@@ -71,7 +71,10 @@ def test_terminal_observation_and_time_limit_flags_are_valid() -> None:
     """
     environment = RacingEnv(
         TrackWithGeometry.generate(3),
-        config=EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=1)),
+        config=EnvironmentConfig(
+            simulation=SimulationConfig(max_episode_steps=1),
+            start=StartStateConfig(randomized=False),
+        ),
     )
     environment.reset()
 

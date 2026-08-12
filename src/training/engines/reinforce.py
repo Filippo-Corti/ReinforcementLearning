@@ -159,6 +159,7 @@ class ReinforceTrainingEngine:
                 maximum_progress = np.zeros_like(returns)
                 speed_totals = np.zeros_like(returns)
                 throttle_totals = np.zeros_like(returns)
+                signed_throttle_totals = np.zeros_like(returns)
                 circuit_identities = [
                     str(vector_info(reset_infos, "circuit_identity", index))
                     for index in range(wave_size)
@@ -235,6 +236,9 @@ class ReinforceTrainingEngine:
                         throttle_totals[environment_index] += abs(
                             float(decisions.env_actions[decision_index, 0])
                         )
+                        signed_throttle_totals[environment_index] += float(
+                            decisions.env_actions[decision_index, 0]
+                        )
                         progress = float(info["episode_progress"]) / float(
                             info["track_length"]
                         )
@@ -272,9 +276,18 @@ class ReinforceTrainingEngine:
                                         speed_totals[environment_index]
                                         / len(episode_rows)
                                     ),
+                                    mean_throttle=float(
+                                        signed_throttle_totals[environment_index]
+                                        / len(episode_rows)
+                                    ),
                                     mean_throttle_magnitude=float(
                                         throttle_totals[environment_index]
                                         / len(episode_rows)
+                                    ),
+                                    lap_time=(
+                                        float(info["elapsed_time"])
+                                        if bool(info["lap_completed"])
+                                        else None
                                     ),
                                 )
                             )

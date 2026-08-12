@@ -7,7 +7,12 @@ from pathlib import Path
 
 import numpy as np
 
-from configs import EnvironmentConfig, ExecutionConfig, SimulationConfig
+from configs import (
+    EnvironmentConfig,
+    ExecutionConfig,
+    SimulationConfig,
+    StartStateConfig,
+)
 from envs.tracks import TrackWithGeometry
 from training import PersistentRacingVectorEnv, vector_info, vector_worker_info
 from utils.random import RunSeedStreams, SeedNamespace, SeedStream
@@ -30,7 +35,10 @@ def _pool() -> PersistentRacingVectorEnv:
     worker_count = 2
     return PersistentRacingVectorEnv(
         _tracks(),
-        EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=2)),
+        EnvironmentConfig(
+            simulation=SimulationConfig(max_episode_steps=2),
+            start=StartStateConfig(randomized=False),
+        ),
         ExecutionConfig(device="cpu", environment_workers=worker_count),
         tuple(
             streams.get_numpy_generator(
@@ -123,7 +131,10 @@ def test_optional_collision_info_is_safe_when_only_one_worker_crashes() -> None:
     worker_count = 2
     with PersistentRacingVectorEnv(
         (track,),
-        EnvironmentConfig(simulation=SimulationConfig(max_episode_steps=100)),
+        EnvironmentConfig(
+            simulation=SimulationConfig(max_episode_steps=100),
+            start=StartStateConfig(randomized=False),
+        ),
         ExecutionConfig(device="cpu", environment_workers=worker_count),
         tuple(
             streams.get_numpy_generator(
