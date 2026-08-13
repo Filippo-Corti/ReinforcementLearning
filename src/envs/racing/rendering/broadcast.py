@@ -52,6 +52,12 @@ _NEAR_PLANE = 1.5
 _LOOKAHEAD = 260.0
 _ROAD_SAMPLES = 120
 _FINISH_LINE_DEPTH = 2.5
+# The strip also runs backwards from the car. Sampling only forwards means
+# "ahead along the track", which is not the same as "in front of the camera": a
+# car turned across the road has all the road it can see beside and behind its
+# own arc length, and drawing none of it leaves the car floating on grass.
+_LOOKBEHIND = 60.0
+_BEHIND_SAMPLES = 24
 
 _SKY_HIGH = (12, 18, 38)
 _SKY_LOW = (86, 122, 170)
@@ -118,8 +124,11 @@ class BroadcastRacingRenderer:
         self._inset_road = self._inset_camera.road_quads(track)
         # Sampling is dense near the car and sparse far away, because a fixed
         # spacing spends most of its samples on road that is a few pixels tall.
-        self._distances = _NEAR_PLANE + np.linspace(0.0, 1.0, _ROAD_SAMPLES) ** 2.2 * (
-            _LOOKAHEAD - _NEAR_PLANE
+        self._offsets = np.concatenate(
+            (
+                np.linspace(-_LOOKBEHIND, 0.0, _BEHIND_SAMPLES, endpoint=False),
+                np.linspace(0.0, 1.0, _ROAD_SAMPLES) ** 2.2 * _LOOKAHEAD,
+            )
         )
 
     def draw(self, surface: pygame.Surface, frame: RenderFrame) -> None:
@@ -151,10 +160,12 @@ class BroadcastRacingRenderer:
         """
         Project a point given in car-relative metres onto the image.
 
-        Returns nothing for anything at or behind the near plane, which has no
-        image and whose projection would otherwise diverge.
+        Returns nothing for anything behind the near plane, which has no image
+        and whose projection would otherwise diverge. A point exactly *on* the
+        plane is kept: that is where clipping puts one, and rejecting it would
+        throw away every section the clipping exists to save.
         """
-        if forward <= _NEAR_PLANE:
+        if forward < _NEAR_PLANE:
             return None
         return (
             self.image_size[0] / 2.0 - self._focal * lateral / forward,
@@ -183,7 +194,7 @@ class BroadcastRacingRenderer:
         spacing = self.track.track.sample_spacing
         current_s = (arc.segment_index + arc.fraction) * spacing
 
-        lengths = current_s + self._distances
+        lengths = current_s + self._offsets
         left = np.asarray([self.track.left_boundary_position(s) for s in lengths])
         right = np.asarray([self.track.right_boundary_position(s) for s in lengths])
         left_forward, left_lateral = self._to_car_frame(left, frame)
@@ -191,14 +202,23 @@ class BroadcastRacingRenderer:
 
         samples: list[_RoadSample] = []
         for index in range(len(lengths)):
-            left_point = self._project(left_forward[index], left_lateral[index])
-            right_point = self._project(right_forward[index], right_lateral[index])
+            edges = _clip_to_near_plane(
+                (float(left_forward[index]), float(left_lateral[index])),
+                (float(right_forward[index]), float(right_lateral[index])),
+            )
+            if edges is None:
+                continue
+            near_left, near_right = edges
+            left_point = self._project(*near_left)
+            right_point = self._project(*near_right)
             if left_point is None or right_point is None:
                 continue
             samples.append(
                 _RoadSample(
                     arc_length=float(lengths[index]),
-                    distance=float(self._distances[index]),
+                    # Depth is how far the road is from the camera, not how far
+                    # along the track it is: behind the car those disagree.
+                    distance=(near_left[0] + near_right[0]) / 2.0,
                     left=left_point,
                     right=right_point,
                 )
@@ -284,8 +304,11 @@ class BroadcastRacingRenderer:
         if not samples:
             return
         length = self.track.track.track_length
+        # Measured from the furthest sample behind the car, since that is where
+        # the strip starts. Anything genuinely behind the camera is rejected by
+        # the projection below rather than by this bound.
         distance = (frame.gate_s - samples[0].arc_length) % length
-        if distance > _LOOKAHEAD:
+        if distance > _LOOKAHEAD + _LOOKBEHIND:
             return
 
         # The band is built from the gate's own arc length rather than from the
@@ -592,6 +615,29 @@ def _clock(seconds: float) -> str:
     """
     minutes, remainder = divmod(max(seconds, 0.0), 60.0)
     return f"{int(minutes)}:{remainder:06.3f}"
+
+
+def _clip_to_near_plane(left: Point, right: Point) -> tuple[Point, Point] | None:
+    """
+    Trim one cross-section of road to the part the camera can actually see.
+
+    Each endpoint is `(forward, lateral)` in metres from the car. A section with
+    one end behind the camera used to be discarded whole, which is why a car
+    turned across the road lost its road entirely: every section it could see
+    had one end behind it. Moving that end up to the near plane keeps the
+    section, and the strip stays continuous.
+    """
+    if left[0] <= _NEAR_PLANE and right[0] <= _NEAR_PLANE:
+        return None
+    if left[0] > _NEAR_PLANE and right[0] > _NEAR_PLANE:
+        return left, right
+    behind, ahead = (left, right) if left[0] <= _NEAR_PLANE else (right, left)
+    weight = (_NEAR_PLANE - behind[0]) / (ahead[0] - behind[0])
+    clipped = (
+        _NEAR_PLANE,
+        behind[1] + (ahead[1] - behind[1]) * weight,
+    )
+    return (clipped, ahead) if left[0] <= _NEAR_PLANE else (ahead, clipped)
 
 
 def _depth(distance: float) -> float:

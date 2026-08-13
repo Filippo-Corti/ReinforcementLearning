@@ -42,7 +42,7 @@ from .checkpointing import EngineCheckpoint, mapping, typed_list
 from .episode_recording import EpisodeRecorder
 from .evaluation_schedule import EvaluationSchedule, check_evaluation_observations
 from .stepping import StepCollector
-from .timing import TrainingTimer
+from .timing import TrainingProgress, TrainingTimer
 
 
 @dataclass(slots=True)
@@ -116,6 +116,7 @@ class TrainingEngine(ABC):
         * recorder: Accumulates per-worker episodes and emits their records.
         * schedule: Evaluates the deterministic policy on a set of circuits.
         * timer: Non-overlapping component durations.
+        * progress: Optional bar reporting how far a training call has got.
         * updates: One entry per completed optimizer update.
     """
 
@@ -140,6 +141,7 @@ class TrainingEngine(ABC):
         circuit_split: str | None = None,
         observation_type: ObservationRepresentation = ObservationRepresentation.FRENET,
         near_saturated_steering_threshold: float | None = None,
+        show_progress: bool = False,
     ) -> None:
         """
         Spawn workers once and open one episode in every process.
@@ -188,6 +190,7 @@ class TrainingEngine(ABC):
         self.near_saturated_steering_threshold = near_saturated_steering_threshold
 
         self.timer = TrainingTimer()
+        self.progress = TrainingProgress(enabled=show_progress)
         self.recorder = EpisodeRecorder(
             worker_count,
             run_category=run_category,

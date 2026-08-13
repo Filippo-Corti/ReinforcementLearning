@@ -116,6 +116,57 @@ class TrainingTimer:
         self.persistence = float(state["persistence"])
 
 
+class TrainingProgress:
+    """
+    Report how far a training call has got, when someone is watching.
+
+    A two-million-step run gives no sign of life for tens of minutes otherwise.
+    The bar is opt-in because the same engines run under scripts that capture
+    output, where a redrawing bar is noise rather than information.
+
+    Fields:
+        * enabled: Whether a bar is being drawn at all.
+    """
+
+    def __init__(self, *, enabled: bool) -> None:
+        self.enabled = enabled
+        self._bar: object | None = None
+        self._position = 0
+
+    def start(self, position: int, budget: int) -> None:
+        """
+        Open a bar covering the interactions still to be collected.
+        """
+        self.close()
+        self._position = position
+        if not self.enabled or budget <= position:
+            return
+        from tqdm.auto import tqdm
+
+        self._bar = tqdm(
+            total=budget - position,
+            desc="Training interactions",
+            unit="interaction",
+        )
+
+    def advance(self, position: int) -> None:
+        """
+        Move the bar to a new absolute interaction count.
+        """
+        if self._bar is None:
+            return
+        self._bar.update(position - self._position)  # type: ignore[attr-defined]
+        self._position = position
+
+    def close(self) -> None:
+        """
+        Finish the bar, leaving the completed line in place.
+        """
+        if self._bar is not None:
+            self._bar.close()  # type: ignore[attr-defined]
+            self._bar = None
+
+
 class ElapsedBlock:
     """
     Report the time a timed block took, so a caller can record it as well.

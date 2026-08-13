@@ -120,6 +120,84 @@ def test_the_broadcast_view_shows_far_more_than_the_minimal_one() -> None:
     assert frames[RenderStyle.BROADCAST] > 200
 
 
+def test_a_section_straddling_the_camera_is_trimmed_and_kept() -> None:
+    """
+    A cross-section with one end behind the camera must not be discarded.
+
+    Discarding it is what made the road vanish from under a car that was merely
+    turned: at any real heading error the nearest sections all have one end
+    behind, so dropping them dropped the whole near field. The trimmed end sits
+    exactly on the near plane, which the projection must therefore accept.
+    """
+    from envs.racing.rendering.broadcast import _NEAR_PLANE, _clip_to_near_plane
+
+    assert _clip_to_near_plane((-4.0, 2.0), (-1.0, 3.0)) is None
+
+    ahead = (20.0, -6.0)
+    kept = _clip_to_near_plane((-4.0, 6.0), ahead)
+    assert kept is not None
+    trimmed, unchanged = kept
+    assert unchanged == ahead
+    assert trimmed[0] == pytest.approx(_NEAR_PLANE)
+    # The trimmed end stays on the segment it was cut from.
+    assert -6.0 < trimmed[1] < 6.0
+
+    # Trimming works from either side and keeps the endpoints in their places.
+    kept = _clip_to_near_plane(ahead, (-4.0, 6.0))
+    assert kept is not None
+    assert kept[0] == ahead
+    assert kept[1][0] == pytest.approx(_NEAR_PLANE)
+
+
+def test_the_road_reaches_the_car_when_it_is_turned_across_the_track() -> None:
+    """
+    The nearest drawn road must be just in front of the car, not far ahead.
+
+    This is the failure the trimming prevents, and it is checked here rather
+    than in pixels because the symptom is a hole in the near field: with the
+    sections dropped the strip began more than twenty metres away, leaving the
+    car apparently standing on grass while the road floated in the distance.
+    """
+    from dataclasses import replace
+
+    from configs import CarConfig
+    from envs.racing.rendering.broadcast import BroadcastRacingRenderer
+    from envs.racing.rendering.frame import RenderFrame
+
+    environment = _environment(14)
+    environment.reset(seed=0)
+    assert environment.state is not None
+    track = environment.track_with_geometry
+    renderer = BroadcastRacingRenderer(
+        track, image_size=(800, 800), vehicle_config=CarConfig()
+    )
+    half_width = track.track.width / 2.0
+    for arc in (40.0, 120.0, 260.0, 400.0):
+        centre = track.position(arc)
+        heading = track.heading(arc)
+        normal = track.normal(arc)
+        for lateral in (-0.5, 0.0, 0.5):
+            for degrees in (-40.0, -25.0, -10.0, 0.0, 10.0, 25.0, 40.0):
+                point = centre + lateral * half_width * normal
+                state = replace(
+                    environment.state,
+                    x=float(point[0]),
+                    y=float(point[1]),
+                    heading=float(heading + np.radians(degrees)),
+                    speed=25.0,
+                )
+                samples = renderer._road_samples(RenderFrame(state=state, gate_s=arc))
+                assert samples, f"no road at all at {degrees:+.0f} degrees"
+                nearest = min(sample.distance for sample in samples)
+                # Dropping the straddling sections pushes this past four metres
+                # and, on a curve, past twenty.
+                assert nearest < 3.0, (
+                    f"nearest road is {nearest:.1f} m away at arc {arc:.0f}, "
+                    f"lateral {lateral:+.1f}, {degrees:+.0f} degrees"
+                )
+    environment.close()
+
+
 def test_the_broadcast_view_is_drawn_from_the_car_not_from_above() -> None:
     """
     A pilot view must change when the car only turns, and a map must not.

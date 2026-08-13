@@ -46,6 +46,7 @@ class A2CTrainingEngine(TrainingEngine):
         """
         if interaction_budget < self.training_interactions:
             raise ValueError("Training budget cannot be below consumed interactions.")
+        self.progress.start(self.training_interactions, interaction_budget)
         while self.training_interactions < interaction_budget:
             # Three separate limits decide how far this step may go: the budget,
             # the room left in the rollout, and the distance to the next
@@ -63,9 +64,11 @@ class A2CTrainingEngine(TrainingEngine):
             active[active_indices] = True
 
             self._collect_step(active)
+            self.progress.advance(self.training_interactions)
             self._update_if_rollout_ready(final=False)
             self.evaluate_if_due()
         self._update_if_rollout_ready(final=finalize)
+        self.progress.close()
         return self.state()
 
     def _collect_step(self, active: np.ndarray) -> None:

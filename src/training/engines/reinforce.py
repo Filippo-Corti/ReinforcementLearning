@@ -54,6 +54,7 @@ class ReinforceTrainingEngine(TrainingEngine):
         """
         if interaction_budget < self.training_interactions:
             raise ValueError("Training budget cannot be below consumed interactions.")
+        self.progress.start(self.training_interactions, interaction_budget)
         while self.training_interactions < interaction_budget:
             rows = interaction_budget - self.training_interactions
             if self.schedule.interval is not None:
@@ -74,9 +75,11 @@ class ReinforceTrainingEngine(TrainingEngine):
             active[active_indices] = True
 
             self._collect_step(active)
+            self.progress.advance(self.training_interactions)
             self._update_if_batch_complete(final=False)
             self.evaluate_if_due()
         self._update_if_batch_complete(final=finalize)
+        self.progress.close()
         return self.state()
 
     def _collect_step(self, active: np.ndarray) -> None:
