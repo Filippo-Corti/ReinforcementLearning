@@ -681,6 +681,12 @@ and the test circuits is what this experiment calls generalization. Because they
 are selected by per-worker episode order, a paired root's two runs revisit the
 same circuits.
 
+There are **16** of them, matching the validation count. The training-reference
+and validation summaries then rest on the same denominator, so their two gaps to
+the test split can be compared with each other rather than with their own sample
+sizes. Unlike the other splits they are not fixed across runs: each root trains
+on its own circuits, so each root revisits its own sixteen.
+
 The Frenet actor and critic receive
 
 $$
@@ -750,7 +756,7 @@ These thresholds require completion on at least 12 of 16 circuits while keeping
 typical progress near a full lap. They are project definitions, not values from
 the PPO theory. Runs that never meet them are censored at the common budget.
 
-The final policy is evaluated once on fixed training-reference circuits, all 16
+The final policy is evaluated once on the 16 training-reference circuits, all 16
 validation circuits and all 32 unseen test circuits. The test set is opened only
 after training and selection are complete.
 

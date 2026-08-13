@@ -76,6 +76,7 @@ class Experiment2MatrixConfig(SerializableConfig):
         * observations: Paired observation conditions.
         * root_identities: Paired reported-run identities.
         * development_circuit_count: Circuits used only before reported runs.
+        * training_reference_circuit_count: In-sample circuits revisited at the end.
         * validation_circuit_count: Fixed validation-circuit count.
         * test_circuit_count: Fixed held-out test-circuit count.
     """
@@ -90,5 +91,9 @@ class Experiment2MatrixConfig(SerializableConfig):
     )
     root_identities: tuple[int, ...] = (0, 1, 2, 3, 4)
     development_circuit_count: int = 8
+    # Matched to the validation count so that the training-reference and
+    # validation summaries rest on the same denominator: their gaps to the test
+    # split are then comparable to each other rather than to their own sizes.
+    training_reference_circuit_count: int = 16
     validation_circuit_count: int = 16
     test_circuit_count: int = 32

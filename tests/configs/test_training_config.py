@@ -95,7 +95,14 @@ def test_experiment_matrices_cover_approved_choices() -> None:
         ObservationRepresentation.LIDAR,
     )
     assert experiment_2.root_identities == (0, 1, 2, 3, 4)
+    assert experiment_2.development_circuit_count == 8
     assert experiment_2.validation_circuit_count == 16
     assert experiment_2.test_circuit_count == 32
+    # The in-sample reference shares the validation denominator so that the two
+    # gaps to the test split are comparable to each other.
+    assert (
+        experiment_2.training_reference_circuit_count
+        == experiment_2.validation_circuit_count
+    )
     assert not hasattr(matrices, "learning_rate_calibration")
     assert FIXED_CRITIC_CONFIG.hidden_sizes == (64, 64)
