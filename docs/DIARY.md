@@ -2022,3 +2022,57 @@ follow the reported protocol.
 **Commits**: `feature: train and evaluate across many circuits [ai]`,
 `feature: add the LiDAR observation [ai]`,
 `feature: freeze the Experiment 2 circuit splits [ai]`.
+
+## 2026-08-13 — One engine per algorithm, and none of the machinery in them
+
+There were four engines: a shared one that ran the reported experiments, and
+three that ran the notebooks. The three had a multi-circuit hook that selected
+circuits by global episode index — the scheme shown yesterday to be unpairable
+— so a notebook could not be compared with an experiment. Two of them,
+`a2c.py` and `ppo.py`, were the same file: 371 lines each differing on 30, every
+one of which was a class name, a docstring, or an error message.
+
+**A baseline first.** Nine run configurations — three algorithms across Frenet
+single-circuit, Frenet multi-circuit and LiDAR multi-circuit — captured to JSON:
+every episode, update, evaluation and completion value. Running it twice before
+touching anything showed the only differences were timestamps, so the runs are
+exactly reproducible and the file is a real check rather than a comfort.
+
+**The infrastructure moved out.** `StepCollector` turns one vector step into
+transitions; `EpisodeRecorder` accumulates episodes and emits their records;
+`EvaluationSchedule` evaluates a set of circuits at a checkpoint; `TrainingTimer`
+separates the durations; `EngineCheckpoint` guards what a checkpoint may be
+restored onto. None contains a loop. The shared engine fell from `1117` lines to
+`732`, and every recorded value was unchanged.
+
+**Then it split three ways.** Each algorithm now owns one file holding one
+training loop, over a `TrainingEngine` that assembles the collaborators and has
+no loop of its own. The dividing line is written down in `LEARNING.md`: what
+decides *what the experiment measures* is shared, what shows *how an algorithm
+collects and updates* is not. A2C and PPO still collect identically and their
+files still say so at similar length — deliberately, because what separates them
+is what they do with a rollout, and a reader looking for PPO should find PPO.
+
+The second engine family is gone. A notebook run and a reported run are now the
+same implementation, so a notebook races named circuits, keeps reported records,
+and is evaluated on the engine's own schedule rather than a hand-rolled one.
+
+**What the checks caught.** Nothing in the numbers: all nine configurations
+produce byte-identical records after both stages. What they did catch was the
+notebooks, which referenced the old constructor and would not have run at all.
+The Jupyter kernel cannot reach a socket in this environment, so they were
+validated by executing their code cells directly — the same statements a reader
+runs — in both single and multi circuit mode.
+
+One plot changed. The driving-behaviour panel showed mean throttle *magnitude*,
+which the reported record does not keep, and now shows the fraction of
+accelerating actions, which it does. That answers the same question better:
+exploration noise sits at one half whatever its scale.
+
+**Files**: `src/training/engines/` (`base.py`, `reinforce.py`, `a2c.py`,
+`ppo.py`, `stepping.py`, `episode_recording.py`, `evaluation_schedule.py`,
+`checkpointing.py`, `timing.py`), `src/training/educational_visualization.py`,
+`experiments/train.py`, `notebooks/`, `tests/training/`, `docs/LEARNING.md`.
+
+**Commits**: `refactor: move the engine infrastructure into collaborators [ai]`,
+`refactor: give each algorithm its own engine [ai]`.
