@@ -305,11 +305,17 @@ $$
 | Randomized execution order | 12 | one identity per experiment |
 
 Within a run, stream indices `1..8` correspond in order to the eight jobs listed
-above. A saved circuit uses its split namespace and circuit index as its local
+above. A circuit uses its split namespace and circuit identity as its local
 identity, and the first `uint32` from stream `8` as the track-generator seed.
+This holds for saved validation and test circuits and for circuits generated
+during training: the identity is the name, and the seed the generator consumed
+is recorded beside it rather than serving as the name.
+
 Frenet and LiDAR root $i$ use identically seeded stream `5` to select the same
 ordered training-circuit identities even though their generator objects are
-separate.
+separate. Stream `5` is drawn per worker, from the substream indexed by the
+worker's position, which is what makes the selection independent of the order
+in which workers finish episodes.
 
 Every recorded run stores both human-readable logical identities and generated
 integer states. Checkpoints retain all mutable generator states required for an
@@ -696,11 +702,20 @@ Every run uses:
 - deterministic validation every 50,000 interactions; and
 - checkpoints every 250,000 interactions and at the final budget.
 
-Circuits change only at episode reset. Different observation policies can have
-different episode lengths and therefore encounter different numbers of circuits
-within the common interaction budget, but episode index $e$ always maps to the
-same circuit identity for paired root $i$. Circuit exposure is recorded rather
-than silently treated as identical.
+Circuits change only at episode reset. Collection runs in parallel workers, and
+each worker owns an identically seeded circuit-selection stream, so worker $w$
+meets the same circuit on its $k$-th episode in both runs of paired root $i$.
+
+Pairing is by *worker and per-worker episode count*, not by a global episode
+index. Different observation policies produce episodes of different lengths, so
+their episodes finish in a different order and a global index would name a
+different circuit in each run — exactly the drift the pairing exists to prevent.
+Per-worker counting is unaffected by when other workers happen to finish.
+
+The two conditions therefore encounter the same circuits in the same per-worker
+order, but not necessarily the same *number* of them within the common
+interaction budget. Circuit exposure is recorded rather than silently treated as
+identical.
 
 Validation and test interactions do not enter the training budget. Validation
 does not update networks, optimizers, normalizers, training-circuit schedules or

@@ -188,6 +188,8 @@ class LoggingConfig(SerializableConfig):
         * record_evaluation_metrics: Whether every evaluation is recorded.
         * record_hardware_context: Whether machine and dependency context is retained.
         * trajectory_interval: Training interactions between saved trajectories.
+        * trajectory_circuits_per_boundary: Circuits whose step-level trajectory is
+          retained at a qualifying boundary, in circuit order.
         * near_saturated_steering_threshold: Explicit absolute steering threshold
           used by reported episode summaries.
         * gradient_dispersion_subbatch: Transitions per sub-batch of the
@@ -199,6 +201,11 @@ class LoggingConfig(SerializableConfig):
     record_evaluation_metrics: bool = True
     record_hardware_context: bool = True
     trajectory_interval: int = 250_000
+    # A fixed-circuit run evaluates once per boundary and keeps that trajectory.
+    # A run evaluating 16 validation circuits would otherwise keep 16 of them at
+    # every retained boundary, which is far more step-level detail than the
+    # geometric diagnosis it exists for ever reads.
+    trajectory_circuits_per_boundary: int = 2
     near_saturated_steering_threshold: float | None = 0.9
     gradient_dispersion_subbatch: int | None = 256
 

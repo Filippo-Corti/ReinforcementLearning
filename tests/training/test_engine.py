@@ -27,11 +27,16 @@ from envs.racing import RacingEnv
 from envs.tracks import Track, TrackWithGeometry
 from recording import EpisodeOutcome, RunCategory
 from training import (
+    CircuitSplit,
+    EvaluationCircuit,
     OnPolicyTrainingEngine,
     RunningObservationNormalizer,
+    TrainingCircuitSchedule,
     TrainingTransition,
+    circuit_track_seed,
 )
 from training.engines.shared_engine import _outcome
+from utils.random import SeedNamespace
 
 
 class _FixedAgent:
@@ -129,6 +134,8 @@ def _engine(
     *,
     evaluation_interval: int | None = None,
     workers: int | None = None,
+    training_circuit_schedule: TrainingCircuitSchedule | None = None,
+    evaluation_circuits: tuple[EvaluationCircuit, ...] | None = None,
 ) -> tuple[OnPolicyTrainingEngine, _FixedAgent]:
     agent = _FixedAgent(mode, size)
     normalizer = RunningObservationNormalizer(
@@ -141,7 +148,10 @@ def _engine(
         _environment(),
         normalizer,
         run_category=RunCategory.REDUCED_VALIDATION,
-        evaluation_environment_factory=_environment,
+        evaluation_environment_factory=(
+            None if evaluation_circuits is not None else _environment
+        ),
+        evaluation_circuits=evaluation_circuits,
         evaluation_interval=evaluation_interval,
         environment_reset_generators=tuple(
             np.random.default_rng(123 + index) for index in range(worker_count)
@@ -149,6 +159,7 @@ def _engine(
         track_selection_generators=tuple(
             np.random.default_rng(321 + index) for index in range(worker_count)
         ),
+        training_circuit_schedule=training_circuit_schedule,
         execution_config=ExecutionConfig(
             device="cpu", environment_workers=worker_count
         ),
@@ -225,6 +236,108 @@ def test_complete_episode_batch_is_filled_over_several_worker_waves() -> None:
     assert agent.updates == [12]
     assert engine.state().counters.finished_episodes == 4
     assert engine.state().counters.optimizer_updates == 1
+
+
+def test_every_validation_circuit_is_evaluated_at_each_checkpoint() -> None:
+    """
+    One checkpoint answers the same question on every validation circuit.
+
+    A completion rate over circuits is the quantity the convergence rule reads,
+    so a checkpoint has to produce one record per circuit rather than one record
+    standing in for all of them.
+    """
+    circuits = tuple(
+        EvaluationCircuit(
+            identity=str(index),
+            split=CircuitSplit.VALIDATION,
+            factory=_environment,
+        )
+        for index in range(3)
+    )
+    engine, _ = _engine(size=4, evaluation_interval=4, evaluation_circuits=circuits)
+
+    engine.train(8)
+    records = [evaluation.record for evaluation in engine.evaluations]
+
+    assert len(records) == 6
+    assert [record.episode.circuit_identity for record in records] == [
+        "0",
+        "1",
+        "2",
+    ] * 2
+    assert {record.episode.circuit_split for record in records} == {"validation"}
+    # Evaluation identities stay unique so their trajectories cannot collide.
+    assert len({record.evaluation_index for record in records}) == 6
+    assert records[-1].evaluation_interactions == sum(
+        record.episode.interactions for record in records
+    )
+
+
+def test_held_out_circuits_are_evaluated_only_when_asked() -> None:
+    """
+    Test circuits must not be reachable from the training loop.
+
+    The engine never holds them, so opening the test set is an explicit call
+    made after training rather than something a checkpoint can trigger.
+    """
+    engine, _ = _engine(size=4, evaluation_interval=4)
+    held_out = (
+        EvaluationCircuit(
+            identity="test-0", split=CircuitSplit.TEST, factory=_environment
+        ),
+    )
+
+    engine.train(4)
+    assert [record.record.episode.circuit_split for record in engine.evaluations] == [
+        None
+    ]
+
+    produced = engine.evaluate_circuits(held_out)
+
+    assert len(produced) == 1
+    assert produced[0].record.episode.circuit_split == "test"
+    assert produced[0].record.training_interactions == 4
+    assert engine.evaluations[-1] is produced[0]
+
+
+def test_scheduled_episodes_record_the_circuit_each_one_actually_raced() -> None:
+    """
+    Every episode must carry its own circuit, not the prototype environment's.
+
+    Before the schedule existed there was one circuit and the prototype was a
+    faithful stand-in for it. With workers on different circuits at the same
+    time, reading geometry from the prototype would label every episode with a
+    circuit almost none of them drove.
+    """
+    engine, _ = _engine(
+        size=4,
+        workers=2,
+        training_circuit_schedule=TrainingCircuitSchedule(),
+    )
+
+    engine.train(12)
+    episodes = engine.episode_records
+
+    assert len(episodes) == 4
+    assert {episode.circuit_split for episode in episodes} == {"training"}
+    identities = [episode.circuit_identity for episode in episodes]
+    assert len(set(identities)) == len(identities)
+    geometries = [episode.circuit_geometry for episode in episodes]
+    assert all(geometry is not None for geometry in geometries)
+    lengths = {geometry.track_length for geometry in geometries if geometry is not None}
+    assert len(lengths) == len(episodes)
+    for episode in episodes:
+        assert episode.circuit_seed == circuit_track_seed(
+            SeedNamespace.EXPERIMENT_2_TRAINING_TRACK, int(episode.circuit_identity)
+        )
+    # Two workers, two episodes each: the pairing coordinate a paired run is
+    # matched on has to be recorded, since episode identity is completion order.
+    by_worker: dict[int | None, list[int | None]] = {}
+    for episode in episodes:
+        by_worker.setdefault(episode.collection_worker, []).append(
+            episode.worker_episode_index
+        )
+    assert by_worker == {0: [0, 1], 1: [0, 1]}
 
 
 def test_construction_consumes_the_reset_stream_independently_of_collection_mode() -> (

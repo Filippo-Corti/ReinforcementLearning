@@ -14,7 +14,13 @@ from configs import (
     StartStateConfig,
 )
 from envs.tracks import TrackWithGeometry
-from training import PersistentRacingVectorEnv, vector_info, vector_worker_info
+from training import (
+    PersistentRacingVectorEnv,
+    TrainingCircuitSchedule,
+    circuit_track_seed,
+    vector_info,
+    vector_worker_info,
+)
 from utils.random import RunSeedStreams, SeedNamespace, SeedStream
 
 
@@ -30,7 +36,9 @@ def _tracks() -> tuple[TrackWithGeometry, TrackWithGeometry]:
     return first, second
 
 
-def _pool() -> PersistentRacingVectorEnv:
+def _pool(
+    *, schedule: TrainingCircuitSchedule | None = None
+) -> PersistentRacingVectorEnv:
     streams = RunSeedStreams(SeedNamespace.REDUCED_BUDGET_VALIDATION, 7)
     worker_count = 2
     return PersistentRacingVectorEnv(
@@ -54,6 +62,7 @@ def _pool() -> PersistentRacingVectorEnv:
             )
             for index in range(worker_count)
         ),
+        schedule,
     )
 
 
@@ -122,6 +131,50 @@ def test_explicit_seeds_generate_a_new_procedural_track_at_reset() -> None:
         assert vector_info(infos, "circuit_identity", 1) == "202"
         assert tuple(worker.track_seed for worker in state.workers) == (101, 202)
         assert state.next_track_seeds == (101, 202)
+
+
+def test_a_schedule_gives_paired_runs_the_same_circuit_per_worker_episode() -> None:
+    """
+    Two runs sharing a root must race the same circuits in the same order.
+
+    They are paired by worker and per-worker episode count rather than by a
+    global episode index, because runs whose episodes end at different times
+    assign global indices in a different order and would drift apart.
+    """
+    schedule = TrainingCircuitSchedule()
+
+    sequences = []
+    for _ in range(2):
+        with _pool(schedule=schedule) as pool:
+            drawn = []
+            for _ in range(3):
+                _, infos = pool.reset()
+                drawn.append(
+                    tuple(
+                        vector_info(infos, "circuit_identity", index)
+                        for index in range(pool.num_envs)
+                    )
+                )
+            sequences.append(drawn)
+
+    assert sequences[0] == sequences[1]
+    # Every draw is a fresh circuit, and the two workers never share one.
+    identities = [identity for step in sequences[0] for identity in step]
+    assert len(set(identities)) == len(identities)
+
+
+def test_a_scheduled_reset_reports_the_circuit_its_episode_will_race() -> None:
+    with _pool(schedule=TrainingCircuitSchedule()) as pool:
+        _, infos = pool.reset()
+
+        for index in range(pool.num_envs):
+            identity = int(vector_info(infos, "circuit_identity", index))
+            seed = int(vector_info(infos, "track_seed", index))
+            geometry = vector_info(infos, "circuit_geometry", index)
+            assert seed == circuit_track_seed(
+                SeedNamespace.EXPERIMENT_2_TRAINING_TRACK, identity
+            )
+            assert geometry.track_length == vector_info(infos, "track_length", index)
 
 
 def test_optional_collision_info_is_safe_when_only_one_worker_crashes() -> None:

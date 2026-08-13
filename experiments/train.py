@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -20,6 +21,7 @@ from configs import (
     CriticConfig,
     EnvironmentConfig,
     ExecutionConfig,
+    ObservationRepresentation,
     PPOConfig,
     ReinforceConfig,
     StartStateConfig,
@@ -36,7 +38,14 @@ from recording import (
     UpdateRecord,
     collect_run_metadata,
 )
-from training import OnPolicyTrainingEngine, RunningObservationNormalizer
+from training import (
+    CircuitSplit,
+    EvaluationCircuit,
+    OnPolicyTrainingEngine,
+    RunningObservationNormalizer,
+    TrainingCircuitSchedule,
+    circuit_track_seed,
+)
 from utils.random import (
     RunSeedStreams,
     SeedNamespace,
@@ -54,7 +63,7 @@ _ACTORS: dict[str, ActorConfig] = {
 def run_reinforce_training(
     *,
     seed: int,
-    track_path: str | Path,
+    track_path: str | Path | None = None,
     run_path: str | Path,
     actor_config: ActorConfig,
     actor_learning_rate: float,
@@ -64,6 +73,10 @@ def run_reinforce_training(
     evaluation_interval: int | None = None,
     near_saturated_steering_threshold: float | None = None,
     execution_config: ExecutionConfig | None = None,
+    training_circuit_schedule: TrainingCircuitSchedule | None = None,
+    evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    final_evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
     """
@@ -111,6 +124,10 @@ def run_reinforce_training(
         environment_config=environment_config,
         training_config=training_config,
         run_category=run_category,
+        training_circuit_schedule=training_circuit_schedule,
+        evaluation_circuits=evaluation_circuits,
+        final_evaluation_circuits=final_evaluation_circuits,
+        observation=observation,
         learning_rates={"actor_learning_rate": actor_learning_rate},
         agent_factory=lambda observation_dimensions, streams: ReinforceAgent(
             observation_dimensions=observation_dimensions,
@@ -139,7 +156,7 @@ def run_reinforce_training(
 def run_a2c_training(
     *,
     seed: int,
-    track_path: str | Path,
+    track_path: str | Path | None = None,
     run_path: str | Path,
     actor_config: ActorConfig,
     actor_learning_rate: float,
@@ -151,6 +168,10 @@ def run_a2c_training(
     evaluation_interval: int | None = None,
     near_saturated_steering_threshold: float | None = None,
     execution_config: ExecutionConfig | None = None,
+    training_circuit_schedule: TrainingCircuitSchedule | None = None,
+    evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    final_evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
     """
@@ -200,6 +221,10 @@ def run_a2c_training(
         environment_config=environment_config,
         training_config=training_config,
         run_category=run_category,
+        training_circuit_schedule=training_circuit_schedule,
+        evaluation_circuits=evaluation_circuits,
+        final_evaluation_circuits=final_evaluation_circuits,
+        observation=observation,
         learning_rates={
             "actor_learning_rate": actor_learning_rate,
             "critic_learning_rate": critic_learning_rate,
@@ -237,7 +262,7 @@ def run_a2c_training(
 def run_ppo_training(
     *,
     seed: int,
-    track_path: str | Path,
+    track_path: str | Path | None = None,
     run_path: str | Path,
     actor_config: ActorConfig,
     actor_learning_rate: float,
@@ -249,6 +274,10 @@ def run_ppo_training(
     evaluation_interval: int | None = None,
     near_saturated_steering_threshold: float | None = None,
     execution_config: ExecutionConfig | None = None,
+    training_circuit_schedule: TrainingCircuitSchedule | None = None,
+    evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    final_evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
     """
@@ -298,6 +327,10 @@ def run_ppo_training(
         environment_config=environment_config,
         training_config=training_config,
         run_category=run_category,
+        training_circuit_schedule=training_circuit_schedule,
+        evaluation_circuits=evaluation_circuits,
+        final_evaluation_circuits=final_evaluation_circuits,
+        observation=observation,
         learning_rates={
             "actor_learning_rate": actor_learning_rate,
             "critic_learning_rate": critic_learning_rate,
@@ -340,12 +373,16 @@ def _run_training(
     *,
     algorithm: Algorithm,
     seed: int,
-    track_path: str | Path,
+    track_path: str | Path | None = None,
     run_path: str | Path,
     actor_config: ActorConfig,
     environment_config: EnvironmentConfig,
     training_config: TrainingConfig,
     run_category: RunCategory,
+    training_circuit_schedule: TrainingCircuitSchedule | None = None,
+    evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    final_evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     learning_rates: dict[str, float],
     agent_factory: Callable[[int, RunSeedStreams], ParameterizedOnPolicyAgent],
 ) -> OnPolicyTrainingEngine:
@@ -359,10 +396,10 @@ def _run_training(
             "Reported runs require an explicit near-saturated steering threshold."
         )
     streams = RunSeedStreams(_seed_namespace(run_category), seed)
-    track = TrackWithGeometry.load(
+    track = _prototype_track(
         track_path,
-        vehicle_config=environment_config.vehicle,
-        track_config=environment_config.track,
+        training_circuit_schedule=training_circuit_schedule,
+        environment_config=environment_config,
     )
     run = RunDirectory.create(
         run_path,
@@ -373,8 +410,18 @@ def _run_training(
             "algorithm": algorithm.value,
             "root_seed": seed,
             "seed_namespace": streams.namespace.name,
-            "track_path": str(track_path),
+            "track_path": None if track_path is None else str(track_path),
             "track_seed": track.track.generation.seed,
+            "observation_type": observation.value,
+            # A multi-circuit run has no single circuit, so what identifies its
+            # geometry is the schedule it draws from and the splits it is
+            # measured on. The track seed above is only the prototype's.
+            "training_circuit_schedule": (
+                None
+                if training_circuit_schedule is None
+                else training_circuit_schedule.namespace.name
+            ),
+            "evaluation_circuits": _evaluation_circuit_manifest(evaluation_circuits),
             "seed_streams": {
                 stream.name: _first_seed(streams, stream) for stream in SeedStream
             },
@@ -422,9 +469,12 @@ def _run_training(
             observation_dimensions, training_config.normalization
         ),
         run_category=run_category,
-        evaluation_environment_factory=lambda: RacingEnv(
-            track, config=evaluation_config
+        evaluation_environment_factory=(
+            None
+            if evaluation_circuits is not None
+            else lambda: RacingEnv(track, config=evaluation_config)
         ),
+        evaluation_circuits=evaluation_circuits,
         evaluation_interval=training_config.evaluation.evaluation_interval,
         environment_reset_generators=tuple(
             streams.get_numpy_generator(
@@ -440,22 +490,32 @@ def _run_training(
             )
             for index in range(execution_config.environment_workers)
         ),
+        training_circuit_schedule=training_circuit_schedule,
         execution_config=execution_config,
         evaluation_seed=_first_seed(streams, SeedStream.EVALUATION),
         root_identity=seed,
         circuit_identity=str(track.track.generation.seed),
-        circuit_split="development",
+        circuit_split=CircuitSplit.DEVELOPMENT.value,
+        observation_type=observation,
         near_saturated_steering_threshold=steering_threshold,
     )
     started = perf_counter()
     try:
         _train_with_checkpoints(engine, training_config, run.path / "checkpoints")
         engine.save(run.path / "checkpoints" / "final.pt")
+        if final_evaluation_circuits:
+            # Held-out circuits are opened here and nowhere else: after the last
+            # optimizer step and the saved final policy, so nothing they reveal
+            # can reach training, checkpoint selection or the recorded curve.
+            engine.evaluate_circuits(final_evaluation_circuits)
         persistence_started = perf_counter()
         _write_engine_records(
             run,
             engine,
             trajectory_interval=training_config.logging.trajectory_interval,
+            trajectory_circuits_per_boundary=(
+                training_config.logging.trajectory_circuits_per_boundary
+            ),
             final_interactions=training_config.training_interaction_budget,
         )
         record_persistence = perf_counter() - persistence_started
@@ -575,6 +635,7 @@ def _write_engine_records(
     engine: OnPolicyTrainingEngine,
     *,
     trajectory_interval: int,
+    trajectory_circuits_per_boundary: int,
     final_interactions: int,
 ) -> None:
     """
@@ -582,10 +643,17 @@ def _write_engine_records(
     """
     for record in engine.episode_records:
         run.append("episodes", record)
+    retained_at_boundary: Counter[int] = Counter()
     for evaluation in engine.evaluations:
         run.append("evaluations", evaluation.record)
         boundary = evaluation.record.training_interactions
-        if boundary == final_interactions or boundary % trajectory_interval == 0:
+        qualifies = (
+            boundary == final_interactions or boundary % trajectory_interval == 0
+        )
+        if qualifies and (
+            retained_at_boundary[boundary] < trajectory_circuits_per_boundary
+        ):
+            retained_at_boundary[boundary] += 1
             run.write_trajectory(
                 f"evaluation_{evaluation.record.evaluation_index}_interaction_{boundary}",
                 {
@@ -680,6 +748,51 @@ def _train_with_checkpoints(
             config.training_interaction_budget,
         )
     engine.train(config.training_interaction_budget)
+
+
+def _prototype_track(
+    track_path: str | Path | None,
+    *,
+    training_circuit_schedule: TrainingCircuitSchedule | None,
+    environment_config: EnvironmentConfig,
+) -> TrackWithGeometry:
+    """
+    Return the circuit the run is configured around, or one standing in for many.
+
+    A scheduled run replaces its circuit at every reset, so it has no saved
+    circuit to load. It still needs one prepared track to fix the observation
+    space and to give the workers something to hold before their first reset.
+    That circuit is the schedule's own first identity, and no recorded outcome
+    is attributed to it.
+    """
+    if track_path is not None:
+        return TrackWithGeometry.load(
+            track_path,
+            vehicle_config=environment_config.vehicle,
+            track_config=environment_config.track,
+        )
+    if training_circuit_schedule is None:
+        raise ValueError("Training requires a saved circuit or a circuit schedule.")
+    return TrackWithGeometry.generate(
+        circuit_track_seed(training_circuit_schedule.namespace, 0),
+        track_config=environment_config.track,
+        vehicle_config=environment_config.vehicle,
+    )
+
+
+def _evaluation_circuit_manifest(
+    circuits: Sequence[EvaluationCircuit] | None,
+) -> dict[str, list[str]] | None:
+    """
+    Record which circuits, by split, a run was measured on.
+    """
+    if circuits is None:
+        return None
+    manifest: dict[str, list[str]] = {}
+    for circuit in circuits:
+        split = "unassigned" if circuit.split is None else circuit.split.value
+        manifest.setdefault(split, []).append(circuit.identity)
+    return manifest
 
 
 def _seed_namespace(category: RunCategory) -> SeedNamespace:

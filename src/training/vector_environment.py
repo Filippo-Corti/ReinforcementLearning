@@ -19,6 +19,9 @@ from envs.racing import RacingEnv, RacingEnvState
 from envs.tracks import TrackWithGeometry
 from utils.random import TorchDeterminismState, configure_torch_determinism
 
+from .circuits import TrainingCircuitSchedule
+from .evaluation import circuit_geometry_summary
+
 _OPTIONAL_INTEGER_INFO_FIELDS = frozenset({"collision_substep"})
 
 
@@ -59,6 +62,7 @@ class RacingWorkerState:
     Fields:
         * track_index: Index of the current fixed track, when using the pool.
         * track_seed: Seed of the current procedural track, when generated at reset.
+        * circuit_identity: Logical identity of the current circuit, when scheduled.
         * environment: Racing dynamics and lifecycle state.
         * last_observation: Observation returned by the most recent reset or step.
         * last_info: Diagnostics paired with the most recent observation.
@@ -66,6 +70,7 @@ class RacingWorkerState:
 
     track_index: int | None
     track_seed: int | None
+    circuit_identity: int | None
     environment: RacingEnvState
     last_observation: NDArray[np.float32]
     last_info: dict[str, Any]
@@ -82,6 +87,7 @@ class VectorRacingState:
         * track_generators: Ordered NumPy bit-generator states for track selection.
         * next_track_indices: Track indices last assigned to each worker.
         * next_track_seeds: Procedural track seeds last assigned to each worker.
+        * next_circuit_identities: Logical identities last assigned to each worker.
     """
 
     workers: tuple[RacingWorkerState, ...]
@@ -89,6 +95,7 @@ class VectorRacingState:
     track_generators: tuple[dict[str, Any], ...]
     next_track_indices: tuple[int, ...]
     next_track_seeds: tuple[int | None, ...]
+    next_circuit_identities: tuple[int | None, ...]
 
 
 class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
@@ -104,6 +111,7 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         * environment_config: Shared racing configuration.
         * next_track_index: Circuit selected by the parent for the next reset.
         * next_track_seed: Procedural circuit seed selected for the next reset.
+        * next_circuit_identity: Logical circuit identity selected for the next reset.
         * torch_determinism: Deterministic PyTorch settings applied in this process.
     """
 
@@ -120,9 +128,11 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         self.environment_config = environment_config
         self.next_track_index = 0
         self.next_track_seed: int | None = None
+        self.next_circuit_identity: int | None = None
         self.torch_determinism = torch_determinism
         self._track_index: int | None = 0
         self._track_seed: int | None = None
+        self._circuit_identity: int | None = None
         self._environment = RacingEnv(tracks[0], config=environment_config)
         self.observation_space = self._environment.observation_space
         observation_shape = self.observation_space.shape
@@ -149,6 +159,7 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         super().reset(seed=seed)
         del options
         self._environment.close()
+        self._circuit_identity = self.next_circuit_identity
         if self.next_track_seed is None:
             self._track_index = int(self.next_track_index)
             self._track_seed = None
@@ -167,7 +178,13 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         )
         observation, info = self._environment.reset(seed=seed)
         self._last_observation = np.asarray(observation, dtype=np.float32).copy()
-        self._last_info = self._worker_info(info, transition_valid=False)
+        # The circuit's geometry is constant for the episode, so it travels back
+        # once with the reset rather than on every step of the episode it opens.
+        self._last_info = self._worker_info(
+            info,
+            transition_valid=False,
+            include_geometry=True,
+        )
         return self._last_observation.copy(), dict(self._last_info)
 
     def step(
@@ -216,6 +233,7 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         return RacingWorkerState(
             track_index=self._track_index,
             track_seed=self._track_seed,
+            circuit_identity=self._circuit_identity,
             environment=self._environment.snapshot(),
             last_observation=self._last_observation.copy(),
             last_info=deepcopy(self._last_info),
@@ -226,6 +244,8 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         self._environment.close()
         self._track_index = state.track_index
         self._track_seed = state.track_seed
+        self._circuit_identity = state.circuit_identity
+        self.next_circuit_identity = state.circuit_identity
         if state.track_seed is None:
             if state.track_index is None:
                 raise ValueError("A fixed worker state requires a track index.")
@@ -254,6 +274,7 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
         info: dict[str, Any],
         *,
         transition_valid: bool,
+        include_geometry: bool = False,
     ) -> dict[str, Any]:
         enriched = dict(info)
         for key in _OPTIONAL_INTEGER_INFO_FIELDS:
@@ -266,9 +287,17 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
                 "transition_valid": transition_valid,
                 "track_index": -1 if self._track_index is None else self._track_index,
                 "track_length": track.track_length,
-                "circuit_identity": str(track.generation.seed),
+                # A scheduled circuit is named by the identity that selected it.
+                # Without a schedule the generator seed is the only name it has.
+                "circuit_identity": (
+                    str(track.generation.seed)
+                    if self._circuit_identity is None
+                    else str(self._circuit_identity)
+                ),
             }
         )
+        if include_geometry:
+            enriched["circuit_geometry"] = circuit_geometry_summary(self._environment)
         return enriched
 
 
@@ -298,6 +327,7 @@ class PersistentRacingVectorEnv:
         * tracks: Immutable circuits shared by worker construction.
         * reset_generators: Independent reset-seed streams by worker index.
         * track_generators: Independent circuit-selection streams by worker index.
+        * training_schedule: Procedural circuit schedule, when training multi-circuit.
     """
 
     def __init__(
@@ -307,6 +337,7 @@ class PersistentRacingVectorEnv:
         execution_config: ExecutionConfig,
         reset_generators: tuple[np.random.Generator, ...],
         track_generators: tuple[np.random.Generator, ...],
+        training_schedule: TrainingCircuitSchedule | None = None,
     ) -> None:
         """
         Spawn the configured worker processes once and retain their pipes.
@@ -325,8 +356,10 @@ class PersistentRacingVectorEnv:
         self.tracks = tracks
         self.reset_generators = reset_generators
         self.track_generators = track_generators
+        self.training_schedule = training_schedule
         self._next_track_indices = np.zeros(self.num_envs, dtype=np.int64)
         self._next_track_seeds: list[int | None] = [None] * self.num_envs
+        self._next_circuit_identities: list[int | None] = [None] * self.num_envs
         environment_functions = tuple(
             partial(
                 _make_racing_worker,
@@ -367,11 +400,18 @@ class PersistentRacingVectorEnv:
         seeds: list[int | None] = [None] * self.num_envs
         for environment_index in np.flatnonzero(reset_mask):
             index = int(environment_index)
-            if track_seeds is None:
+            if track_seeds is None and self.training_schedule is not None:
+                identity, track_seed = self.training_schedule.draw(
+                    self.track_generators[index]
+                )
+                self._next_circuit_identities[index] = identity
+                self._next_track_seeds[index] = track_seed
+            elif track_seeds is None:
                 self._next_track_indices[index] = int(
                     self.track_generators[index].integers(0, len(self.tracks))
                 )
                 self._next_track_seeds[index] = None
+                self._next_circuit_identities[index] = None
             else:
                 track_seed = track_seeds[index]
                 if track_seed is None:
@@ -379,6 +419,7 @@ class PersistentRacingVectorEnv:
                         "Each reset worker requires a procedural track seed."
                     )
                 self._next_track_seeds[index] = int(track_seed)
+                self._next_circuit_identities[index] = None
             seeds[index] = int(
                 self.reset_generators[index].integers(
                     0,
@@ -391,6 +432,7 @@ class PersistentRacingVectorEnv:
             [int(value) for value in self._next_track_indices],
         )
         self._vector.set_attr("next_track_seed", self._next_track_seeds)
+        self._vector.set_attr("next_circuit_identity", self._next_circuit_identities)
         options = None if mask is None else {"reset_mask": reset_mask.copy()}
         observations, infos = self._vector.reset(seed=seeds, options=options)
         return np.asarray(observations, dtype=np.float32), infos
@@ -450,6 +492,7 @@ class PersistentRacingVectorEnv:
             ),
             next_track_indices=tuple(int(value) for value in self._next_track_indices),
             next_track_seeds=tuple(self._next_track_seeds),
+            next_circuit_identities=tuple(self._next_circuit_identities),
         )
 
     def restore(self, state: VectorRacingState) -> None:
@@ -470,6 +513,7 @@ class PersistentRacingVectorEnv:
             state.next_track_indices, dtype=np.int64
         ).copy()
         self._next_track_seeds = list(state.next_track_seeds)
+        self._next_circuit_identities = list(state.next_circuit_identities)
         self._vector.set_attr("worker_state", state.workers)
 
     @property

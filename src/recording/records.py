@@ -158,6 +158,8 @@ class EpisodeRecord:
         * observation_type: Observation representation used by the policy.
         * circuit_seed: Generated integer circuit seed.
         * circuit_split: Development, training, validation, test, or fixed split.
+        * collection_worker: Parallel collection stream that raced this episode.
+        * worker_episode_index: Position of this episode within that stream.
         * speed: Speed distribution summary.
         * throttle: Normalized throttle/brake distribution summary.
         * absolute_steering: Absolute normalized steering distribution summary.
@@ -185,6 +187,8 @@ class EpisodeRecord:
     observation_type: str | None = None
     circuit_seed: int | None = None
     circuit_split: str | None = None
+    collection_worker: int | None = None
+    worker_episode_index: int | None = None
     speed: ScalarSummaryRecord | None = None
     throttle: ScalarSummaryRecord | None = None
     absolute_steering: ScalarSummaryRecord | None = None

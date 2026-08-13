@@ -20,6 +20,13 @@ from .checkpoints import (
     load_checkpoint,
     save_checkpoint,
 )
+from .circuits import (
+    CIRCUIT_IDENTITY_LIMIT,
+    CircuitSplit,
+    EvaluationCircuit,
+    TrainingCircuitSchedule,
+    circuit_track_seed,
+)
 from .engines.shared_engine import (
     OnPolicyTrainingEngine,
     TrainingCounters,
@@ -39,7 +46,10 @@ from .vector_environment import (
 
 __all__ = [
     "CHECKPOINT_SCHEMA_VERSION",
+    "CIRCUIT_IDENTITY_LIMIT",
     "CheckpointError",
+    "CircuitSplit",
+    "EvaluationCircuit",
     "FixedRolloutBuffer",
     "GAETargets",
     "OnPolicyRollout",
@@ -49,6 +59,7 @@ __all__ = [
     "RacingWorkerState",
     "ReinforceEpisodeBuffer",
     "RunningObservationNormalizer",
+    "TrainingCircuitSchedule",
     "TrainingCounters",
     "TrainingRunState",
     "TrainingTransition",
@@ -57,6 +68,7 @@ __all__ = [
     "VectorOnPolicyTensors",
     "VectorRacingState",
     "VectorRolloutBuffer",
+    "circuit_track_seed",
     "compute_gae_targets",
     "compute_vector_gae_targets",
     "evaluate_deterministic",

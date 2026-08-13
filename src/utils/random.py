@@ -108,6 +108,20 @@ class RunSeedStreams:
         )
         return generator
 
+    def integer_seed(
+        self,
+        stream: SeedStream,
+        *,
+        substream_identity: int | None = None,
+    ) -> int:
+        """
+        Return the reproducible integer this named stream is derived from.
+
+        Unlike a generator, this consumes nothing and always answers the same
+        value, so it can name a circuit or a run without disturbing sampling.
+        """
+        return self._integer_seed(stream, substream_identity=substream_identity)
+
     def _seed_sequence(
         self,
         stream: SeedStream,

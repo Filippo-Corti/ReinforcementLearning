@@ -17,9 +17,10 @@ from agents.types import (
     CollectionMode,
     OnPolicyAgent,
 )
-from configs import ExecutionConfig
+from configs import ExecutionConfig, ObservationRepresentation
 from envs.racing import RacingEnv
 from recording.records import (
+    CircuitGeometrySummaryRecord,
     DeterministicEvaluationRecord,
     EpisodeOutcome,
     EpisodeRecord,
@@ -36,12 +37,12 @@ from ..buffers import (
     VectorRolloutBuffer,
 )
 from ..checkpoints import load_checkpoint, save_checkpoint
-from ..evaluation import circuit_geometry_summary, evaluate_deterministic
+from ..circuits import CircuitSplit, EvaluationCircuit, TrainingCircuitSchedule
+from ..evaluation import evaluate_deterministic
 from ..normalization import RunningObservationNormalizer
 from ..vector_environment import (
     PersistentRacingVectorEnv,
     VectorRacingState,
-    vector_info,
     vector_worker_info,
 )
 
@@ -73,9 +74,17 @@ class _ActiveEpisode:
     """
     Accumulate semantic metrics for one worker's active training episode.
 
+    An episode carries its own circuit's seed and geometry because a run that
+    changes circuit at every reset cannot read either from a single prototype
+    environment: eight workers race eight different circuits at once.
+
     Fields:
         * identity: Stable episode identity used by rollout records.
         * circuit_identity: Stable logical identity of the selected track.
+        * circuit_seed: Generator seed of the circuit this episode races.
+        * circuit_geometry: Frozen geometry summary of that circuit.
+        * worker_index: Collection stream racing this episode.
+        * worker_episode_index: Position of this episode within that stream.
         * step_index: Zero-based action position for the next transition.
         * undiscounted_return: Reward sum accumulated through the prior action.
         * maximum_progress: Greatest normalized progress observed so far.
@@ -86,6 +95,10 @@ class _ActiveEpisode:
 
     identity: int
     circuit_identity: str
+    circuit_seed: int
+    circuit_geometry: CircuitGeometrySummaryRecord
+    worker_index: int
+    worker_episode_index: int
     step_index: int = 0
     undiscounted_return: float = 0.0
     maximum_progress: float = 0.0
@@ -146,7 +159,7 @@ class OnPolicyTrainingEngine:
         * counters: Independent training, evaluation, episode, and update counts.
     """
 
-    STATE_VERSION = 2
+    STATE_VERSION = 3
 
     def __init__(
         self,
@@ -156,15 +169,18 @@ class OnPolicyTrainingEngine:
         *,
         run_category: RunCategory,
         evaluation_environment_factory: Callable[[], RacingEnv] | None = None,
+        evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
         evaluation_interval: int | None = None,
         environment_reset_generator: np.random.Generator | None = None,
         environment_reset_generators: Sequence[np.random.Generator] | None = None,
         track_selection_generators: Sequence[np.random.Generator] | None = None,
+        training_circuit_schedule: TrainingCircuitSchedule | None = None,
         execution_config: ExecutionConfig | None = None,
         evaluation_seed: int = 0,
         root_identity: int | None = None,
         circuit_identity: str | None = None,
         circuit_split: str | None = None,
+        observation_type: ObservationRepresentation = ObservationRepresentation.FRENET,
         near_saturated_steering_threshold: float | None = None,
     ) -> None:
         """
@@ -213,6 +229,14 @@ class OnPolicyTrainingEngine:
             environment.track.generation.seed
         )
         self.circuit_split = circuit_split
+        self.observation_type = observation_type
+        self.training_circuit_schedule = training_circuit_schedule
+        self.evaluation_circuits = _resolve_evaluation_circuits(
+            evaluation_circuits,
+            evaluation_environment_factory,
+            identity=self.circuit_identity,
+            split=circuit_split,
+        )
         self.near_saturated_steering_threshold = near_saturated_steering_threshold
         self.counters = TrainingCounters()
         self._collection_seconds = 0.0
@@ -229,15 +253,17 @@ class OnPolicyTrainingEngine:
             self.execution_config,
             reset_generators,
             selection_generators,
+            training_circuit_schedule,
         )
         self._current_observations, reset_infos = self.environments.reset()
-        self._active_episodes: list[_ActiveEpisode] = []
-        for environment_index in range(worker_count):
-            self._active_episodes.append(
-                self._new_episode(
-                    str(vector_info(reset_infos, "circuit_identity", environment_index))
-                )
+        self._worker_episode_counts = [0] * worker_count
+        self._active_episodes: list[_ActiveEpisode] = [
+            self._new_episode(
+                environment_index,
+                vector_worker_info(reset_infos, environment_index),
             )
+            for environment_index in range(worker_count)
+        ]
         self._reinforce_active: list[list[TrainingTransition]] | None = None
         self._reinforce_batch: list[OnPolicyRollout] | None = None
         self._parked = np.zeros(worker_count, dtype=np.bool_)
@@ -531,15 +557,37 @@ class OnPolicyTrainingEngine:
             self._reinforce_batch = []
             self._start_reinforce_wave()
 
+    def evaluate_circuits(
+        self, circuits: Sequence[EvaluationCircuit]
+    ) -> tuple[DeterministicEvaluationRecord, ...]:
+        """
+        Evaluate the current deterministic policy once on each circuit given.
+
+        Held-out circuits are evaluated through this method after training ends,
+        which is why it takes its circuits as an argument: the engine never holds
+        a reference to a test circuit while it is still learning.
+        """
+        started = perf_counter()
+        produced = [self._evaluate_circuit(circuit) for circuit in circuits]
+        self._evaluation_seconds += perf_counter() - started
+        return tuple(produced)
+
     def _evaluate_if_due(self) -> None:
         if (
             self.evaluation_interval is None
-            or self.evaluation_environment_factory is None
+            or not self.evaluation_circuits
             or self.counters.training_interactions == 0
             or self.counters.training_interactions % self.evaluation_interval != 0
         ):
             return
-        started = perf_counter()
+        self.evaluate_circuits(self.evaluation_circuits)
+
+    def _evaluate_circuit(
+        self, circuit: EvaluationCircuit
+    ) -> DeterministicEvaluationRecord:
+        """
+        Record one deterministic episode and account for its isolated interactions.
+        """
         identity = self.counters.next_evaluation_identity
         reset_seed = int(
             np.random.SeedSequence([self.evaluation_seed, identity]).generate_state(
@@ -547,7 +595,7 @@ class OnPolicyTrainingEngine:
             )[0]
         )
         evaluation = evaluate_deterministic(
-            self.evaluation_environment_factory,
+            circuit.factory,
             self.agent,
             self.normalizer,
             run_category=self.run_category,
@@ -556,16 +604,17 @@ class OnPolicyTrainingEngine:
             evaluation_interactions_before=self.counters.evaluation_interactions,
             reset_seed=reset_seed,
             root_identity=self.root_identity,
-            circuit_identity=self.circuit_identity,
-            circuit_split=self.circuit_split,
+            circuit_identity=circuit.identity,
+            circuit_split=None if circuit.split is None else circuit.split.value,
+            observation_type=self.observation_type,
             collection_duration=self._collection_seconds,
             optimization_duration=self._optimization_seconds,
             near_saturated_steering_threshold=self.near_saturated_steering_threshold,
         )
-        self._evaluation_seconds += perf_counter() - started
         self.evaluations.append(evaluation)
         self.counters.evaluation_interactions += evaluation.record.episode.interactions
         self.counters.next_evaluation_identity += 1
+        return evaluation
 
     def _reset_workers(self, reset_mask: np.ndarray) -> None:
         observations, infos = self.environments.reset(reset_mask)
@@ -573,13 +622,35 @@ class OnPolicyTrainingEngine:
         for environment_index_value in np.flatnonzero(reset_mask):
             environment_index = int(environment_index_value)
             self._active_episodes[environment_index] = self._new_episode(
-                str(vector_info(infos, "circuit_identity", environment_index))
+                environment_index,
+                vector_worker_info(infos, environment_index),
             )
 
-    def _new_episode(self, circuit_identity: str) -> _ActiveEpisode:
+    def _new_episode(
+        self, environment_index: int, reset_info: dict[str, Any]
+    ) -> _ActiveEpisode:
+        """
+        Open an episode on whichever circuit the worker just reset onto.
+
+        The worker and its own episode count are carried through to the record
+        because they are what pairs two runs: an episode identity is assigned in
+        completion order and means something different in each run.
+        """
         identity = self.counters.next_episode_identity
         self.counters.next_episode_identity += 1
-        return _ActiveEpisode(identity, circuit_identity)
+        worker_episode_index = self._worker_episode_counts[environment_index]
+        self._worker_episode_counts[environment_index] += 1
+        geometry = reset_info["circuit_geometry"]
+        if not isinstance(geometry, CircuitGeometrySummaryRecord):
+            raise TypeError("A worker reset must report its circuit geometry.")
+        return _ActiveEpisode(
+            identity,
+            str(reset_info["circuit_identity"]),
+            int(reset_info["track_seed"]),
+            geometry,
+            environment_index,
+            worker_episode_index,
+        )
 
     def _record_active_step(
         self,
@@ -628,9 +699,15 @@ class OnPolicyTrainingEngine:
                 evaluation_interactions=self.counters.evaluation_interactions,
                 circuit_identity=active.circuit_identity,
                 root_identity=self.root_identity,
-                observation_type="frenet",
-                circuit_seed=int(info["track_seed"]),
-                circuit_split=self.circuit_split,
+                observation_type=self.observation_type.value,
+                circuit_seed=active.circuit_seed,
+                circuit_split=(
+                    CircuitSplit.TRAINING.value
+                    if self.training_circuit_schedule is not None
+                    else self.circuit_split
+                ),
+                collection_worker=active.worker_index,
+                worker_episode_index=active.worker_episode_index,
                 speed=_summary(active.speeds),
                 throttle=_summary(active.throttles),
                 absolute_steering=_summary(active.absolute_steering),
@@ -648,7 +725,7 @@ class OnPolicyTrainingEngine:
                         )
                     )
                 ),
-                circuit_geometry=circuit_geometry_summary(self.environment),
+                circuit_geometry=active.circuit_geometry,
             )
         )
         self.counters.finished_episodes += 1
@@ -661,7 +738,11 @@ class OnPolicyTrainingEngine:
             "normalizer": self.normalizer.state().to_dict(),
             "counters": asdict(self.counters),
             "current_observations": self._current_observations.tolist(),
-            "active_episodes": [asdict(episode) for episode in self._active_episodes],
+            # Kept as records rather than plain dictionaries: an active episode
+            # now carries its circuit's geometry summary, which `asdict` would
+            # flatten into a shape the record type could not be rebuilt from.
+            "active_episodes": list(self._active_episodes),
+            "worker_episode_counts": list(self._worker_episode_counts),
             "vector_environment": self.environments.state(),
             "parked": self._parked.tolist(),
             "collector": self._collector_state(),
@@ -702,8 +783,9 @@ class OnPolicyTrainingEngine:
         self._current_observations = np.asarray(
             state["current_observations"], dtype=np.float32
         )
-        self._active_episodes = [
-            _ActiveEpisode(**episode) for episode in state["active_episodes"]
+        self._active_episodes = _typed_list(state, "active_episodes", _ActiveEpisode)
+        self._worker_episode_counts = [
+            int(value) for value in state["worker_episode_counts"]
         ]
         vector_state = state["vector_environment"]
         if not isinstance(vector_state, VectorRacingState):
@@ -724,7 +806,20 @@ class OnPolicyTrainingEngine:
         self._persistence_seconds = float(timing["persistence"])
 
     def _engine_configuration(self) -> dict[str, Any]:
+        # A scheduled run has no single circuit, so identifying it by the
+        # prototype's geometry would reject every legitimate resume. The
+        # schedule namespace is what has to match instead.
+        circuit_configuration: dict[str, Any] = (
+            {"training_circuit_schedule": self.training_circuit_schedule.namespace.name}
+            if self.training_circuit_schedule is not None
+            else {
+                "track_seed": self.environment.track.generation.seed,
+                "track_length": self.environment.track.track_length,
+                "track_samples": int(self.environment.track.s.size),
+            }
+        )
         return {
+            **circuit_configuration,
             "run_category": self.run_category.value,
             "collection_mode": self.agent.collection_mode.value,
             "collection_size": self.agent.collection_size,
@@ -734,13 +829,11 @@ class OnPolicyTrainingEngine:
             "root_identity": self.root_identity,
             "circuit_identity": self.circuit_identity,
             "circuit_split": self.circuit_split,
+            "observation_type": self.observation_type.value,
             "near_saturated_steering_threshold": (
                 self.near_saturated_steering_threshold
             ),
             "environment_config": self.environment.config.to_dict(),
-            "track_seed": self.environment.track.generation.seed,
-            "track_length": self.environment.track.track_length,
-            "track_samples": int(self.environment.track.s.size),
             "normalizer_dimensions": self.normalizer.observation_dimensions,
         }
 
@@ -800,6 +893,36 @@ class OnPolicyTrainingEngine:
             for row in state["previous"]
         ]
         self._rollout_buffer.restore(steps, previous)
+
+
+def _resolve_evaluation_circuits(
+    circuits: Sequence[EvaluationCircuit] | None,
+    factory: Callable[[], RacingEnv] | None,
+    *,
+    identity: str,
+    split: str | None,
+) -> tuple[EvaluationCircuit, ...]:
+    """
+    Treat a lone evaluation environment as a one-circuit evaluation set.
+
+    A fixed-circuit run and a multi-circuit run then share one evaluation path,
+    so the difference between them stays in how many circuits they name.
+    """
+    if circuits is not None:
+        if factory is not None:
+            raise ValueError(
+                "Provide either evaluation circuits or one evaluation factory."
+            )
+        return tuple(circuits)
+    if factory is None:
+        return ()
+    return (
+        EvaluationCircuit(
+            identity=identity,
+            split=None if split is None else CircuitSplit(split),
+            factory=factory,
+        ),
+    )
 
 
 def _resolve_generators(

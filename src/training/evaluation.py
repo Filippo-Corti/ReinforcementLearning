@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from agents.types import OnPolicyAgent
+from configs import ObservationRepresentation
 from envs.observations import FrenetObservation
 from envs.racing import RacingEnv
 from recording.records import (
@@ -39,6 +40,7 @@ def evaluate_deterministic(
     root_identity: int | None = None,
     circuit_identity: str | None = None,
     circuit_split: str | None = None,
+    observation_type: ObservationRepresentation = ObservationRepresentation.FRENET,
     collection_duration: float = 0.0,
     optimization_duration: float = 0.0,
     near_saturated_steering_threshold: float | None = None,
@@ -61,6 +63,7 @@ def evaluate_deterministic(
             root_identity=root_identity,
             circuit_identity=circuit_identity,
             circuit_split=circuit_split,
+            observation_type=observation_type,
             collection_duration=collection_duration,
             optimization_duration=optimization_duration,
             near_saturated_steering_threshold=near_saturated_steering_threshold,
@@ -82,6 +85,7 @@ def _evaluate_episode(
     root_identity: int | None,
     circuit_identity: str | None,
     circuit_split: str | None,
+    observation_type: ObservationRepresentation,
     collection_duration: float,
     optimization_duration: float,
     near_saturated_steering_threshold: float | None,
@@ -157,7 +161,7 @@ def _evaluate_episode(
                 evaluation_interactions=evaluation_interactions_before + count,
                 circuit_identity=resolved_circuit_identity,
                 root_identity=root_identity,
-                observation_type="frenet",
+                observation_type=observation_type.value,
                 circuit_seed=environment.track.generation.seed,
                 circuit_split=circuit_split,
                 speed=_summary(speeds),

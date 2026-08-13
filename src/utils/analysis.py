@@ -254,6 +254,12 @@ def training_episode_rows(runs: tuple[RecordedRun, ...]) -> list[TableRow]:
                     "circuit_identity": _string(record, "circuit_identity"),
                     "circuit_seed": _optional_integer(record, "circuit_seed"),
                     "circuit_split": _optional_string(record, "circuit_split"),
+                    # Carried so the paired circuit schedule can be checked from
+                    # the recorded output instead of taken on trust.
+                    "collection_worker": _optional_integer(record, "collection_worker"),
+                    "worker_episode_index": _optional_integer(
+                        record, "worker_episode_index"
+                    ),
                     "outcome": _string(record, "outcome"),
                     "return": _number(record, "undiscounted_return"),
                     "training_target_total": _optional_number(
