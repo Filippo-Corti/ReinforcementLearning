@@ -10,8 +10,9 @@ import gymnasium as gym
 import numpy as np
 from numpy.typing import NDArray
 
-from configs import EnvironmentConfig
+from configs import EnvironmentConfig, ObservationRepresentation
 
+from ..observations import LidarObserver
 from ..tracks import Track, TrackWithGeometry
 from ..vehicle import NormalizedAction, VehicleState, transition
 from .lifecycle import ActionOutcome, EpisodeLifecycle, EpisodeLifecycleState
@@ -48,7 +49,8 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
         * track: The immutable sampled circuit data.
         * track_with_geometry: The track's interpolation, boundaries, and indexes.
         * action_space: Normalized throttle/brake and steering controls.
-        * observation_space: Frenet observations in float32 physical units.
+        * observation_space: The selected observation in float32 units.
+        * lidar_observer: Ray caster, present only under LiDAR observation.
         * state: The current kinematic vehicle state.
     """
 
@@ -82,23 +84,16 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             shape=(2,),
             dtype=np.float32,
         )
-        steering_limit = np.radians(self.config.vehicle.max_steering_angle)
-        self.observation_space = gym.spaces.Box(
-            low=np.asarray(
-                [-np.inf, -np.pi, 0.0, -steering_limit, -np.inf], dtype=np.float32
-            ),
-            high=np.asarray(
-                [
-                    np.inf,
-                    np.pi,
-                    self.config.vehicle.max_speed,
-                    steering_limit,
-                    np.inf,
-                ],
-                dtype=np.float32,
-            ),
-            dtype=np.float32,
+        self.lidar_observer = (
+            LidarObserver(
+                track,
+                observation_config=self.config.lidar,
+                vehicle_config=self.config.vehicle,
+            )
+            if self.config.observation_type is ObservationRepresentation.LIDAR
+            else None
         )
+        self.observation_space = self._observation_space()
 
     def reset(
         self,
@@ -273,16 +268,50 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             ),
         )
 
+    def _observation_space(self) -> gym.spaces.Box:
+        """
+        Declare the bounds of whichever representation the agent observes.
+        """
+        steering_limit = np.radians(self.config.vehicle.max_steering_angle)
+        max_speed = self.config.vehicle.max_speed
+        if self.lidar_observer is not None:
+            ray_count = self.lidar_observer.dimensions - 2
+            return gym.spaces.Box(
+                low=np.asarray(
+                    [0.0, -steering_limit] + [0.0] * ray_count, dtype=np.float32
+                ),
+                high=np.asarray(
+                    [max_speed, steering_limit] + [1.0] * ray_count, dtype=np.float32
+                ),
+                dtype=np.float32,
+            )
+        return gym.spaces.Box(
+            low=np.asarray(
+                [-np.inf, -np.pi, 0.0, -steering_limit, -np.inf], dtype=np.float32
+            ),
+            high=np.asarray(
+                [np.inf, np.pi, max_speed, steering_limit, np.inf],
+                dtype=np.float32,
+            ),
+            dtype=np.float32,
+        )
+
     def _observe(self) -> ObservationType:
         """
-        Build the current Frenet observation in the declared Gymnasium dtype.
+        Build the selected observation in the declared Gymnasium dtype.
+
+        The Frenet observer runs either way inside the lifecycle, because
+        progress and collision are defined by the centerline projection. What
+        the observation type decides is only what the agent is shown.
         """
         if self.state is None or self._lifecycle is None:
             raise RuntimeError("environment state is not initialized.")
+        if self.lidar_observer is not None:
+            return self.lidar_observer.observe(self.state).as_array().astype(np.float32)
         observation, _ = self._lifecycle.observer.observe(
             self.state,
             previous_segment_index=self._lifecycle.current_segment_index,
-            config=self.config.observation,
+            config=self.config.frenet,
         )
         return observation.as_array().astype(np.float32)
 
@@ -290,9 +319,12 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
         """
         Return diagnostics shared by reset and step results.
         """
-        if self._lifecycle is None:
+        if self._lifecycle is None or self.state is None:
             raise RuntimeError("environment lifecycle is not initialized.")
         return {
+            # Reported here rather than read out of the observation vector,
+            # which places speed at a different index in each representation.
+            "speed": self.state.speed,
             "wrapped_progress": self._lifecycle.wrapped_progress,
             "episode_progress": self._lifecycle.episode_progress,
             "collision": False if outcome is None else outcome.collision,

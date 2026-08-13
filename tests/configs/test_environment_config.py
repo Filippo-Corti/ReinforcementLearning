@@ -8,6 +8,8 @@ from configs import (
     CarConfig,
     EnvironmentConfig,
     FrenetObservationConfig,
+    LidarObservationConfig,
+    ObservationRepresentation,
     RewardConfig,
     SimulationConfig,
     StartStateConfig,
@@ -57,9 +59,15 @@ def test_defaults_match_the_environment_specification() -> None:
         time_penalty_rate=1.0,
         progress_coefficient=100.0,
     )
-    assert config.observation == FrenetObservationConfig(
+    assert config.observation_type is ObservationRepresentation.FRENET
+    assert config.frenet == FrenetObservationConfig(
         lookahead_base=5.0,
         lookahead_speed_factor=0.7,
+    )
+    assert config.lidar == LidarObservationConfig(
+        ray_count=16,
+        field_of_view=200.0,
+        max_range=100.0,
     )
     assert config.start == StartStateConfig(
         randomized=True,

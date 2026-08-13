@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .choices import ObservationRepresentation
 from .serialization import to_plain_dict
 
 
@@ -18,8 +19,15 @@ class EnvironmentConfig:
         * vehicle: Physical car settings.
         * track: Track generation and validation settings.
         * reward: Reward function settings.
-        * observation: Frenet observation settings.
+        * observation_type: Which representation the agent observes.
+        * frenet: Frenet observation settings.
+        * lidar: LiDAR observation settings.
         * start: Episode start-pose sampling settings.
+
+    Both observation configurations are always present, and `observation_type`
+    selects which one the environment exposes. The Frenet projection is computed
+    either way, because progress and collision are defined by it regardless of
+    what the agent is allowed to see.
     """
 
     simulation: SimulationConfig = field(default_factory=lambda: SimulationConfig())
@@ -28,10 +36,29 @@ class EnvironmentConfig:
         default_factory=lambda: TrackGenerationConfig()
     )
     reward: RewardConfig = field(default_factory=lambda: RewardConfig())
-    observation: FrenetObservationConfig = field(
+    observation_type: ObservationRepresentation = ObservationRepresentation.FRENET
+    frenet: FrenetObservationConfig = field(
         default_factory=lambda: FrenetObservationConfig()
     )
+    lidar: LidarObservationConfig = field(
+        default_factory=lambda: LidarObservationConfig()
+    )
     start: StartStateConfig = field(default_factory=lambda: StartStateConfig())
+
+    def __post_init__(self) -> None:
+        """
+        Accept the representation by name and store it as the enum member.
+
+        `ObservationRepresentation` is a string enum, so a plain `"lidar"` passes
+        every equality check but fails an identity one. Normalizing here means a
+        configuration written either way selects the same observer instead of
+        quietly falling back to the default.
+        """
+        object.__setattr__(
+            self,
+            "observation_type",
+            ObservationRepresentation(self.observation_type),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -230,3 +257,22 @@ class FrenetObservationConfig:
 
     lookahead_base: float = 5.0
     lookahead_speed_factor: float = 0.7
+
+
+@dataclass(frozen=True, slots=True)
+class LidarObservationConfig:
+    """
+    Configuration of the LiDAR observation.
+
+    The rays are evenly spaced and *inclusive* of both extremes, so the angular
+    separation is the field of view divided by one less than the ray count.
+
+    Fields:
+        * ray_count: The number of rays cast from the vehicle pose.
+        * field_of_view: The angle spanned from the first ray to the last, in degrees.
+        * max_range: The furthest distance a ray reports, in meters.
+    """
+
+    ray_count: int = 16
+    field_of_view: float = 200.0
+    max_range: float = 100.0

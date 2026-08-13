@@ -108,7 +108,10 @@ def _evaluate_episode(
         next_observation, reward, terminated, truncated, info = environment.step(action)
         progress = float(info["episode_progress"]) / environment.track.track_length
         maximum_progress = max(maximum_progress, progress)
-        speeds.append(float(observation[2]))
+        # Read from the pre-action vehicle state, not from a fixed position in
+        # the observation vector: the two representations order theirs
+        # differently, and only one of them carries speed at index two.
+        speeds.append(current_state.speed)
         throttles.append(float(action[0]))
         steering.append(abs(float(action[1])))
         transitions.append(

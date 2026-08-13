@@ -6,10 +6,13 @@ from .frenet import (
     FrenetProjection,
     signed_progress,
 )
+from .lidar import LidarObservation, LidarObserver
 
 __all__ = [
     "FrenetObservation",
     "FrenetObserver",
     "FrenetProjection",
+    "LidarObservation",
+    "LidarObserver",
     "signed_progress",
 ]

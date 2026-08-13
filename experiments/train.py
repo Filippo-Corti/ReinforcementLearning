@@ -396,6 +396,9 @@ def _run_training(
             "Reported runs require an explicit near-saturated steering threshold."
         )
     streams = RunSeedStreams(_seed_namespace(run_category), seed)
+    # The representation is a property of the run, so it is applied to the
+    # configuration that every environment and the stored config document share.
+    environment_config = replace(environment_config, observation_type=observation)
     track = _prototype_track(
         track_path,
         training_circuit_schedule=training_circuit_schedule,

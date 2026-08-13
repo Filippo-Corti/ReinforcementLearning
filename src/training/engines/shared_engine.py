@@ -43,6 +43,7 @@ from ..normalization import RunningObservationNormalizer
 from ..vector_environment import (
     PersistentRacingVectorEnv,
     VectorRacingState,
+    vector_info,
     vector_worker_info,
 )
 
@@ -237,6 +238,7 @@ class OnPolicyTrainingEngine:
             identity=self.circuit_identity,
             split=circuit_split,
         )
+        _check_evaluation_observations(self.evaluation_circuits, environment)
         self.near_saturated_steering_threshold = near_saturated_steering_threshold
         self.counters = TrainingCounters()
         self._collection_seconds = 0.0
@@ -256,6 +258,12 @@ class OnPolicyTrainingEngine:
             training_circuit_schedule,
         )
         self._current_observations, reset_infos = self.environments.reset()
+        # Speed is recorded as the value the policy acted on, so it is held
+        # alongside the observation it belongs to rather than read back out of
+        # it: each representation places speed at a different index, and the
+        # info returned by a step describes the state *after* the action.
+        self._current_speeds = np.zeros(worker_count, dtype=np.float64)
+        self._update_current_speeds(reset_infos, np.ones(worker_count, dtype=np.bool_))
         self._worker_episode_counts = [0] * worker_count
         self._active_episodes: list[_ActiveEpisode] = [
             self._new_episode(
@@ -436,6 +444,7 @@ class OnPolicyTrainingEngine:
         if self._rollout_buffer is not None:
             self._rollout_buffer.append_step(transition_step)
         self._current_observations = next_observations
+        self._update_current_speeds(infos, active)
         if np.any(reset_mask):
             self._reset_workers(reset_mask)
         self._collection_seconds += perf_counter() - started
@@ -567,6 +576,7 @@ class OnPolicyTrainingEngine:
         which is why it takes its circuits as an argument: the engine never holds
         a reference to a test circuit while it is still learning.
         """
+        _check_evaluation_observations(circuits, self.environment)
         started = perf_counter()
         produced = [self._evaluate_circuit(circuit) for circuit in circuits]
         self._evaluation_seconds += perf_counter() - started
@@ -616,9 +626,20 @@ class OnPolicyTrainingEngine:
         self.counters.next_evaluation_identity += 1
         return evaluation
 
+    def _update_current_speeds(self, infos: dict[str, Any], mask: np.ndarray) -> None:
+        """
+        Refresh the speed paired with each worker's current observation.
+        """
+        for environment_index_value in np.flatnonzero(mask):
+            environment_index = int(environment_index_value)
+            self._current_speeds[environment_index] = float(
+                vector_info(infos, "speed", environment_index)
+            )
+
     def _reset_workers(self, reset_mask: np.ndarray) -> None:
         observations, infos = self.environments.reset(reset_mask)
         self._current_observations = observations
+        self._update_current_speeds(infos, reset_mask)
         for environment_index_value in np.flatnonzero(reset_mask):
             environment_index = int(environment_index_value)
             self._active_episodes[environment_index] = self._new_episode(
@@ -660,7 +681,7 @@ class OnPolicyTrainingEngine:
         info: dict[str, Any],
     ) -> None:
         active = self._active_episodes[environment_index]
-        active.speeds.append(float(self._current_observations[environment_index, 2]))
+        active.speeds.append(float(self._current_speeds[environment_index]))
         active.throttles.append(float(action[0]))
         active.absolute_steering.append(abs(float(action[1])))
         active.step_index += 1
@@ -738,6 +759,7 @@ class OnPolicyTrainingEngine:
             "normalizer": self.normalizer.state().to_dict(),
             "counters": asdict(self.counters),
             "current_observations": self._current_observations.tolist(),
+            "current_speeds": self._current_speeds.tolist(),
             # Kept as records rather than plain dictionaries: an active episode
             # now carries its circuit's geometry summary, which `asdict` would
             # flatten into a shape the record type could not be rebuilt from.
@@ -783,6 +805,7 @@ class OnPolicyTrainingEngine:
         self._current_observations = np.asarray(
             state["current_observations"], dtype=np.float32
         )
+        self._current_speeds = np.asarray(state["current_speeds"], dtype=np.float64)
         self._active_episodes = _typed_list(state, "active_episodes", _ActiveEpisode)
         self._worker_episode_counts = [
             int(value) for value in state["worker_episode_counts"]
@@ -893,6 +916,33 @@ class OnPolicyTrainingEngine:
             for row in state["previous"]
         ]
         self._rollout_buffer.restore(steps, previous)
+
+
+def _check_evaluation_observations(
+    circuits: Sequence[EvaluationCircuit],
+    environment: RacingEnv,
+) -> None:
+    """
+    Refuse circuits that would show the policy a different representation.
+
+    Evaluation circuits are prepared by the caller, so nothing otherwise stops a
+    LiDAR run from being measured on Frenet environments. That would not crash:
+    the normalizer would reject the width, but only after a full run's training.
+    Checking the first circuit up front makes it a startup error instead.
+    """
+    for circuit in circuits[:1]:
+        evaluation_environment = circuit.factory()
+        try:
+            expected = environment.observation_space
+            actual = evaluation_environment.observation_space
+            if actual.shape != expected.shape:
+                raise ValueError(
+                    "Evaluation circuits must use the training observation type: "
+                    f"training observes {expected.shape}, "
+                    f"circuit {circuit.identity!r} observes {actual.shape}."
+                )
+        finally:
+            evaluation_environment.close()
 
 
 def _resolve_evaluation_circuits(

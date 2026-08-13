@@ -348,17 +348,33 @@ $$
 \alpha_k=-100°+k\frac{200°}{15}, \qquad k=0,\ldots,15.
 $$
 
+The offset is measured the same way as every other angle in this project, so a
+positive $\alpha$ turns toward the left of travel: ray $0$ looks $100°$ to the
+right and ray $15$ looks $100°$ to the left. Nothing behind the car within
+$80°$ of straight back is seen at all.
+
 Each ray starts at the point-car pose, has a maximum range
 $r_{\max}=100m$, and returns the distance to its first boundary intersection.
 A ray with no hit returns $r_{\max}$. The policy receives normalized ranges
 $\tilde r=r/r_{\max}\in[0,1]$; raw metre values may be included in the `info`
 dictionary for debugging.
 
-Ray casting queries a spatial index over **all** left and right boundary
-segments whose bounding boxes overlap the ray. It must not be restricted only
-by arc-length proximity, because a ray can see a geometrically nearby section
-that is far away along the lap. LiDAR reflects only solid track boundaries:
-there is no separate off-road buffer layer.
+Ray casting tests **all** left and right boundary segments, in one vectorized
+pass over every (ray, segment) pair. It must not be restricted by arc-length
+proximity, because a ray can see a geometrically nearby section that is far
+away along the lap.
+
+The only segments discarded are those whose distance from the vehicle exceeds
+$r_{\max}$ plus half a segment, which no ray could reach whatever its
+direction. That test is a distance in space, not a position along the lap, so
+it never hides the case above. A sampled circuit has a few thousand segments,
+which measures at about $0.14\,\mathrm{ms}$ per observation — roughly five
+minutes of processor time across a two-million-step run, spread over the
+collection workers. A spatial index would cost more bookkeeping than it saves
+at this size.
+
+LiDAR reflects only solid track boundaries: there is no separate off-road
+buffer layer.
 
 ### Collision Detection
 

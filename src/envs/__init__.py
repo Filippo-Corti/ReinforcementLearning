@@ -12,6 +12,8 @@ from .observations import (
     FrenetObservation,
     FrenetObserver,
     FrenetProjection,
+    LidarObservation,
+    LidarObserver,
     signed_progress,
 )
 from .racing import (
@@ -49,6 +51,8 @@ __all__ = [
     "FrenetObserver",
     "FrenetProjection",
     "KinematicTransition",
+    "LidarObservation",
+    "LidarObserver",
     "NormalizedAction",
     "ObservationType",
     "PhysicalControls",
