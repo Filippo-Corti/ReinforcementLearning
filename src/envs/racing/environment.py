@@ -10,13 +10,13 @@ import gymnasium as gym
 import numpy as np
 from numpy.typing import NDArray
 
-from configs import EnvironmentConfig, ObservationRepresentation
+from configs import EnvironmentConfig, ObservationRepresentation, RenderStyle
 
 from ..observations import LidarObserver
 from ..tracks import Track, TrackWithGeometry
 from ..vehicle import NormalizedAction, VehicleState, transition
 from .lifecycle import ActionOutcome, EpisodeLifecycle, EpisodeLifecycleState
-from .rendering import RacingPygameRenderer
+from .rendering import RacingPygameRenderer, RenderFrame
 
 ActionType = NDArray[np.float32]
 ObservationType = NDArray[np.float32]
@@ -64,6 +64,7 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
         *,
         config: EnvironmentConfig | None = None,
         render_mode: str | None = None,
+        render_style: RenderStyle = RenderStyle.BROADCAST,
     ) -> None:
         super().__init__()
         if render_mode not in self.metadata["render_modes"] + [None]:
@@ -76,7 +77,11 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
         self._lifecycle: EpisodeLifecycle | None = None
         self._episode_finished = False
         self.render_mode = render_mode
+        self.render_style = RenderStyle(render_style)
         self._renderer: RacingPygameRenderer | None = None
+        # Kept for drawing only. The simulation never reads it back: an action
+        # is applied when it arrives and nothing later depends on remembering it.
+        self._last_action = np.zeros(2, dtype=np.float32)
 
         self.action_space = gym.spaces.Box(
             low=-1.0,
@@ -110,6 +115,7 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             self._renderer = None
 
         self.state = self._sample_start_state()
+        self._last_action = np.zeros(2, dtype=np.float32)
         self._lifecycle = EpisodeLifecycle(
             self.track_with_geometry,
             simulation_config=self.config.simulation,
@@ -148,6 +154,7 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             simulation_config=self.config.simulation,
             vehicle_config=self.config.vehicle,
         )
+        self._last_action = action_values.copy()
         outcome = self._lifecycle.process_transition(vehicle_transition)
         if outcome.termination_substep is None:
             self.state = vehicle_transition.state
@@ -170,15 +177,27 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
         """
         if self.render_mode is None:
             return None
-        if self.state is None:
+        if self.state is None or self._lifecycle is None:
             raise RuntimeError("reset must be called before rendering the environment.")
         if self._renderer is None:
             self._renderer = RacingPygameRenderer(
                 self.track_with_geometry,
                 render_mode=self.render_mode,
                 image_size=(800, 800),
+                style=self.render_style,
+                vehicle_config=self.config.vehicle,
             )
-        return self._renderer.render(self.state)
+        return self._renderer.render(
+            RenderFrame(
+                state=self.state,
+                gate_s=self._lifecycle.gate_s,
+                elapsed_time=self._lifecycle.agent_steps
+                * self.config.simulation.agent_timestep,
+                progress=self._lifecycle.episode_progress / self.track.track_length,
+                throttle=float(self._last_action[0]),
+                steering=float(self._last_action[1]),
+            )
+        )
 
     def close(self) -> None:
         """

@@ -254,13 +254,37 @@ retained even though runtime behaviour depends only on the validated geometry.
 
 ## Rendering
 
-Version 0 presentation uses an 800×800 pixel Pygame canvas. Its camera fits both
-track boundaries into the frame with 40 pixels of padding on every side and uses
-a uniform scale, so geometric angles are visually preserved. The renderer draws
-the road, boundaries, centerline, canonical finish gate and a triangular marker
-whose nose indicates the car heading. These camera, canvas and colour choices
+Presentation uses an 800×800 pixel Pygame canvas in one of two styles, chosen by
+`RacingEnv(render_style=...)`. Both are handed the same immutable frame — pose,
+finish-gate arc length, elapsed time, progress and the last applied action — and
+neither can reach back into the simulation. Camera, canvas and colour choices
 are display-only and do not affect the MDP state, dynamics, reward or episode
 lifecycle.
+
+**Minimal** answers *where did the car go*. It fits both boundaries into the
+frame at a uniform scale, so geometric angles are visually preserved, and draws
+the road, its edges, the finish line and a dot. Flat colours and no text, so two
+frames can be compared at a glance.
+
+**Broadcast** answers *what was it like to drive*. The main image is a
+perspective projection of the road ahead from the car's own pose: the boundaries
+are sampled forward along the centerline, expressed in car-relative metres and
+projected through a pinhole at a fixed eye height, giving a level horizon that
+holds still while the road turns beneath it. Distant road is blended toward the
+horizon, which reads as depth and hides the end of the drawn lookahead. Kerbs,
+centre dashes and the finish line are keyed to arc length rather than to the
+sampling, so they stay attached to the track and stream past the car. A corner
+inset carries the circuit from above, because a forward view cannot show the
+shape of the lap or where in it the car is. The overlay reports speed in km/h,
+lap time, lap progress, throttle, brake and steering.
+
+### The finish line is the episode's, not the circuit's
+
+Both styles draw the finish line at **this episode's** gate arc length, taken
+from the episode lifecycle. A lap runs one full circuit from wherever the car is
+placed, so an episode that begins at a sampled start also ends there. Drawing
+the canonical start line instead would mark a place that episode never treats as
+a finish — which is what the earlier renderer did.
 
 ## Track Usage
 

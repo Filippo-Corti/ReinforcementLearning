@@ -20,3 +20,15 @@ class ObservationRepresentation(StrEnum):
 
     FRENET = "frenet"
     LIDAR = "lidar"
+
+
+class RenderStyle(StrEnum):
+    """
+    Identify how the environment is drawn, which never affects what it does.
+
+    The minimal style answers "where did the car go"; the broadcast style
+    answers "what was it like to drive". Neither is read by the simulation.
+    """
+
+    MINIMAL = "minimal"
+    BROADCAST = "broadcast"

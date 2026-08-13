@@ -17,7 +17,7 @@ from matplotlib.lines import Line2D
 from matplotlib.text import Text
 from numpy.typing import ArrayLike, NDArray
 
-from configs import EnvironmentConfig
+from configs import EnvironmentConfig, RenderStyle
 from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry
 
@@ -76,6 +76,7 @@ def watch_deterministic_rollout(
     max_steps: int,
     reset_seed: int,
     viewer_mode: str = "inline",
+    render_style: RenderStyle = RenderStyle.BROADCAST,
     frame_delay: float = 0.01,
 ) -> dict[str, float | int | bool]:
     """
@@ -97,6 +98,7 @@ def watch_deterministic_rollout(
         track,
         config=environment_config,
         render_mode=render_mode,
+        render_style=render_style,
     )
     observation, info = environment.reset(seed=reset_seed)
     total_return = 0.0

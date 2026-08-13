@@ -224,6 +224,17 @@ class EpisodeLifecycle:
         )
 
     @property
+    def gate_s(self) -> float:
+        """
+        Return the arc length this episode's lap ends at.
+
+        The gate is placed where the car started, so a drawing that marks the
+        canonical start line would be marking the wrong place on every episode
+        that begins somewhere else.
+        """
+        return self._gate_s
+
+    @property
     def current_segment_index(self) -> int | None:
         """
         Return the centerline segment holding the most recent projection.

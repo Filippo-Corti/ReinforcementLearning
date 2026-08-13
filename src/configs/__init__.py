@@ -1,7 +1,7 @@
 """Configuration objects."""
 
 from .algorithms import A2CConfig, PPOConfig, ReinforceConfig
-from .choices import Algorithm, ObservationRepresentation
+from .choices import Algorithm, ObservationRepresentation, RenderStyle
 from .environment import (
     CarConfig,
     EnvironmentConfig,
@@ -55,6 +55,7 @@ __all__ = [
     "ObservationRepresentation",
     "PPOConfig",
     "ReinforceConfig",
+    "RenderStyle",
     "RewardConfig",
     "SimulationConfig",
     "StartStateConfig",
