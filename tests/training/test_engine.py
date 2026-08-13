@@ -455,13 +455,16 @@ def test_timing_categories_are_non_negative_and_reconcile() -> None:
 
 
 def test_checkpoint_rejects_incompatible_engine_state(tmp_path: Path) -> None:
+    """
+    A checkpoint whose layout this code no longer understands must be refused.
+    """
+    from training.checkpoints import load_checkpoint, save_checkpoint
+
     engine, _ = _engine(size=4)
     checkpoint = tmp_path / "training.pt"
     engine.save(str(checkpoint))
-    state = engine._state_dict()
+    state = load_checkpoint(checkpoint)
     state["engine_state_version"] = 999
-    from training.checkpoints import save_checkpoint
-
     save_checkpoint(checkpoint, state)
 
     with pytest.raises(ValueError, match="incompatible"):

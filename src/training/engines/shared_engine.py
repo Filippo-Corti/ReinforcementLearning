@@ -3,31 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 
 from agents.types import (
     AgentUpdateInput,
     AgentUpdateOutput,
-    CollectedActionBatch,
     CollectionMode,
     OnPolicyAgent,
 )
 from configs import ExecutionConfig, ObservationRepresentation
 from envs.racing import RacingEnv
 from recording.records import (
-    CircuitGeometrySummaryRecord,
     DeterministicEvaluationRecord,
-    EpisodeOutcome,
     EpisodeRecord,
-    MetricScope,
     ObservationNormalizerStateRecord,
     RunCategory,
-    ScalarSummaryRecord,
     TimingRecord,
 )
 
@@ -36,21 +30,22 @@ from ..buffers import (
     TrainingTransition,
     VectorRolloutBuffer,
 )
-from ..checkpoints import load_checkpoint, save_checkpoint
 from ..circuits import (
     CircuitSplit,
     EvaluationCircuit,
     TrainingCircuitSchedule,
     generated_evaluation_circuits,
 )
-from ..evaluation import evaluate_deterministic
 from ..normalization import RunningObservationNormalizer
-from ..vector_environment import (
-    PersistentRacingVectorEnv,
-    VectorRacingState,
-    vector_info,
-    vector_worker_info,
-)
+from ..vector_environment import PersistentRacingVectorEnv, VectorRacingState
+from .checkpointing import EngineCheckpoint, mapping, typed_list
+from .episode_recording import EpisodeRecorder, episode_outcome
+from .evaluation_schedule import EvaluationSchedule, check_evaluation_observations
+from .stepping import StepCollector
+from .timing import TrainingTimer
+
+# Re-exported for the tests and callers that assert on outcome classification.
+_outcome = episode_outcome
 
 
 @dataclass(slots=True)
@@ -73,44 +68,6 @@ class TrainingCounters:
     optimizer_updates: int = 0
     next_episode_identity: int = 0
     next_evaluation_identity: int = 0
-
-
-@dataclass(slots=True)
-class _ActiveEpisode:
-    """
-    Accumulate semantic metrics for one worker's active training episode.
-
-    An episode carries its own circuit's seed and geometry because a run that
-    changes circuit at every reset cannot read either from a single prototype
-    environment: eight workers race eight different circuits at once.
-
-    Fields:
-        * identity: Stable episode identity used by rollout records.
-        * circuit_identity: Stable logical identity of the selected track.
-        * circuit_seed: Generator seed of the circuit this episode races.
-        * circuit_geometry: Frozen geometry summary of that circuit.
-        * worker_index: Collection stream racing this episode.
-        * worker_episode_index: Position of this episode within that stream.
-        * step_index: Zero-based action position for the next transition.
-        * undiscounted_return: Reward sum accumulated through the prior action.
-        * maximum_progress: Greatest normalized progress observed so far.
-        * speeds: Pre-action speed samples.
-        * throttles: Applied throttle/brake samples.
-        * absolute_steering: Absolute steering samples.
-    """
-
-    identity: int
-    circuit_identity: str
-    circuit_seed: int
-    circuit_geometry: CircuitGeometrySummaryRecord
-    worker_index: int
-    worker_episode_index: int
-    step_index: int = 0
-    undiscounted_return: float = 0.0
-    maximum_progress: float = 0.0
-    speeds: list[float] = field(default_factory=list)
-    throttles: list[float] = field(default_factory=list)
-    absolute_steering: list[float] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +112,10 @@ class OnPolicyTrainingEngine:
     complete REINFORCE trajectories separate and fixed actor-critic rollouts in
     time-by-worker form.
 
+    What is shared with every other engine — stepping the workers, recording an
+    episode, evaluating a checkpoint, timing, checkpointing — is delegated to
+    collaborators, so what remains here is the collection strategy itself.
+
     Fields:
         * agent: Owner of policy/value models, optimizers, and sampling streams.
         * environment: Unstepped prototype used for fixed configuration and geometry.
@@ -162,10 +123,7 @@ class OnPolicyTrainingEngine:
         * normalizer: Training-updated and evaluation-frozen observation normalizer.
         * execution_config: Device, worker, threading, and deterministic settings.
         * run_category: Run namespace carried by emitted metric summaries.
-        * counters: Independent training, evaluation, episode, and update counts.
     """
-
-    STATE_VERSION = 3
 
     def __init__(
         self,
@@ -194,8 +152,6 @@ class OnPolicyTrainingEngine:
         """
         if agent.collection_size <= 0:
             raise ValueError("An on-policy agent collection size must be positive.")
-        if evaluation_interval is not None and evaluation_interval <= 0:
-            raise ValueError("Evaluation interval must be positive when enabled.")
         if near_saturated_steering_threshold is not None and not (
             0.0 < near_saturated_steering_threshold <= 1.0
         ):
@@ -227,9 +183,7 @@ class OnPolicyTrainingEngine:
         self.normalizer = normalizer
         self.run_category = run_category
         self.evaluation_environment_factory = evaluation_environment_factory
-        self.evaluation_interval = evaluation_interval
         self.environment_reset_generator = reset_generators[0]
-        self.evaluation_seed = evaluation_seed
         self.root_identity = root_identity
         self.circuit_identity = circuit_identity or str(
             environment.track.generation.seed
@@ -237,22 +191,39 @@ class OnPolicyTrainingEngine:
         self.circuit_split = circuit_split
         self.observation_type = observation_type
         self.training_circuit_schedule = training_circuit_schedule
-        self.evaluation_circuits = _resolve_evaluation_circuits(
-            evaluation_circuits,
-            evaluation_environment_factory,
-            identity=self.circuit_identity,
-            split=circuit_split,
-        )
-        _check_evaluation_observations(self.evaluation_circuits, environment)
         self.near_saturated_steering_threshold = near_saturated_steering_threshold
-        self.counters = TrainingCounters()
-        self._collection_seconds = 0.0
-        self._optimization_seconds = 0.0
-        self._evaluation_seconds = 0.0
-        self._persistence_seconds = 0.0
-        self._started_at = perf_counter()
-        self.episode_records: list[EpisodeRecord] = []
-        self.evaluations: list[DeterministicEvaluationRecord] = []
+
+        self.timer = TrainingTimer()
+        self.recorder = EpisodeRecorder(
+            worker_count,
+            run_category=run_category,
+            observation_type=observation_type,
+            root_identity=root_identity,
+            circuit_split=(
+                CircuitSplit.TRAINING.value
+                if training_circuit_schedule is not None
+                else circuit_split
+            ),
+            near_saturated_steering_threshold=near_saturated_steering_threshold,
+        )
+        self.schedule = EvaluationSchedule(
+            _resolve_evaluation_circuits(
+                evaluation_circuits,
+                evaluation_environment_factory,
+                identity=self.circuit_identity,
+                split=circuit_split,
+            ),
+            interval=evaluation_interval,
+            evaluation_seed=evaluation_seed,
+            run_category=run_category,
+            observation_type=observation_type,
+            root_identity=root_identity,
+            near_saturated_steering_threshold=near_saturated_steering_threshold,
+        )
+        check_evaluation_observations(self.schedule.circuits, environment)
+
+        self.training_interactions = 0
+        self.optimizer_updates = 0
         self.updates: list[TrainingUpdate] = []
         self.environments = PersistentRacingVectorEnv(
             (environment.track_with_geometry,),
@@ -262,21 +233,15 @@ class OnPolicyTrainingEngine:
             selection_generators,
             training_circuit_schedule,
         )
-        self._current_observations, reset_infos = self.environments.reset()
-        # Speed is recorded as the value the policy acted on, so it is held
-        # alongside the observation it belongs to rather than read back out of
-        # it: each representation places speed at a different index, and the
-        # info returned by a step describes the state *after* the action.
-        self._current_speeds = np.zeros(worker_count, dtype=np.float64)
-        self._update_current_speeds(reset_infos, np.ones(worker_count, dtype=np.bool_))
-        self._worker_episode_counts = [0] * worker_count
-        self._active_episodes: list[_ActiveEpisode] = [
-            self._new_episode(
-                environment_index,
-                vector_worker_info(reset_infos, environment_index),
-            )
-            for environment_index in range(worker_count)
-        ]
+        self.collector = StepCollector(
+            agent,
+            self.environments,
+            normalizer,
+            self.recorder,
+            worker_count=worker_count,
+        )
+        self.checkpoint = EngineCheckpoint(self._engine_configuration())
+
         self._reinforce_active: list[list[TrainingTransition]] | None = None
         self._reinforce_batch: list[OnPolicyRollout] | None = None
         self._parked = np.zeros(worker_count, dtype=np.bool_)
@@ -290,24 +255,66 @@ class OnPolicyTrainingEngine:
                 agent.collection_size, worker_count
             )
 
+    @property
+    def evaluation_interval(self) -> int | None:
+        """
+        Return the training interactions between deterministic checkpoints.
+        """
+        return self.schedule.interval
+
+    @property
+    def evaluation_circuits(self) -> tuple[EvaluationCircuit, ...]:
+        """
+        Return the circuits evaluated at every checkpoint.
+        """
+        return self.schedule.circuits
+
+    @property
+    def episode_records(self) -> list[EpisodeRecord]:
+        """
+        Return every finished training episode, in completion order.
+        """
+        return self.recorder.records
+
+    @property
+    def evaluations(self) -> list[DeterministicEvaluationRecord]:
+        """
+        Return every deterministic evaluation, in the order it was run.
+        """
+        return self.schedule.records
+
+    @property
+    def counters(self) -> TrainingCounters:
+        """
+        Return the run's counters, each read from whichever object owns it.
+        """
+        return TrainingCounters(
+            training_interactions=self.training_interactions,
+            evaluation_interactions=self.schedule.evaluation_interactions,
+            finished_episodes=len(self.recorder.records),
+            optimizer_updates=self.optimizer_updates,
+            next_episode_identity=self.recorder.next_episode_identity,
+            next_evaluation_identity=self.schedule.next_evaluation_identity,
+        )
+
     def train(
         self, interaction_budget: int, *, finalize: bool = True
     ) -> TrainingRunState:
         """
         Collect and optimize until the exact requested interaction budget is reached.
         """
-        if interaction_budget < self.counters.training_interactions:
+        if interaction_budget < self.training_interactions:
             raise ValueError("Training budget cannot be below consumed interactions.")
-        while self.counters.training_interactions < interaction_budget:
+        while self.training_interactions < interaction_budget:
             available = ~self._parked
-            maximum_rows = interaction_budget - self.counters.training_interactions
+            maximum_rows = interaction_budget - self.training_interactions
             if self._rollout_buffer is not None:
                 maximum_rows = min(
                     maximum_rows, self._rollout_buffer.remaining_capacity
                 )
-            if self.evaluation_interval is not None:
-                distance = self.evaluation_interval - (
-                    self.counters.training_interactions % self.evaluation_interval
+            if self.schedule.interval is not None:
+                distance = self.schedule.interval - (
+                    self.training_interactions % self.schedule.interval
                 )
                 maximum_rows = min(maximum_rows, distance)
             active_indices = np.flatnonzero(available)[:maximum_rows]
@@ -328,40 +335,29 @@ class OnPolicyTrainingEngine:
         """
         Return copied counters and accumulated non-overlapping timing categories.
         """
-        return TrainingRunState(
-            counters=TrainingCounters(**asdict(self.counters)),
-            timing=self.timing(),
-        )
+        return TrainingRunState(counters=self.counters, timing=self.timing())
 
     def timing(self) -> TimingRecord:
         """
         Return mutually exclusive component times and elapsed end-to-end time.
         """
-        return TimingRecord(
-            run_category=self.run_category,
-            scope=MetricScope.TRAINING,
-            collection=self._collection_seconds,
-            optimization=self._optimization_seconds,
-            evaluation=self._evaluation_seconds,
-            persistence=self._persistence_seconds,
-            end_to_end=perf_counter() - self._started_at,
-        )
+        return self.timer.record(self.run_category)
 
     def save(self, path: str | Path) -> None:
         """
         Atomically save every worker and collector state for exact resume.
         """
-        started = perf_counter()
-        save_checkpoint(path, self._state_dict())
-        self._persistence_seconds += perf_counter() - started
+        with self.timer.persisting():
+            self.checkpoint.save(path, self._state_sections())
 
     def restore(self, path: str | Path, *, map_location: str = "cpu") -> None:
         """
         Restore a checkpoint onto equivalent agent and worker instances.
         """
-        started = perf_counter()
-        self._restore_state_dict(load_checkpoint(path, map_location=map_location))
-        self._persistence_seconds += perf_counter() - started
+        with self.timer.persisting():
+            self._restore_sections(
+                self.checkpoint.load(path, map_location=map_location)
+            )
 
     def close(self) -> None:
         """
@@ -370,132 +366,91 @@ class OnPolicyTrainingEngine:
         self.environments.close()
         self.environment.close()
 
+    def training_reference_circuits(self, count: int) -> tuple[EvaluationCircuit, ...]:
+        """
+        Name circuits this run actually trained on, for an in-sample reference.
+
+        They are taken in per-worker episode order rather than in the order
+        episodes happened to finish, so two paired runs name the same circuits
+        even though they completed episodes at different times.
+        """
+        if self.training_circuit_schedule is None:
+            raise ValueError("Only a scheduled run has training circuits to revisit.")
+        ordered = sorted(
+            self.recorder.records,
+            key=lambda record: (
+                record.worker_episode_index or 0,
+                record.collection_worker or 0,
+            ),
+        )
+        identities: list[str] = []
+        for record in ordered:
+            if record.circuit_identity not in identities:
+                identities.append(record.circuit_identity)
+            if len(identities) == count:
+                break
+        if len(identities) < count:
+            raise ValueError(
+                f"The run raced {len(identities)} circuits, fewer than the {count} "
+                "requested as a training reference."
+            )
+        return generated_evaluation_circuits(
+            (int(identity) for identity in identities),
+            split=CircuitSplit.TRAINING_REFERENCE,
+            environment_config=self.environment.config,
+            namespace=self.training_circuit_schedule.namespace,
+        )
+
+    def evaluate_circuits(
+        self, circuits: Sequence[EvaluationCircuit]
+    ) -> tuple[DeterministicEvaluationRecord, ...]:
+        """
+        Evaluate the current deterministic policy once on each circuit given.
+
+        Held-out circuits are evaluated through this method after training ends,
+        which is why it takes its circuits as an argument: the engine never holds
+        a reference to a test circuit while it is still learning.
+        """
+        check_evaluation_observations(circuits, self.environment)
+        with self.timer.evaluating():
+            return self.schedule.run(
+                circuits,
+                agent=self.agent,
+                normalizer=self.normalizer,
+                training_interactions=self.training_interactions,
+                collection_duration=self.timer.collection,
+                optimization_duration=self.timer.optimization,
+            )
+
+    def _evaluate_if_due(self) -> None:
+        if self.schedule.due(self.training_interactions):
+            self.evaluate_circuits(self.schedule.circuits)
+
     def _collect_step(self, active: np.ndarray) -> None:
-        started = perf_counter()
-        normalized = self.normalizer.update_and_normalize_batch(
-            self._current_observations, active
-        )
-        active_indices = np.flatnonzero(active)
-        decisions = self._collect_actions(normalized, active_indices)
-        actions = np.zeros(
-            (self.execution_config.environment_workers, 2), dtype=np.float32
-        )
-        actions[active_indices] = decisions.env_actions
-        next_observations, rewards, terminated, truncated, infos = (
-            self.environments.step(actions, active)
-        )
-        next_normalized = np.stack(
-            [
-                self.normalizer.normalize(next_observations[index])
-                for index in active_indices
-            ]
-        )
-        next_values = self._bootstrap_values(next_normalized)
-        transition_step: list[TrainingTransition | None] = [
-            None
-        ] * self.execution_config.environment_workers
-        reset_mask = np.zeros(self.execution_config.environment_workers, dtype=np.bool_)
-
-        for decision_index, environment_index_value in enumerate(active_indices):
-            environment_index = int(environment_index_value)
-            info = vector_worker_info(infos, environment_index)
-            is_terminated = bool(terminated[environment_index])
-            is_truncated = bool(truncated[environment_index])
-            active_episode = self._active_episodes[environment_index]
-            transition = TrainingTransition(
-                normalized_observation=normalized[environment_index],
-                raw_action=decisions.raw_actions[decision_index],
-                env_action=decisions.env_actions[decision_index],
-                reward=float(rewards[environment_index]),
-                behaviour_log_probability=float(
-                    decisions.behaviour_log_probabilities[decision_index]
-                ),
-                current_value=(
-                    None
-                    if decisions.current_values is None
-                    else float(decisions.current_values[decision_index])
-                ),
-                next_value=(
-                    None
-                    if next_values is None
-                    else (0.0 if is_terminated else float(next_values[decision_index]))
-                ),
-                terminated=is_terminated,
-                truncated=is_truncated,
-                next_normalized_observation=next_normalized[decision_index],
-                episode_identity=active_episode.identity,
-                episode_step_index=active_episode.step_index,
-                circuit_identity=active_episode.circuit_identity,
-                environment_index=environment_index,
+        with self.timer.collecting():
+            step = self.collector.step(
+                active,
+                training_interactions=self.training_interactions,
+                evaluation_interactions=self.schedule.evaluation_interactions,
             )
-            transition_step[environment_index] = transition
-            self._append_transition(environment_index, transition)
-            self._record_active_step(
-                environment_index,
-                decisions.env_actions[decision_index],
-                float(rewards[environment_index]),
-                info,
+            self.training_interactions += step.interactions
+
+            reset_mask = np.zeros(
+                self.execution_config.environment_workers, dtype=np.bool_
             )
-            self.counters.training_interactions += 1
-            if is_terminated or is_truncated:
-                self._finish_training_episode(
-                    environment_index, is_terminated, is_truncated, info
-                )
-                if self.agent.collection_mode is CollectionMode.COMPLETE_EPISODES:
-                    self._finish_reinforce_trajectory(environment_index)
-                else:
-                    reset_mask[environment_index] = True
-
-        if self._rollout_buffer is not None:
-            self._rollout_buffer.append_step(transition_step)
-        self._current_observations = next_observations
-        self._update_current_speeds(infos, active)
-        if np.any(reset_mask):
-            self._reset_workers(reset_mask)
-        self._collection_seconds += perf_counter() - started
-
-    def _collect_actions(
-        self, normalized: np.ndarray, active_indices: np.ndarray
-    ) -> CollectedActionBatch:
-        batch_method = getattr(self.agent, "collect_actions", None)
-        if callable(batch_method):
-            return cast(Callable[..., CollectedActionBatch], batch_method)(
-                normalized[active_indices],
-                environment_indices=[int(index) for index in active_indices],
-            )
-        rows = [
-            self.agent.collect_action(normalized[index]) for index in active_indices
-        ]
-        return CollectedActionBatch(
-            raw_actions=np.stack([row.raw_action for row in rows]),
-            env_actions=np.stack([row.env_action for row in rows]),
-            behaviour_log_probabilities=np.asarray(
-                [row.behaviour_log_probability or 0.0 for row in rows],
-                dtype=np.float32,
-            ),
-            current_values=(
-                None
-                if any(row.current_value is None for row in rows)
-                else np.asarray([row.current_value for row in rows], dtype=np.float32)
-            ),
-        )
-
-    def _bootstrap_values(self, next_normalized: np.ndarray) -> np.ndarray | None:
-        batch_method = getattr(self.agent, "bootstrap_values", None)
-        if callable(batch_method):
-            return cast(Callable[[np.ndarray], np.ndarray | None], batch_method)(
-                next_normalized
-            )
-        values = [self.agent.bootstrap_value(row) for row in next_normalized]
-        if any(value is None for value in values):
-            return None
-        return np.asarray(values, dtype=np.float32)
-
-    def _append_transition(
-        self, environment_index: int, transition: TrainingTransition
-    ) -> None:
-        if self._reinforce_active is not None:
-            self._reinforce_active[environment_index].append(transition)
+            if self._reinforce_active is not None:
+                for worker_index, transition in enumerate(step.transitions):
+                    if transition is not None:
+                        self._reinforce_active[worker_index].append(transition)
+                for worker_index in step.finished:
+                    self._finish_reinforce_trajectory(worker_index)
+            else:
+                for worker_index in step.finished:
+                    reset_mask[worker_index] = True
+            if self._rollout_buffer is not None:
+                self._rollout_buffer.append_step(step.transitions)
+            if np.any(reset_mask):
+                self.collector.reset_workers(reset_mask)
 
     def _finish_reinforce_trajectory(self, environment_index: int) -> None:
         if self._reinforce_active is None or self._reinforce_batch is None:
@@ -532,7 +487,7 @@ class OnPolicyTrainingEngine:
         """
         wave = self._reinforce_wave_mask()
         self._parked = ~wave
-        self._reset_workers(wave)
+        self.collector.reset_workers(wave)
 
     def _update_ready_collection(self, *, final: bool) -> None:
         update_input: AgentUpdateInput | None = None
@@ -554,284 +509,40 @@ class OnPolicyTrainingEngine:
             )
         if update_input is None:
             return
-        started = perf_counter()
-        output = self.agent.update(update_input)
-        duration = perf_counter() - started
-        self._optimization_seconds += duration
+        with self.timer.optimizing() as elapsed:
+            output = self.agent.update(update_input)
         self.updates.append(
             TrainingUpdate(
-                update_index=self.counters.optimizer_updates,
-                training_interactions=self.counters.training_interactions,
+                update_index=self.optimizer_updates,
+                training_interactions=self.training_interactions,
                 output=output,
-                optimization_duration=duration,
+                optimization_duration=elapsed.seconds,
             )
         )
-        self.counters.optimizer_updates += 1
+        self.optimizer_updates += 1
         if self._reinforce_batch is not None:
             self._reinforce_batch = []
             self._start_reinforce_wave()
 
-    def training_reference_circuits(self, count: int) -> tuple[EvaluationCircuit, ...]:
-        """
-        Name circuits this run actually trained on, for an in-sample reference.
-
-        They are taken in per-worker episode order rather than in the order
-        episodes happened to finish, so two paired runs name the same circuits
-        even though they completed episodes at different times.
-        """
-        if self.training_circuit_schedule is None:
-            raise ValueError("Only a scheduled run has training circuits to revisit.")
-        ordered = sorted(
-            self.episode_records,
-            key=lambda record: (
-                record.worker_episode_index or 0,
-                record.collection_worker or 0,
-            ),
-        )
-        identities: list[str] = []
-        for record in ordered:
-            if record.circuit_identity not in identities:
-                identities.append(record.circuit_identity)
-            if len(identities) == count:
-                break
-        if len(identities) < count:
-            raise ValueError(
-                f"The run raced {len(identities)} circuits, fewer than the {count} "
-                "requested as a training reference."
-            )
-        return generated_evaluation_circuits(
-            (int(identity) for identity in identities),
-            split=CircuitSplit.TRAINING_REFERENCE,
-            environment_config=self.environment.config,
-            namespace=self.training_circuit_schedule.namespace,
-        )
-
-    def evaluate_circuits(
-        self, circuits: Sequence[EvaluationCircuit]
-    ) -> tuple[DeterministicEvaluationRecord, ...]:
-        """
-        Evaluate the current deterministic policy once on each circuit given.
-
-        Held-out circuits are evaluated through this method after training ends,
-        which is why it takes its circuits as an argument: the engine never holds
-        a reference to a test circuit while it is still learning.
-        """
-        _check_evaluation_observations(circuits, self.environment)
-        started = perf_counter()
-        produced = [self._evaluate_circuit(circuit) for circuit in circuits]
-        self._evaluation_seconds += perf_counter() - started
-        return tuple(produced)
-
-    def _evaluate_if_due(self) -> None:
-        if (
-            self.evaluation_interval is None
-            or not self.evaluation_circuits
-            or self.counters.training_interactions == 0
-            or self.counters.training_interactions % self.evaluation_interval != 0
-        ):
-            return
-        self.evaluate_circuits(self.evaluation_circuits)
-
-    def _evaluate_circuit(
-        self, circuit: EvaluationCircuit
-    ) -> DeterministicEvaluationRecord:
-        """
-        Record one deterministic episode and account for its isolated interactions.
-        """
-        identity = self.counters.next_evaluation_identity
-        reset_seed = int(
-            np.random.SeedSequence([self.evaluation_seed, identity]).generate_state(
-                1, dtype=np.uint32
-            )[0]
-        )
-        evaluation = evaluate_deterministic(
-            circuit.factory,
-            self.agent,
-            self.normalizer,
-            run_category=self.run_category,
-            evaluation_index=identity,
-            training_interactions=self.counters.training_interactions,
-            evaluation_interactions_before=self.counters.evaluation_interactions,
-            reset_seed=reset_seed,
-            root_identity=self.root_identity,
-            circuit_identity=circuit.identity,
-            circuit_split=None if circuit.split is None else circuit.split.value,
-            observation_type=self.observation_type,
-            collection_duration=self._collection_seconds,
-            optimization_duration=self._optimization_seconds,
-            near_saturated_steering_threshold=self.near_saturated_steering_threshold,
-        )
-        self.evaluations.append(evaluation)
-        self.counters.evaluation_interactions += evaluation.record.episode.interactions
-        self.counters.next_evaluation_identity += 1
-        return evaluation
-
-    def _update_current_speeds(self, infos: dict[str, Any], mask: np.ndarray) -> None:
-        """
-        Refresh the speed paired with each worker's current observation.
-        """
-        for environment_index_value in np.flatnonzero(mask):
-            environment_index = int(environment_index_value)
-            self._current_speeds[environment_index] = float(
-                vector_info(infos, "speed", environment_index)
-            )
-
-    def _reset_workers(self, reset_mask: np.ndarray) -> None:
-        observations, infos = self.environments.reset(reset_mask)
-        self._current_observations = observations
-        self._update_current_speeds(infos, reset_mask)
-        for environment_index_value in np.flatnonzero(reset_mask):
-            environment_index = int(environment_index_value)
-            self._active_episodes[environment_index] = self._new_episode(
-                environment_index,
-                vector_worker_info(infos, environment_index),
-            )
-
-    def _new_episode(
-        self, environment_index: int, reset_info: dict[str, Any]
-    ) -> _ActiveEpisode:
-        """
-        Open an episode on whichever circuit the worker just reset onto.
-
-        The worker and its own episode count are carried through to the record
-        because they are what pairs two runs: an episode identity is assigned in
-        completion order and means something different in each run.
-        """
-        identity = self.counters.next_episode_identity
-        self.counters.next_episode_identity += 1
-        worker_episode_index = self._worker_episode_counts[environment_index]
-        self._worker_episode_counts[environment_index] += 1
-        geometry = reset_info["circuit_geometry"]
-        if not isinstance(geometry, CircuitGeometrySummaryRecord):
-            raise TypeError("A worker reset must report its circuit geometry.")
-        return _ActiveEpisode(
-            identity,
-            str(reset_info["circuit_identity"]),
-            int(reset_info["track_seed"]),
-            geometry,
-            environment_index,
-            worker_episode_index,
-        )
-
-    def _record_active_step(
-        self,
-        environment_index: int,
-        action: np.ndarray,
-        reward: float,
-        info: dict[str, Any],
-    ) -> None:
-        active = self._active_episodes[environment_index]
-        active.speeds.append(float(self._current_speeds[environment_index]))
-        active.throttles.append(float(action[0]))
-        active.absolute_steering.append(abs(float(action[1])))
-        active.step_index += 1
-        active.undiscounted_return += reward
-        progress = float(info["episode_progress"]) / float(info["track_length"])
-        active.maximum_progress = max(active.maximum_progress, progress)
-
-    def _finish_training_episode(
-        self,
-        environment_index: int,
-        terminated: bool,
-        truncated: bool,
-        info: dict[str, Any],
-    ) -> None:
-        active = self._active_episodes[environment_index]
-        outcome = _outcome(terminated, truncated, info)
-        self.episode_records.append(
-            EpisodeRecord(
-                run_category=self.run_category,
-                scope=MetricScope.TRAINING,
-                episode_index=active.identity,
-                outcome=outcome,
-                undiscounted_return=active.undiscounted_return,
-                training_target_total=None,
-                interactions=active.step_index,
-                simulated_time=float(info["elapsed_time"]),
-                final_progress=float(info["episode_progress"])
-                / float(info["track_length"]),
-                maximum_progress=active.maximum_progress,
-                lap_time=(
-                    float(info["elapsed_time"])
-                    if outcome is EpisodeOutcome.COMPLETED
-                    else None
-                ),
-                training_interactions=self.counters.training_interactions,
-                evaluation_interactions=self.counters.evaluation_interactions,
-                circuit_identity=active.circuit_identity,
-                root_identity=self.root_identity,
-                observation_type=self.observation_type.value,
-                circuit_seed=active.circuit_seed,
-                circuit_split=(
-                    CircuitSplit.TRAINING.value
-                    if self.training_circuit_schedule is not None
-                    else self.circuit_split
-                ),
-                collection_worker=active.worker_index,
-                worker_episode_index=active.worker_episode_index,
-                speed=_summary(active.speeds),
-                throttle=_summary(active.throttles),
-                absolute_steering=_summary(active.absolute_steering),
-                positive_throttle_fraction=float(
-                    np.mean(np.asarray(active.throttles) > 0)
-                ),
-                braking_fraction=float(np.mean(np.asarray(active.throttles) < 0)),
-                near_saturated_steering_fraction=(
-                    None
-                    if self.near_saturated_steering_threshold is None
-                    else float(
-                        np.mean(
-                            np.asarray(active.absolute_steering)
-                            >= self.near_saturated_steering_threshold
-                        )
-                    )
-                ),
-                circuit_geometry=active.circuit_geometry,
-            )
-        )
-        self.counters.finished_episodes += 1
-
-    def _state_dict(self) -> dict[str, Any]:
+    def _state_sections(self) -> dict[str, Any]:
         return {
-            "engine_state_version": self.STATE_VERSION,
-            "engine_configuration": self._engine_configuration(),
             "agent": self.agent.state_dict(),
             "normalizer": self.normalizer.state().to_dict(),
-            "counters": asdict(self.counters),
-            "current_observations": self._current_observations.tolist(),
-            "current_speeds": self._current_speeds.tolist(),
-            # Kept as records rather than plain dictionaries: an active episode
-            # now carries its circuit's geometry summary, which `asdict` would
-            # flatten into a shape the record type could not be rebuilt from.
-            "active_episodes": list(self._active_episodes),
-            "worker_episode_counts": list(self._worker_episode_counts),
+            "training_interactions": self.training_interactions,
+            "optimizer_updates": self.optimizer_updates,
+            "stepping": self.collector.state(),
+            "recorder": self.recorder.state(),
+            "schedule": self.schedule.state(),
             "vector_environment": self.environments.state(),
             "parked": self._parked.tolist(),
             "collector": self._collector_state(),
-            "history": {
-                "episode_records": self.episode_records,
-                "evaluations": self.evaluations,
-                "updates": self.updates,
-            },
-            "timing": {
-                "collection": self._collection_seconds,
-                "optimization": self._optimization_seconds,
-                "evaluation": self._evaluation_seconds,
-                "persistence": self._persistence_seconds,
-            },
+            "updates": self.updates,
+            "timing": self.timer.state(),
         }
 
-    def _restore_state_dict(self, state: dict[str, Any]) -> None:
-        if state.get("engine_state_version") != self.STATE_VERSION:
-            raise ValueError(
-                "checkpoint has an incompatible training-engine state version."
-            )
-        if _mapping(state, "engine_configuration") != self._engine_configuration():
-            raise ValueError(
-                "checkpoint configuration does not match this training engine."
-            )
-        self.agent.load_state_dict(_mapping(state, "agent"))
-        normalizer_state = _mapping(state, "normalizer")
+    def _restore_sections(self, state: dict[str, Any]) -> None:
+        self.agent.load_state_dict(mapping(state, "agent"))
+        normalizer_state = mapping(state, "normalizer")
         self.normalizer.restore(
             ObservationNormalizerStateRecord(
                 count=int(normalizer_state["count"]),
@@ -841,32 +552,19 @@ class OnPolicyTrainingEngine:
                 ),
             )
         )
-        self.counters = TrainingCounters(**_mapping(state, "counters"))
-        self._current_observations = np.asarray(
-            state["current_observations"], dtype=np.float32
-        )
-        self._current_speeds = np.asarray(state["current_speeds"], dtype=np.float64)
-        self._active_episodes = _typed_list(state, "active_episodes", _ActiveEpisode)
-        self._worker_episode_counts = [
-            int(value) for value in state["worker_episode_counts"]
-        ]
+        self.training_interactions = int(state["training_interactions"])
+        self.optimizer_updates = int(state["optimizer_updates"])
+        self.collector.restore(mapping(state, "stepping"))
+        self.recorder.restore(mapping(state, "recorder"))
+        self.schedule.restore(mapping(state, "schedule"))
         vector_state = state["vector_environment"]
         if not isinstance(vector_state, VectorRacingState):
             raise TypeError("checkpoint vector environment state is invalid.")
         self.environments.restore(vector_state)
         self._parked = np.asarray(state["parked"], dtype=np.bool_)
-        self._restore_collector(_mapping(state, "collector"))
-        history = _mapping(state, "history")
-        self.episode_records = _typed_list(history, "episode_records", EpisodeRecord)
-        self.evaluations = _typed_list(
-            history, "evaluations", DeterministicEvaluationRecord
-        )
-        self.updates = _typed_list(history, "updates", TrainingUpdate)
-        timing = _mapping(state, "timing")
-        self._collection_seconds = float(timing["collection"])
-        self._optimization_seconds = float(timing["optimization"])
-        self._evaluation_seconds = float(timing["evaluation"])
-        self._persistence_seconds = float(timing["persistence"])
+        self._restore_collector(mapping(state, "collector"))
+        self.updates = typed_list(state, "updates", TrainingUpdate)
+        self.timer.restore(mapping(state, "timing"))
 
     def _engine_configuration(self) -> dict[str, Any]:
         # A scheduled run has no single circuit, so identifying it by the
@@ -887,8 +585,8 @@ class OnPolicyTrainingEngine:
             "collection_mode": self.agent.collection_mode.value,
             "collection_size": self.agent.collection_size,
             "environment_workers": self.execution_config.environment_workers,
-            "evaluation_interval": self.evaluation_interval,
-            "evaluation_seed": self.evaluation_seed,
+            "evaluation_interval": self.schedule.interval,
+            "evaluation_seed": self.schedule.evaluation_seed,
             "root_identity": self.root_identity,
             "circuit_identity": self.circuit_identity,
             "circuit_split": self.circuit_split,
@@ -958,33 +656,6 @@ class OnPolicyTrainingEngine:
         self._rollout_buffer.restore(steps, previous)
 
 
-def _check_evaluation_observations(
-    circuits: Sequence[EvaluationCircuit],
-    environment: RacingEnv,
-) -> None:
-    """
-    Refuse circuits that would show the policy a different representation.
-
-    Evaluation circuits are prepared by the caller, so nothing otherwise stops a
-    LiDAR run from being measured on Frenet environments. That would not crash:
-    the normalizer would reject the width, but only after a full run's training.
-    Checking the first circuit up front makes it a startup error instead.
-    """
-    for circuit in circuits[:1]:
-        evaluation_environment = circuit.factory()
-        try:
-            expected = environment.observation_space
-            actual = evaluation_environment.observation_space
-            if actual.shape != expected.shape:
-                raise ValueError(
-                    "Evaluation circuits must use the training observation type: "
-                    f"training observes {expected.shape}, "
-                    f"circuit {circuit.identity!r} observes {actual.shape}."
-                )
-        finally:
-            evaluation_environment.close()
-
-
 def _resolve_evaluation_circuits(
     circuits: Sequence[EvaluationCircuit] | None,
     factory: Callable[[], RacingEnv] | None,
@@ -1032,40 +703,6 @@ def _resolve_generators(
     return values
 
 
-def _summary(values: list[float]) -> ScalarSummaryRecord:
-    """
-    Summarize one non-empty recorded training signal with population dispersion.
-    """
-    array = np.asarray(values, dtype=np.float64)
-    return ScalarSummaryRecord(
-        mean=float(np.mean(array)),
-        standard_deviation=float(np.std(array)),
-        minimum=float(np.min(array)),
-        maximum=float(np.max(array)),
-        quantiles={
-            "q25": float(np.quantile(array, 0.25)),
-            "q50": float(np.quantile(array, 0.50)),
-            "q75": float(np.quantile(array, 0.75)),
-            "q90": float(np.quantile(array, 0.90)),
-        },
-    )
-
-
-def _outcome(terminated: bool, truncated: bool, info: dict[str, Any]) -> EpisodeOutcome:
-    """
-    Convert an explicit racing lifecycle boundary into a metrics outcome.
-    """
-    if terminated and bool(info["lap_completed"]):
-        return EpisodeOutcome.COMPLETED
-    if terminated and bool(info["collision"]):
-        return EpisodeOutcome.CRASHED
-    if terminated and bool(info["stalled"]):
-        return EpisodeOutcome.STALLED
-    if truncated:
-        return EpisodeOutcome.TIME_LIMIT
-    raise ValueError("Terminal transition lacks a supported RacingEnv outcome.")
-
-
 def _transition_to_dict(row: TrainingTransition) -> dict[str, Any]:
     """
     Serialize one immutable rollout row without retaining framework objects.
@@ -1093,25 +730,3 @@ def _transition_from_dict(data: dict[str, Any]) -> TrainingTransition:
     Reconstruct one immutable rollout row from checkpoint-safe primitives.
     """
     return TrainingTransition(**data)
-
-
-def _mapping(state: dict[str, Any], name: str) -> dict[str, Any]:
-    """
-    Read one required mapping from a checkpoint with a concise failure mode.
-    """
-    value = state.get(name)
-    if not isinstance(value, dict):
-        raise TypeError(f"checkpoint field {name!r} must be a dictionary.")
-    return value
-
-
-def _typed_list[T](state: dict[str, Any], name: str, item_type: type[T]) -> list[T]:
-    """
-    Restore one required list only when every semantic record has the expected type.
-    """
-    value = state.get(name)
-    if not isinstance(value, list) or not all(
-        isinstance(item, item_type) for item in value
-    ):
-        raise TypeError(f"checkpoint field {name!r} has invalid record types.")
-    return value
