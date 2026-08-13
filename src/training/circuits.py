@@ -10,10 +10,13 @@ generator consumed is an implementation detail recorded beside it.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import partial
+from hashlib import sha256
+from pathlib import Path
 
 import numpy as np
 
@@ -95,12 +98,45 @@ class EvaluationCircuit:
     factory: Callable[[], RacingEnv]
 
 
+SPLIT_NAMESPACES: dict[CircuitSplit, SeedNamespace] = {
+    CircuitSplit.DEVELOPMENT: SeedNamespace.MULTI_CIRCUIT_DEVELOPMENT,
+    CircuitSplit.TRAINING: SeedNamespace.EXPERIMENT_2_TRAINING_TRACK,
+    # A training reference is a circuit the run actually trained on, revisited
+    # deterministically at the end. It is drawn from the training namespace by
+    # construction, and it is the only split that is deliberately in-sample:
+    # the gap between it and the test split is what generalization means here.
+    CircuitSplit.TRAINING_REFERENCE: SeedNamespace.EXPERIMENT_2_TRAINING_TRACK,
+    CircuitSplit.VALIDATION: SeedNamespace.EXPERIMENT_2_VALIDATION_TRACK,
+    CircuitSplit.TEST: SeedNamespace.EXPERIMENT_2_TEST_TRACK,
+}
+
+HELD_OUT_SPLITS = (CircuitSplit.VALIDATION, CircuitSplit.TEST)
+
+
+def circuit_geometry_checksum(track: TrackWithGeometry) -> str:
+    """
+    Fingerprint one circuit's sampled geometry.
+
+    A circuit is named by an identity and rebuilt from the generator on demand
+    rather than stored, which is only safe while the generator is frozen. The
+    checksum turns a change in the generator into a loud mismatch instead of a
+    silent change of what "validation circuit 3" means.
+    """
+    sampled = track.track
+    digest = sha256()
+    for values in (sampled.x, sampled.y, sampled.curvature):
+        digest.update(np.ascontiguousarray(values, dtype=np.float64).tobytes())
+    digest.update(np.float64(sampled.width).tobytes())
+    return digest.hexdigest()
+
+
 def generated_evaluation_circuits(
     identities: Iterable[int],
     *,
-    namespace: SeedNamespace,
     split: CircuitSplit,
     environment_config: EnvironmentConfig,
+    namespace: SeedNamespace | None = None,
+    expected_checksums: dict[str, str] | None = None,
 ) -> tuple[EvaluationCircuit, ...]:
     """
     Prepare one evaluation circuit per identity in a split.
@@ -112,16 +148,25 @@ def generated_evaluation_circuits(
     Evaluation always launches from the canonical start line, so the returned
     environments never sample a start pose regardless of the training setting.
     """
+    resolved_namespace = namespace or SPLIT_NAMESPACES[split]
     evaluation_config = replace(
         environment_config, start=StartStateConfig(randomized=False)
     )
     circuits: list[EvaluationCircuit] = []
     for identity in identities:
         track = TrackWithGeometry.generate(
-            circuit_track_seed(namespace, identity),
+            circuit_track_seed(resolved_namespace, identity),
             track_config=environment_config.track,
             vehicle_config=environment_config.vehicle,
         )
+        if expected_checksums is not None:
+            expected = expected_checksums.get(str(identity))
+            actual = circuit_geometry_checksum(track)
+            if expected != actual:
+                raise ValueError(
+                    f"{split.value} circuit {identity} no longer matches the frozen "
+                    "split: the generator or its configuration has changed."
+                )
         circuits.append(
             EvaluationCircuit(
                 identity=str(identity),
@@ -130,3 +175,28 @@ def generated_evaluation_circuits(
             )
         )
     return tuple(circuits)
+
+
+def load_split_circuits(
+    manifest_path: str | Path,
+    split: CircuitSplit,
+    *,
+    environment_config: EnvironmentConfig,
+) -> tuple[EvaluationCircuit, ...]:
+    """
+    Rebuild one frozen split, refusing to proceed if its geometry has drifted.
+    """
+    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    entry = manifest["splits"].get(split.value)
+    if entry is None:
+        raise ValueError(f"The split manifest does not declare {split.value}.")
+    return generated_evaluation_circuits(
+        (int(circuit["identity"]) for circuit in entry["circuits"]),
+        split=split,
+        environment_config=environment_config,
+        namespace=SeedNamespace[entry["namespace"]],
+        expected_checksums={
+            str(circuit["identity"]): str(circuit["geometry_checksum"])
+            for circuit in entry["circuits"]
+        },
+    )

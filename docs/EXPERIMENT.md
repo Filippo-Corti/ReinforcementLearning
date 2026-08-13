@@ -666,6 +666,21 @@ learning-curve positions. Thirty-two test circuits provide a broader final
 distribution. These counts are explicit project resource choices, not a formal
 power calculation. Every generated integer seed and geometry summary is stored.
 
+The splits are committed in `tracks/experiment_2_splits.json`, which records for
+each circuit its identity, the generator seed that identity denotes, a checksum
+of its sampled geometry, and its length and curvature summary. The circuits
+themselves are not stored: they are rebuilt from the frozen generator on demand,
+and the checksum makes any change to the generator a loud failure rather than a
+silent change in what a circuit identity means.
+
+The **training-reference** circuits are the exception to the split namespaces.
+They are circuits the run itself trained on, taken in per-worker episode order
+and revisited deterministically after training, so they carry the training
+namespace by construction. They are deliberately in-sample: the gap between them
+and the test circuits is what this experiment calls generalization. Because they
+are selected by per-worker episode order, a paired root's two runs revisit the
+same circuits.
+
 The Frenet actor and critic receive
 
 $$
@@ -794,7 +809,12 @@ Generalization and efficiency outcomes are:
 - validation learning curves against training interactions;
 - interactions and time to the validation convergence threshold;
 - completion, crash and progress stratified by predeclared length and curvature
-  bins;
+  bins, whose edges are the tertiles of the eight development circuits and are
+  recorded in the split commitment. They are chosen from circuits that exist to
+  be looked at before the experiment, never from the results they describe. The
+  curvature statistic is the 90th percentile of absolute sampled curvature: over
+  half of every generated circuit is straight, so the median is exactly zero
+  everywhere and separates nothing;
 - per-circuit paired Frenet-minus-LiDAR differences; and
 - runtime, throughput, memory and PPO optimization diagnostics.
 

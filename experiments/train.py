@@ -76,6 +76,7 @@ def run_reinforce_training(
     training_circuit_schedule: TrainingCircuitSchedule | None = None,
     evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
     final_evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    training_reference_circuits: int = 0,
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
@@ -127,6 +128,7 @@ def run_reinforce_training(
         training_circuit_schedule=training_circuit_schedule,
         evaluation_circuits=evaluation_circuits,
         final_evaluation_circuits=final_evaluation_circuits,
+        training_reference_circuits=training_reference_circuits,
         observation=observation,
         learning_rates={"actor_learning_rate": actor_learning_rate},
         agent_factory=lambda observation_dimensions, streams: ReinforceAgent(
@@ -171,6 +173,7 @@ def run_a2c_training(
     training_circuit_schedule: TrainingCircuitSchedule | None = None,
     evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
     final_evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    training_reference_circuits: int = 0,
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
@@ -224,6 +227,7 @@ def run_a2c_training(
         training_circuit_schedule=training_circuit_schedule,
         evaluation_circuits=evaluation_circuits,
         final_evaluation_circuits=final_evaluation_circuits,
+        training_reference_circuits=training_reference_circuits,
         observation=observation,
         learning_rates={
             "actor_learning_rate": actor_learning_rate,
@@ -277,6 +281,7 @@ def run_ppo_training(
     training_circuit_schedule: TrainingCircuitSchedule | None = None,
     evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
     final_evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    training_reference_circuits: int = 0,
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
 ) -> OnPolicyTrainingEngine:
@@ -330,6 +335,7 @@ def run_ppo_training(
         training_circuit_schedule=training_circuit_schedule,
         evaluation_circuits=evaluation_circuits,
         final_evaluation_circuits=final_evaluation_circuits,
+        training_reference_circuits=training_reference_circuits,
         observation=observation,
         learning_rates={
             "actor_learning_rate": actor_learning_rate,
@@ -382,6 +388,7 @@ def _run_training(
     training_circuit_schedule: TrainingCircuitSchedule | None = None,
     evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
     final_evaluation_circuits: Sequence[EvaluationCircuit] | None = None,
+    training_reference_circuits: int = 0,
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     learning_rates: dict[str, float],
     agent_factory: Callable[[int, RunSeedStreams], ParameterizedOnPolicyAgent],
@@ -407,7 +414,13 @@ def _run_training(
     run = RunDirectory.create(
         run_path,
         category=run_category,
-        run_id=f"{algorithm.value}-{actor_config.name}-seed-{seed}",
+        # Every dimension the design matrices vary appears here. Experiment 2
+        # runs two observations at one algorithm, actor and root, so leaving the
+        # observation out gave its paired runs the same identity, and analysis
+        # tables keyed by run identity kept only whichever loaded last.
+        run_id=(
+            f"{algorithm.value}-{actor_config.name}-{observation.value}-seed-{seed}"
+        ),
         manifest={
             "purpose": f"{algorithm.value}_training",
             "algorithm": algorithm.value,
@@ -506,6 +519,12 @@ def _run_training(
     try:
         _train_with_checkpoints(engine, training_config, run.path / "checkpoints")
         engine.save(run.path / "checkpoints" / "final.pt")
+        if training_reference_circuits:
+            # An in-sample reference: circuits this run trained on, revisited
+            # deterministically so the gap to held-out circuits is measurable.
+            engine.evaluate_circuits(
+                engine.training_reference_circuits(training_reference_circuits)
+            )
         if final_evaluation_circuits:
             # Held-out circuits are opened here and nowhere else: after the last
             # optimizer step and the saved final policy, so nothing they reveal

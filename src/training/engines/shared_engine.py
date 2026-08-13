@@ -37,7 +37,12 @@ from ..buffers import (
     VectorRolloutBuffer,
 )
 from ..checkpoints import load_checkpoint, save_checkpoint
-from ..circuits import CircuitSplit, EvaluationCircuit, TrainingCircuitSchedule
+from ..circuits import (
+    CircuitSplit,
+    EvaluationCircuit,
+    TrainingCircuitSchedule,
+    generated_evaluation_circuits,
+)
 from ..evaluation import evaluate_deterministic
 from ..normalization import RunningObservationNormalizer
 from ..vector_environment import (
@@ -565,6 +570,41 @@ class OnPolicyTrainingEngine:
         if self._reinforce_batch is not None:
             self._reinforce_batch = []
             self._start_reinforce_wave()
+
+    def training_reference_circuits(self, count: int) -> tuple[EvaluationCircuit, ...]:
+        """
+        Name circuits this run actually trained on, for an in-sample reference.
+
+        They are taken in per-worker episode order rather than in the order
+        episodes happened to finish, so two paired runs name the same circuits
+        even though they completed episodes at different times.
+        """
+        if self.training_circuit_schedule is None:
+            raise ValueError("Only a scheduled run has training circuits to revisit.")
+        ordered = sorted(
+            self.episode_records,
+            key=lambda record: (
+                record.worker_episode_index or 0,
+                record.collection_worker or 0,
+            ),
+        )
+        identities: list[str] = []
+        for record in ordered:
+            if record.circuit_identity not in identities:
+                identities.append(record.circuit_identity)
+            if len(identities) == count:
+                break
+        if len(identities) < count:
+            raise ValueError(
+                f"The run raced {len(identities)} circuits, fewer than the {count} "
+                "requested as a training reference."
+            )
+        return generated_evaluation_circuits(
+            (int(identity) for identity in identities),
+            split=CircuitSplit.TRAINING_REFERENCE,
+            environment_config=self.environment.config,
+            namespace=self.training_circuit_schedule.namespace,
+        )
 
     def evaluate_circuits(
         self, circuits: Sequence[EvaluationCircuit]

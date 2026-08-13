@@ -169,7 +169,28 @@ def load_recorded_runs(
                 data_checksum=_run_data_checksum(directory),
             )
         )
+    _reject_duplicate_identities(runs)
     return tuple(sorted(runs, key=_run_sort_key))
+
+
+def _reject_duplicate_identities(runs: list[RecordedRun]) -> None:
+    """
+    Refuse an analysis whose runs cannot be told apart.
+
+    Nearly every table indexes runs by identity, so two runs sharing one would
+    not produce a visible conflict: the later would replace the earlier and the
+    output would quietly describe fewer runs than were loaded.
+    """
+    seen: dict[str, Path] = {}
+    for run in runs:
+        identity = run.directory.run_id
+        previous = seen.get(identity)
+        if previous is not None:
+            raise RunRecordingError(
+                f"two runs share the identity {identity!r}: "
+                f"{previous} and {run.directory.path}."
+            )
+        seen[identity] = run.directory.path
 
 
 def run_inventory_rows(runs: tuple[RecordedRun, ...]) -> list[dict[str, Any]]:
