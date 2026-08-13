@@ -1870,3 +1870,75 @@ three. It now checks the same three.
 `fix: damp the reference controller's lateral loop [ai]`,
 `fix: restore the static checks CI runs [ai]`,
 `docs: record the recalibrated learning rates [ai]`.
+
+## 2026-08-13 — Variance instrumentation and pre-experiment checks
+
+**Task**: Prepare everything Experiment 1 depends on, and measure the quantity
+the algorithms are supposed to differ on.
+
+**Gradient-estimator dispersion.** Nothing recorded so far could show estimator
+variance. A gradient norm describes one averaged estimate; it says nothing about
+how far an equally sized second sample would land from it, which is exactly what
+a learned baseline is meant to reduce. Each update now splits its batch into
+disjoint sub-batches of a fixed 256 transitions, takes the actor gradient of
+each, and records their signal-to-noise ratio and mean pairwise cosine
+similarity. The size is fixed because estimator variance falls as one over the
+sample count, so only equal-sized samples compare. Sub-batches are strided, which
+needs no random draw and so consumes no seeded stream, and gradients are taken
+through `torch.autograd.grad`, leaving the optimizer's buffers untouched.
+
+Measured at 60,000 interactions: REINFORCE cosine `-0.011`, A2C `+0.079`, PPO
+`+0.100`. REINFORCE's sub-batch gradients are essentially orthogonal, which is
+the textbook high-variance claim measured on this task. Two cautions are recorded
+in `EXPERIMENT.md`: the ratio is dominated by the largest sub-batch and
+REINFORCE's magnitudes are heavy-tailed, so the cosine is the more reliable
+summary; and the probe is taken before any optimizer step, where PPO's ratio is
+one and its surrogate reduces to A2C's estimator, so it separates REINFORCE from
+the baselined pair rather than A2C from PPO.
+
+**PPO sample reuse does not cause the control chatter.** Two 2,000,000-interaction
+runs differing only in optimization epochs:
+
+| epochs | lap | throttle chatter | steering chatter | final log sigma |
+|---|---|---|---|---|
+| 1 | `24.20 s` | `0.073` | `1.040` | `-0.004`, `-0.003` |
+| 4 | `23.08 s` | `0.058` | `0.262` | `-0.013`, `-0.002` |
+
+Chatter is the mean absolute step-to-step change of each control in the final
+deterministic lap. Reducing reuse made steering chatter four times *worse* and
+the lap slower, so the hypothesis is refuted rather than supported. The
+exploration scale pressed against its bound under both, so epochs do not explain
+that either.
+
+What the two runs do isolate is that epochs are the wrong variable. PPO at one
+epoch still takes 32 optimizer steps per rollout, on minibatches of 64, where A2C
+takes a single step on all 2048 transitions and never approaches the bound. The
+remaining candidate is therefore the minibatch schedule rather than reuse. Four
+epochs are kept, being better on both measures.
+
+**Explained variance at the final update is not usable.** A2C reported `-0.018`
+and PPO exactly `0.0`, which looked like broken critics. The final update is a
+short remainder rollout at the budget boundary, and by then the policy laps
+consistently, so its value targets barely vary: standard deviations of `0.31` and
+`0.96` against means near `66` and `200`. Explained variance divides residual
+variance by target variance, so it is noise over noise there; PPO's exactly-zero
+reading is a critic predicting the target mean. The curve is the meaningful
+object, and PPO read `0.68` mid-run.
+
+**Pre-experiment checks.** The near-saturated steering threshold is frozen at
+`0.9` in configuration rather than left absent, and `experiments/train.py` no
+longer overwrites it with `None`. `tracks/experiment_1.json` is the seed-`0`
+circuit, chosen by inspection: `535 m`, 58.9% straight, eight corners, tightest
+`12.0 m`. The learning rates were calibrated on this same circuit, which is
+recorded as a limitation. All nine algorithm and actor-size paths execute at the
+reduced budget, the first time the `(32, 32)` and `(256, 256)` actors have run at
+all, and the analysis path regenerates every table and figure from them. That
+step immediately earned its place: the analysis requires at least three
+evaluation checkpoints, which a two-checkpoint validation does not provide.
+
+**Files**: `src/agents/`, `src/configs/training.py`, `src/utils/plotting.py`,
+`experiments/train.py`, `tests/`, `tracks/experiment_1.json`,
+`docs/EXPERIMENT.md`, `docs/DIARY.md`.
+
+**Commits**: `feature: measure gradient-estimator dispersion [ai]`,
+`feature: plot gradient dispersion beside the critic fit [ai]`.
