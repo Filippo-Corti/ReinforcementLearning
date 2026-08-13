@@ -27,9 +27,12 @@ from .circuits import (
     TrainingCircuitSchedule,
     circuit_track_seed,
 )
-from .engines.shared_engine import (
-    OnPolicyTrainingEngine,
+from .engines import (
+    A2CTrainingEngine,
+    PPOTrainingEngine,
+    ReinforceTrainingEngine,
     TrainingCounters,
+    TrainingEngine,
     TrainingRunState,
     TrainingUpdate,
 )
@@ -47,6 +50,7 @@ from .vector_environment import (
 __all__ = [
     "CHECKPOINT_SCHEMA_VERSION",
     "CIRCUIT_IDENTITY_LIMIT",
+    "A2CTrainingEngine",
     "CheckpointError",
     "CircuitSplit",
     "EvaluationCircuit",
@@ -54,13 +58,15 @@ __all__ = [
     "GAETargets",
     "OnPolicyRollout",
     "OnPolicyTensors",
-    "OnPolicyTrainingEngine",
+    "PPOTrainingEngine",
     "PersistentRacingVectorEnv",
     "RacingWorkerState",
     "ReinforceEpisodeBuffer",
+    "ReinforceTrainingEngine",
     "RunningObservationNormalizer",
     "TrainingCircuitSchedule",
     "TrainingCounters",
+    "TrainingEngine",
     "TrainingRunState",
     "TrainingTransition",
     "TrainingUpdate",

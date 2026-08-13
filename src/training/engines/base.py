@@ -1,7 +1,17 @@
-"""Shared parallel collection, update, evaluation, timing, and resume lifecycle."""
+"""Everything a training engine needs that is not its collection strategy.
+
+Each algorithm owns its training loop, in its own file, written in its own
+terms. What is not about the algorithm — spawning workers, recording an episode,
+evaluating a checkpoint, timing, saving and resuming — is the same work three
+times over, so it is assembled here and written once.
+
+Nothing in this class is a loop. Reading `PPOTrainingEngine.train` tells you
+what PPO does; reading this tells you where its records go.
+"""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,12 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from agents.types import (
-    AgentUpdateInput,
-    AgentUpdateOutput,
-    CollectionMode,
-    OnPolicyAgent,
-)
+from agents.types import AgentUpdateOutput, OnPolicyAgent
 from configs import ExecutionConfig, ObservationRepresentation
 from envs.racing import RacingEnv
 from recording.records import (
@@ -25,11 +30,6 @@ from recording.records import (
     TimingRecord,
 )
 
-from ..buffers import (
-    OnPolicyRollout,
-    TrainingTransition,
-    VectorRolloutBuffer,
-)
 from ..circuits import (
     CircuitSplit,
     EvaluationCircuit,
@@ -39,13 +39,10 @@ from ..circuits import (
 from ..normalization import RunningObservationNormalizer
 from ..vector_environment import PersistentRacingVectorEnv, VectorRacingState
 from .checkpointing import EngineCheckpoint, mapping, typed_list
-from .episode_recording import EpisodeRecorder, episode_outcome
+from .episode_recording import EpisodeRecorder
 from .evaluation_schedule import EvaluationSchedule, check_evaluation_observations
 from .stepping import StepCollector
 from .timing import TrainingTimer
-
-# Re-exported for the tests and callers that assert on outcome classification.
-_outcome = episode_outcome
 
 
 @dataclass(slots=True)
@@ -102,27 +99,24 @@ class TrainingUpdate:
     optimization_duration: float
 
 
-class OnPolicyTrainingEngine:
+class TrainingEngine(ABC):
     """
-    Run one on-policy agent through persistent parallel racing workers.
+    Hold the machinery every on-policy engine needs, and none of their loops.
 
     Neural inference is batched in the parent process. Environment dynamics run
     in separately spawned CPU processes that persist across rollouts, updates,
-    evaluations, checkpoints, and repeated calls to `train`. The engine keeps
-    complete REINFORCE trajectories separate and fixed actor-critic rollouts in
-    time-by-worker form.
-
-    What is shared with every other engine — stepping the workers, recording an
-    episode, evaluating a checkpoint, timing, checkpointing — is delegated to
-    collaborators, so what remains here is the collection strategy itself.
+    evaluations, checkpoints, and repeated calls to `train`.
 
     Fields:
         * agent: Owner of policy/value models, optimizers, and sampling streams.
-        * environment: Unstepped prototype used for fixed configuration and geometry.
+        * environment: Unstepped prototype fixing configuration and observation width.
         * environments: Persistent process-based training environment pool.
         * normalizer: Training-updated and evaluation-frozen observation normalizer.
-        * execution_config: Device, worker, threading, and deterministic settings.
-        * run_category: Run namespace carried by emitted metric summaries.
+        * collector: Steps the workers and turns each step into transitions.
+        * recorder: Accumulates per-worker episodes and emits their records.
+        * schedule: Evaluates the deterministic policy on a set of circuits.
+        * timer: Non-overlapping component durations.
+        * updates: One entry per completed optimizer update.
     """
 
     def __init__(
@@ -148,7 +142,7 @@ class OnPolicyTrainingEngine:
         near_saturated_steering_threshold: float | None = None,
     ) -> None:
         """
-        Spawn workers once and initialize one active episode in every process.
+        Spawn workers once and open one episode in every process.
         """
         if agent.collection_size <= 0:
             raise ValueError("An on-policy agent collection size must be positive.")
@@ -166,13 +160,13 @@ class OnPolicyTrainingEngine:
         if sampling_generators is not None and len(sampling_generators) != worker_count:
             raise ValueError("One policy-sampling stream is required per worker.")
 
-        reset_generators = _resolve_generators(
+        reset_generators = resolve_generators(
             environment_reset_generators,
             environment_reset_generator,
             worker_count,
             "reset",
         )
-        selection_generators = _resolve_generators(
+        selection_generators = resolve_generators(
             track_selection_generators,
             None,
             worker_count,
@@ -207,7 +201,7 @@ class OnPolicyTrainingEngine:
             near_saturated_steering_threshold=near_saturated_steering_threshold,
         )
         self.schedule = EvaluationSchedule(
-            _resolve_evaluation_circuits(
+            resolve_evaluation_circuits(
                 evaluation_circuits,
                 evaluation_environment_factory,
                 identity=self.circuit_identity,
@@ -241,19 +235,21 @@ class OnPolicyTrainingEngine:
             worker_count=worker_count,
         )
         self.checkpoint = EngineCheckpoint(self._engine_configuration())
+        self.parked = np.zeros(worker_count, dtype=np.bool_)
+        self._setup()
 
-        self._reinforce_active: list[list[TrainingTransition]] | None = None
-        self._reinforce_batch: list[OnPolicyRollout] | None = None
-        self._parked = np.zeros(worker_count, dtype=np.bool_)
-        self._rollout_buffer: VectorRolloutBuffer | None = None
-        if agent.collection_mode is CollectionMode.COMPLETE_EPISODES:
-            self._reinforce_active = [[] for _ in range(worker_count)]
-            self._reinforce_batch = []
-            self._parked = ~self._reinforce_wave_mask()
-        else:
-            self._rollout_buffer = VectorRolloutBuffer(
-                agent.collection_size, worker_count
-            )
+    @abstractmethod
+    def _setup(self) -> None:
+        """
+        Create whatever the algorithm collects into, once the workers exist.
+        """
+
+    @property
+    def worker_count(self) -> int:
+        """
+        Return the number of persistent collection workers.
+        """
+        return self.execution_config.environment_workers
 
     @property
     def evaluation_interval(self) -> int | None:
@@ -297,39 +293,13 @@ class OnPolicyTrainingEngine:
             next_evaluation_identity=self.schedule.next_evaluation_identity,
         )
 
+    @abstractmethod
     def train(
         self, interaction_budget: int, *, finalize: bool = True
     ) -> TrainingRunState:
         """
         Collect and optimize until the exact requested interaction budget is reached.
         """
-        if interaction_budget < self.training_interactions:
-            raise ValueError("Training budget cannot be below consumed interactions.")
-        while self.training_interactions < interaction_budget:
-            available = ~self._parked
-            maximum_rows = interaction_budget - self.training_interactions
-            if self._rollout_buffer is not None:
-                maximum_rows = min(
-                    maximum_rows, self._rollout_buffer.remaining_capacity
-                )
-            if self.schedule.interval is not None:
-                distance = self.schedule.interval - (
-                    self.training_interactions % self.schedule.interval
-                )
-                maximum_rows = min(maximum_rows, distance)
-            active_indices = np.flatnonzero(available)[:maximum_rows]
-            if active_indices.size == 0:
-                self._update_ready_collection(final=False)
-                if self._reinforce_batch is not None and self._parked.all():
-                    self._start_reinforce_wave()
-                continue
-            active = np.zeros(self.execution_config.environment_workers, dtype=np.bool_)
-            active[active_indices] = True
-            self._collect_step(active)
-            self._update_ready_collection(final=False)
-            self._evaluate_if_due()
-        self._update_ready_collection(final=finalize)
-        return self.state()
 
     def state(self) -> TrainingRunState:
         """
@@ -348,16 +318,54 @@ class OnPolicyTrainingEngine:
         Atomically save every worker and collector state for exact resume.
         """
         with self.timer.persisting():
-            self.checkpoint.save(path, self._state_sections())
+            self.checkpoint.save(
+                path,
+                {
+                    "agent": self.agent.state_dict(),
+                    "normalizer": self.normalizer.state().to_dict(),
+                    "training_interactions": self.training_interactions,
+                    "optimizer_updates": self.optimizer_updates,
+                    "stepping": self.collector.state(),
+                    "recorder": self.recorder.state(),
+                    "schedule": self.schedule.state(),
+                    "vector_environment": self.environments.state(),
+                    "parked": self.parked.tolist(),
+                    "collector": self.collector_state(),
+                    "updates": self.updates,
+                    "timing": self.timer.state(),
+                },
+            )
 
     def restore(self, path: str | Path, *, map_location: str = "cpu") -> None:
         """
         Restore a checkpoint onto equivalent agent and worker instances.
         """
         with self.timer.persisting():
-            self._restore_sections(
-                self.checkpoint.load(path, map_location=map_location)
+            state = self.checkpoint.load(path, map_location=map_location)
+        self.agent.load_state_dict(mapping(state, "agent"))
+        normalizer_state = mapping(state, "normalizer")
+        self.normalizer.restore(
+            ObservationNormalizerStateRecord(
+                count=int(normalizer_state["count"]),
+                sums=tuple(float(value) for value in normalizer_state["sums"]),
+                squared_sums=tuple(
+                    float(value) for value in normalizer_state["squared_sums"]
+                ),
             )
+        )
+        self.training_interactions = int(state["training_interactions"])
+        self.optimizer_updates = int(state["optimizer_updates"])
+        self.collector.restore(mapping(state, "stepping"))
+        self.recorder.restore(mapping(state, "recorder"))
+        self.schedule.restore(mapping(state, "schedule"))
+        vector_state = state["vector_environment"]
+        if not isinstance(vector_state, VectorRacingState):
+            raise TypeError("checkpoint vector environment state is invalid.")
+        self.environments.restore(vector_state)
+        self.parked = np.asarray(state["parked"], dtype=np.bool_)
+        self.restore_collector(mapping(state, "collector"))
+        self.updates = typed_list(state, "updates", TrainingUpdate)
+        self.timer.restore(mapping(state, "timing"))
 
     def close(self) -> None:
         """
@@ -422,149 +430,38 @@ class OnPolicyTrainingEngine:
                 optimization_duration=self.timer.optimization,
             )
 
-    def _evaluate_if_due(self) -> None:
+    def evaluate_if_due(self) -> None:
+        """
+        Evaluate the scheduled circuits when a checkpoint falls exactly here.
+        """
         if self.schedule.due(self.training_interactions):
             self.evaluate_circuits(self.schedule.circuits)
 
-    def _collect_step(self, active: np.ndarray) -> None:
-        with self.timer.collecting():
-            step = self.collector.step(
-                active,
-                training_interactions=self.training_interactions,
-                evaluation_interactions=self.schedule.evaluation_interactions,
-            )
-            self.training_interactions += step.interactions
-
-            reset_mask = np.zeros(
-                self.execution_config.environment_workers, dtype=np.bool_
-            )
-            if self._reinforce_active is not None:
-                for worker_index, transition in enumerate(step.transitions):
-                    if transition is not None:
-                        self._reinforce_active[worker_index].append(transition)
-                for worker_index in step.finished:
-                    self._finish_reinforce_trajectory(worker_index)
-            else:
-                for worker_index in step.finished:
-                    reset_mask[worker_index] = True
-            if self._rollout_buffer is not None:
-                self._rollout_buffer.append_step(step.transitions)
-            if np.any(reset_mask):
-                self.collector.reset_workers(reset_mask)
-
-    def _finish_reinforce_trajectory(self, environment_index: int) -> None:
-        if self._reinforce_active is None or self._reinforce_batch is None:
-            raise RuntimeError("REINFORCE collector was not constructed.")
-        self._reinforce_batch.append(
-            OnPolicyRollout(tuple(self._reinforce_active[environment_index]))
-        )
-        self._reinforce_active[environment_index] = []
-        self._parked[environment_index] = True
-
-    def _reinforce_wave_mask(self) -> np.ndarray:
+    def record_update(self, output: AgentUpdateOutput, duration: float) -> None:
         """
-        Select only the workers the current update batch still has room for.
-
-        The worker count is an execution choice shared with A2C and PPO, while
-        the batch size belongs to REINFORCE, so a batch that needs more
-        trajectories than there are workers is filled over several waves. No
-        optimizer step happens between waves, so one batch still holds
-        trajectories from a single policy.
+        Attach one completed optimizer update to the boundary it ran at.
         """
-        if self._reinforce_batch is None:
-            raise RuntimeError("REINFORCE collector was not constructed.")
-        wave_size = min(
-            self.agent.collection_size - len(self._reinforce_batch),
-            self.execution_config.environment_workers,
-        )
-        wave = np.zeros(self.execution_config.environment_workers, dtype=np.bool_)
-        wave[:wave_size] = True
-        return wave
-
-    def _start_reinforce_wave(self) -> None:
-        """
-        Reset and unpark the workers that collect the next group of trajectories.
-        """
-        wave = self._reinforce_wave_mask()
-        self._parked = ~wave
-        self.collector.reset_workers(wave)
-
-    def _update_ready_collection(self, *, final: bool) -> None:
-        update_input: AgentUpdateInput | None = None
-        if (
-            self._reinforce_batch is not None
-            and len(self._reinforce_batch) == self.agent.collection_size
-        ):
-            update_input = AgentUpdateInput(
-                mode=CollectionMode.COMPLETE_EPISODES,
-                episodes=tuple(self._reinforce_batch),
-            )
-        elif self._rollout_buffer is not None and (
-            self._rollout_buffer.transition_count == self.agent.collection_size
-            or (final and self._rollout_buffer.transition_count)
-        ):
-            update_input = AgentUpdateInput(
-                mode=CollectionMode.FIXED_ROLLOUT,
-                rollout=self._rollout_buffer.finalize(),
-            )
-        if update_input is None:
-            return
-        with self.timer.optimizing() as elapsed:
-            output = self.agent.update(update_input)
         self.updates.append(
             TrainingUpdate(
                 update_index=self.optimizer_updates,
                 training_interactions=self.training_interactions,
                 output=output,
-                optimization_duration=elapsed.seconds,
+                optimization_duration=duration,
             )
         )
         self.optimizer_updates += 1
-        if self._reinforce_batch is not None:
-            self._reinforce_batch = []
-            self._start_reinforce_wave()
 
-    def _state_sections(self) -> dict[str, Any]:
-        return {
-            "agent": self.agent.state_dict(),
-            "normalizer": self.normalizer.state().to_dict(),
-            "training_interactions": self.training_interactions,
-            "optimizer_updates": self.optimizer_updates,
-            "stepping": self.collector.state(),
-            "recorder": self.recorder.state(),
-            "schedule": self.schedule.state(),
-            "vector_environment": self.environments.state(),
-            "parked": self._parked.tolist(),
-            "collector": self._collector_state(),
-            "updates": self.updates,
-            "timing": self.timer.state(),
-        }
+    @abstractmethod
+    def collector_state(self) -> dict[str, Any]:
+        """
+        Return the algorithm's partially collected experience for a checkpoint.
+        """
 
-    def _restore_sections(self, state: dict[str, Any]) -> None:
-        self.agent.load_state_dict(mapping(state, "agent"))
-        normalizer_state = mapping(state, "normalizer")
-        self.normalizer.restore(
-            ObservationNormalizerStateRecord(
-                count=int(normalizer_state["count"]),
-                sums=tuple(float(value) for value in normalizer_state["sums"]),
-                squared_sums=tuple(
-                    float(value) for value in normalizer_state["squared_sums"]
-                ),
-            )
-        )
-        self.training_interactions = int(state["training_interactions"])
-        self.optimizer_updates = int(state["optimizer_updates"])
-        self.collector.restore(mapping(state, "stepping"))
-        self.recorder.restore(mapping(state, "recorder"))
-        self.schedule.restore(mapping(state, "schedule"))
-        vector_state = state["vector_environment"]
-        if not isinstance(vector_state, VectorRacingState):
-            raise TypeError("checkpoint vector environment state is invalid.")
-        self.environments.restore(vector_state)
-        self._parked = np.asarray(state["parked"], dtype=np.bool_)
-        self._restore_collector(mapping(state, "collector"))
-        self.updates = typed_list(state, "updates", TrainingUpdate)
-        self.timer.restore(mapping(state, "timing"))
+    @abstractmethod
+    def restore_collector(self, state: dict[str, Any]) -> None:
+        """
+        Restore the algorithm's partially collected experience.
+        """
 
     def _engine_configuration(self) -> dict[str, Any]:
         # A scheduled run has no single circuit, so identifying it by the
@@ -598,65 +495,8 @@ class OnPolicyTrainingEngine:
             "normalizer_dimensions": self.normalizer.observation_dimensions,
         }
 
-    def _collector_state(self) -> dict[str, Any]:
-        if self._reinforce_active is not None:
-            if self._reinforce_batch is None:
-                raise RuntimeError("REINFORCE completed collector is missing.")
-            return {
-                "mode": CollectionMode.COMPLETE_EPISODES.value,
-                "active": [
-                    [_transition_to_dict(row) for row in episode]
-                    for episode in self._reinforce_active
-                ],
-                "completed": [
-                    [_transition_to_dict(row) for row in episode.transitions]
-                    for episode in self._reinforce_batch
-                ],
-            }
-        if self._rollout_buffer is None:
-            raise RuntimeError("Training engine has no collection buffer.")
-        return {
-            "mode": CollectionMode.FIXED_ROLLOUT.value,
-            "steps": [
-                [None if row is None else _transition_to_dict(row) for row in step]
-                for step in self._rollout_buffer.transition_steps
-            ],
-            "previous": [
-                None if row is None else _transition_to_dict(row)
-                for row in self._rollout_buffer.previous_transitions
-            ],
-        }
 
-    def _restore_collector(self, state: dict[str, Any]) -> None:
-        mode = CollectionMode(state["mode"])
-        if mode is not self.agent.collection_mode:
-            raise ValueError("checkpoint collection mode does not match the agent.")
-        if mode is CollectionMode.COMPLETE_EPISODES:
-            if self._reinforce_active is None or self._reinforce_batch is None:
-                raise RuntimeError("REINFORCE collector was not constructed.")
-            self._reinforce_active = [
-                [_transition_from_dict(row) for row in episode]
-                for episode in state["active"]
-            ]
-            self._reinforce_batch = [
-                OnPolicyRollout(tuple(_transition_from_dict(row) for row in episode))
-                for episode in state["completed"]
-            ]
-            return
-        if self._rollout_buffer is None:
-            raise RuntimeError("Vector rollout collector was not constructed.")
-        steps = [
-            [None if row is None else _transition_from_dict(row) for row in step]
-            for step in state["steps"]
-        ]
-        previous = [
-            None if row is None else _transition_from_dict(row)
-            for row in state["previous"]
-        ]
-        self._rollout_buffer.restore(steps, previous)
-
-
-def _resolve_evaluation_circuits(
+def resolve_evaluation_circuits(
     circuits: Sequence[EvaluationCircuit] | None,
     factory: Callable[[], RacingEnv] | None,
     *,
@@ -686,12 +526,15 @@ def _resolve_evaluation_circuits(
     )
 
 
-def _resolve_generators(
+def resolve_generators(
     generators: Sequence[np.random.Generator] | None,
     single_generator: np.random.Generator | None,
     worker_count: int,
     role: str,
 ) -> tuple[np.random.Generator, ...]:
+    """
+    Accept one generator per worker, or one generator for a single worker.
+    """
     if generators is not None:
         values = tuple(generators)
     elif single_generator is not None:
@@ -703,7 +546,7 @@ def _resolve_generators(
     return values
 
 
-def _transition_to_dict(row: TrainingTransition) -> dict[str, Any]:
+def transition_to_dict(row: Any) -> dict[str, Any]:
     """
     Serialize one immutable rollout row without retaining framework objects.
     """
@@ -723,10 +566,3 @@ def _transition_to_dict(row: TrainingTransition) -> dict[str, Any]:
         "circuit_identity": row.circuit_identity,
         "environment_index": row.environment_index,
     }
-
-
-def _transition_from_dict(data: dict[str, Any]) -> TrainingTransition:
-    """
-    Reconstruct one immutable rollout row from checkpoint-safe primitives.
-    """
-    return TrainingTransition(**data)

@@ -463,6 +463,33 @@ The raw advantage creates $y_t$. For the actor only, advantages are standardized
 once over the rollout. PPO retains those same standardized values for all
 optimization epochs.
 
+## Where each algorithm's code lives
+
+Each algorithm has one engine, in one file, holding one training loop:
+`src/training/engines/{reinforce,a2c,ppo}.py`. Reading `PPOTrainingEngine.train`
+tells you what PPO does, in PPO's terms, without following a call into shared
+code.
+
+The dividing line is deliberate:
+
+> Anything that decides **what the experiment measures** is written once and
+> shared — the circuit schedule, the splits, the record schema, evaluation,
+> checkpoints. Anything that shows **how an algorithm collects and updates**
+> lives in that algorithm's own file.
+
+The shared side is `TrainingEngine` and its collaborators: `StepCollector` turns
+one vector step into transitions, `EpisodeRecorder` accumulates episodes and
+emits their records, `EvaluationSchedule` evaluates a set of circuits at a
+checkpoint, `TrainingTimer` separates the durations, and `EngineCheckpoint`
+guards what a checkpoint may be restored onto. None of them contains a loop.
+
+A2C and PPO collect identically — a fixed rollout in `(time, worker)` shape —
+and their two files say so in the same number of lines. That repetition is
+accepted on purpose: what separates the two algorithms is what they then do with
+the rollout, and a reader looking for PPO should find PPO rather than a shared
+abstraction with PPO among its cases. What is *not* accepted is repeating the
+machinery around the loop, which is why none of it is in these files.
+
 ## REINFORCE
 
 ### Purpose and expected behaviour

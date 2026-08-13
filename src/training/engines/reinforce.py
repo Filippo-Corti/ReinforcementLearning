@@ -1,378 +1,176 @@
-"""Readable parallel complete-episode training loop for REINFORCE."""
+"""Training loop for REINFORCE over persistent parallel racing workers."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
-from tqdm.auto import tqdm
 
-from agents import AgentUpdateInput, CollectionMode, ReinforceAgent
-from configs import EnvironmentConfig, ExecutionConfig
-from envs.tracks import TrackWithGeometry
+from agents.types import AgentUpdateInput, CollectionMode
 
 from ..buffers import OnPolicyRollout, TrainingTransition
-from ..normalization import RunningObservationNormalizer
-from ..vector_environment import (
-    PersistentRacingVectorEnv,
-    vector_info,
-    vector_worker_info,
-)
-from .records import (
-    EducationalEpisodeRecord,
-    EducationalTrainingHistory,
-    EducationalUpdateRecord,
-    racing_outcome,
-)
+from .base import TrainingEngine, TrainingRunState, transition_to_dict
 
 
-class ReinforceTrainingEngine:
+class ReinforceTrainingEngine(TrainingEngine):
     """
-    Train REINFORCE from one concurrent complete episode per environment.
+    Collect whole episodes, then take one step from a batch of them.
 
-    Each trajectory remains separate because its return-to-go uses only its own
-    rewards. Trajectories are collected concurrently in persistent CPU workers,
-    then their trajectory-sum losses are averaged by the unchanged agent update.
+    REINFORCE has no critic, so its target is the actual return from each state
+    to the end of the episode. Nothing can be learned from a half-finished
+    episode: the return is not known until the car crashes or crosses the line.
+    Collection therefore runs until an episode ends rather than until a fixed
+    number of transitions have been gathered.
 
-    The worker count and the batch size are independent, so every algorithm can
-    use the same number of workers. When a batch needs more trajectories than
-    there are workers, it is filled over several collection waves; no update
-    happens between them, so all of its trajectories still come from one policy.
-    A partial final batch remains recorded but unused.
+    A worker that finishes is *parked* instead of restarted. Restarting it would
+    begin an episode under the current policy that would still be running when
+    the policy changed, and the batch would then mix trajectories from two
+    different policies — which the estimator this implements does not allow.
+
+    A batch needing more trajectories than there are workers is filled over
+    several waves. No optimizer step happens between waves, so one batch still
+    holds trajectories from a single policy.
 
     Fields:
-        * agent: REINFORCE policy, optimizer, and per-worker sampling streams.
-        * tracks: Circuits available for selection at episode boundaries.
-        * environment_config: Racing dynamics, reward, observation, and time limit.
-        * execution_config: Persistent environment-worker execution settings.
-        * normalizer: Running observation statistics updated only during training.
-        * environments: Persistent process-based racing environment pool.
-        * history: Episode and optimizer-update records collected so far.
+        * active_trajectories: Transitions gathered so far, per worker.
+        * batch: Completed trajectories waiting to become one update.
     """
 
-    def __init__(
-        self,
-        agent: ReinforceAgent,
-        tracks: Sequence[TrackWithGeometry],
-        environment_config: EnvironmentConfig,
-        normalizer: RunningObservationNormalizer,
-        environment_reset_generator: (
-            np.random.Generator | Sequence[np.random.Generator]
-        ),
-        track_selection_generator: np.random.Generator | Sequence[np.random.Generator],
-        *,
-        track_seed_for_episode: Callable[[int], int] | None = None,
-        execution_config: ExecutionConfig | None = None,
-    ) -> None:
+    def _setup(self) -> None:
         """
-        Construct an educational REINFORCE engine over one or more circuits.
+        Open the per-worker trajectories and park the workers a wave excludes.
         """
-        if not tracks:
-            raise ValueError("REINFORCE training requires at least one circuit.")
-        worker_count = len(agent.sampling_generators)
-        self.execution_config = execution_config or ExecutionConfig(
-            device="cpu", environment_workers=worker_count
-        )
-        if worker_count != self.execution_config.environment_workers:
-            raise ValueError(
-                "REINFORCE requires one policy-sampling stream per environment."
-            )
-        reset_generators = _generator_tuple(
-            environment_reset_generator, worker_count, "reset"
-        )
-        track_generators = _generator_tuple(
-            track_selection_generator, worker_count, "track-selection"
-        )
-        self.agent = agent
-        self.tracks = tuple(tracks)
-        self.environment_config = environment_config
-        self.normalizer = normalizer
-        self.track_seed_for_episode = track_seed_for_episode
-        self.history = EducationalTrainingHistory()
-        self._episode_batch: list[OnPolicyRollout] = []
-        self.environments = PersistentRacingVectorEnv(
-            self.tracks,
-            environment_config,
-            self.execution_config,
-            reset_generators,
-            track_generators,
-        )
+        self.active_trajectories: list[list[TrainingTransition]] = [
+            [] for _ in range(self.worker_count)
+        ]
+        self.batch: list[OnPolicyRollout] = []
+        self.parked = ~self._wave_mask()
 
     def train(
-        self,
-        interaction_budget: int,
-        *,
-        on_episode_end: (
-            Callable[[EducationalEpisodeRecord, EducationalTrainingHistory], None]
-            | None
-        ) = None,
-    ) -> EducationalTrainingHistory:
+        self, interaction_budget: int, *, finalize: bool = True
+    ) -> TrainingRunState:
         """
-        Collect complete trajectories until the exact interaction budget is exhausted.
+        Collect and optimize until the exact requested interaction budget is reached.
         """
-        if interaction_budget <= 0:
-            raise ValueError("Interaction budget must be positive.")
-        if interaction_budget < self.history.training_interactions:
-            raise ValueError(
-                "Interaction budget cannot be below consumed interactions."
-            )
-        remaining_budget = interaction_budget - self.history.training_interactions
-        if remaining_budget == 0:
-            return self.history
+        if interaction_budget < self.training_interactions:
+            raise ValueError("Training budget cannot be below consumed interactions.")
+        while self.training_interactions < interaction_budget:
+            rows = interaction_budget - self.training_interactions
+            if self.schedule.interval is not None:
+                rows = min(
+                    rows,
+                    self.schedule.interval
+                    - (self.training_interactions % self.schedule.interval),
+                )
+            active_indices = np.flatnonzero(~self.parked)[:rows]
+            if active_indices.size == 0:
+                # Every worker is parked: either the batch is complete and can
+                # be learned from, or the next wave has to be released.
+                self._update_if_batch_complete(final=False)
+                if self.parked.all():
+                    self._start_wave()
+                continue
+            active = np.zeros(self.worker_count, dtype=np.bool_)
+            active[active_indices] = True
 
-        next_episode_index = len(self.history.episodes)
-        progress_bar = tqdm(
-            total=remaining_budget,
-            desc="Training interactions",
-            unit="interaction",
+            self._collect_step(active)
+            self._update_if_batch_complete(final=False)
+            self.evaluate_if_due()
+        self._update_if_batch_complete(final=finalize)
+        return self.state()
+
+    def _collect_step(self, active: np.ndarray) -> None:
+        """
+        Advance one step, extending each worker's trajectory and parking finishers.
+        """
+        with self.timer.collecting():
+            step = self.collector.step(
+                active,
+                training_interactions=self.training_interactions,
+                evaluation_interactions=self.schedule.evaluation_interactions,
+            )
+            self.training_interactions += step.interactions
+            for worker_index, transition in enumerate(step.transitions):
+                if transition is not None:
+                    self.active_trajectories[worker_index].append(transition)
+            for worker_index in step.finished:
+                self._close_trajectory(worker_index)
+
+    def _close_trajectory(self, worker_index: int) -> None:
+        """
+        Move a finished episode into the batch and park the worker that ran it.
+        """
+        self.batch.append(
+            OnPolicyRollout(tuple(self.active_trajectories[worker_index]))
         )
-        try:
-            while self.history.training_interactions < interaction_budget:
-                needed_for_update = self.agent.collection_size - len(
-                    self._episode_batch
-                )
-                wave_size = min(
-                    interaction_budget - self.history.training_interactions,
-                    needed_for_update,
-                    self.execution_config.environment_workers,
-                )
-                active = np.zeros(
-                    self.execution_config.environment_workers, dtype=np.bool_
-                )
-                active[:wave_size] = True
-                episode_indices = np.full(
-                    self.execution_config.environment_workers, -1, dtype=np.int64
-                )
-                episode_indices[:wave_size] = np.arange(
-                    next_episode_index,
-                    next_episode_index + wave_size,
-                    dtype=np.int64,
-                )
-                observations, reset_infos = self.environments.reset(
-                    active,
-                    track_seeds=self._track_seeds(episode_indices, active),
-                )
-                transitions: list[list[TrainingTransition]] = [
-                    [] for _ in range(self.execution_config.environment_workers)
-                ]
-                returns = np.zeros(
-                    self.execution_config.environment_workers, dtype=np.float64
-                )
-                maximum_progress = np.zeros_like(returns)
-                speed_totals = np.zeros_like(returns)
-                throttle_totals = np.zeros_like(returns)
-                signed_throttle_totals = np.zeros_like(returns)
-                circuit_identities = [
-                    str(vector_info(reset_infos, "circuit_identity", index))
-                    for index in range(wave_size)
-                ]
-                completed_records: list[EducationalEpisodeRecord] = []
-                completed_indices: list[int] = []
+        self.active_trajectories[worker_index] = []
+        self.parked[worker_index] = True
 
-                while (
-                    np.any(active)
-                    and self.history.training_interactions < interaction_budget
-                ):
-                    collection_active = active.copy()
-                    active_indices = np.flatnonzero(collection_active)
-                    maximum_rows = (
-                        interaction_budget - self.history.training_interactions
-                    )
-                    if active_indices.size > maximum_rows:
-                        collection_active[active_indices[maximum_rows:]] = False
-                        active_indices = active_indices[:maximum_rows]
-                    normalized = self.normalizer.update_and_normalize_batch(
-                        observations, collection_active
-                    )
-                    decisions = self.agent.collect_actions(
-                        normalized[active_indices],
-                        environment_indices=[int(index) for index in active_indices],
-                    )
-                    actions = np.zeros(
-                        (self.execution_config.environment_workers, 2),
-                        dtype=np.float32,
-                    )
-                    actions[active_indices] = decisions.env_actions
-                    next_observations, rewards, terminated, truncated, infos = (
-                        self.environments.step(actions, collection_active)
-                    )
-
-                    for decision_index, environment_index_value in enumerate(
-                        active_indices
-                    ):
-                        environment_index = int(environment_index_value)
-                        info = vector_worker_info(infos, environment_index)
-                        next_normalized = self.normalizer.normalize(
-                            next_observations[environment_index]
-                        )
-                        episode_rows = transitions[environment_index]
-                        episode_rows.append(
-                            TrainingTransition(
-                                normalized_observation=normalized[environment_index],
-                                raw_action=decisions.raw_actions[decision_index],
-                                env_action=decisions.env_actions[decision_index],
-                                reward=float(rewards[environment_index]),
-                                behaviour_log_probability=float(
-                                    decisions.behaviour_log_probabilities[
-                                        decision_index
-                                    ]
-                                ),
-                                current_value=None,
-                                next_value=None,
-                                terminated=bool(terminated[environment_index]),
-                                truncated=bool(truncated[environment_index]),
-                                next_normalized_observation=next_normalized,
-                                episode_identity=int(
-                                    episode_indices[environment_index]
-                                ),
-                                episode_step_index=len(episode_rows),
-                                circuit_identity=circuit_identities[environment_index],
-                                environment_index=environment_index,
-                            )
-                        )
-                        self.history.training_interactions += 1
-                        returns[environment_index] += rewards[environment_index]
-                        speed_totals[environment_index] += observations[
-                            environment_index, 2
-                        ]
-                        throttle_totals[environment_index] += abs(
-                            float(decisions.env_actions[decision_index, 0])
-                        )
-                        signed_throttle_totals[environment_index] += float(
-                            decisions.env_actions[decision_index, 0]
-                        )
-                        progress = float(info["episode_progress"]) / float(
-                            info["track_length"]
-                        )
-                        maximum_progress[environment_index] = max(
-                            maximum_progress[environment_index], progress
-                        )
-                        if (
-                            terminated[environment_index]
-                            or truncated[environment_index]
-                        ):
-                            active[environment_index] = False
-                            completed_indices.append(environment_index)
-                            completed_records.append(
-                                EducationalEpisodeRecord(
-                                    episode_index=int(
-                                        episode_indices[environment_index]
-                                    ),
-                                    circuit_identity=circuit_identities[
-                                        environment_index
-                                    ],
-                                    interactions=len(episode_rows),
-                                    undiscounted_return=float(
-                                        returns[environment_index]
-                                    ),
-                                    outcome=racing_outcome(
-                                        bool(terminated[environment_index]),
-                                        bool(truncated[environment_index]),
-                                        info,
-                                    ),
-                                    final_progress=progress,
-                                    maximum_progress=float(
-                                        maximum_progress[environment_index]
-                                    ),
-                                    mean_speed=float(
-                                        speed_totals[environment_index]
-                                        / len(episode_rows)
-                                    ),
-                                    mean_throttle=float(
-                                        signed_throttle_totals[environment_index]
-                                        / len(episode_rows)
-                                    ),
-                                    mean_throttle_magnitude=float(
-                                        throttle_totals[environment_index]
-                                        / len(episode_rows)
-                                    ),
-                                    lap_time=(
-                                        float(info["elapsed_time"])
-                                        if bool(info["lap_completed"])
-                                        else None
-                                    ),
-                                )
-                            )
-                    progress_bar.update(int(active_indices.size))
-                    observations = next_observations
-
-                completed_records.sort(key=lambda record: record.episode_index)
-                self.history.episodes.extend(completed_records)
-                self._episode_batch.extend(
-                    OnPolicyRollout(tuple(transitions[index]))
-                    for index in sorted(
-                        completed_indices,
-                        key=lambda index: int(episode_indices[index]),
-                    )
-                )
-                next_episode_index += wave_size
-
-                if len(self._episode_batch) == self.agent.collection_size:
-                    output = self.agent.update(
-                        AgentUpdateInput(
-                            mode=CollectionMode.COMPLETE_EPISODES,
-                            episodes=tuple(self._episode_batch),
-                        )
-                    )
-                    self.history.updates.append(
-                        EducationalUpdateRecord(
-                            update_index=len(self.history.updates),
-                            final_episode_index=max(
-                                episode.transitions[-1].episode_identity
-                                for episode in self._episode_batch
-                            ),
-                            training_interactions=self.history.training_interactions,
-                            transition_count=sum(
-                                len(episode.transitions)
-                                for episode in self._episode_batch
-                            ),
-                            diagnostics=output.diagnostics,
-                        )
-                    )
-                    self._episode_batch = []
-
-                if on_episode_end is not None:
-                    for episode_record in completed_records:
-                        on_episode_end(episode_record, self.history)
-        finally:
-            progress_bar.close()
-        return self.history
-
-    def _track_seeds(
-        self,
-        episode_indices: np.ndarray,
-        reset_mask: np.ndarray,
-    ) -> list[int | None] | None:
+    def _wave_mask(self) -> np.ndarray:
         """
-        Derive one procedural circuit seed for each episode selected to reset.
+        Select only the workers the current batch still has room for.
+
+        The worker count is an execution choice shared with A2C and PPO, while
+        the batch size belongs to REINFORCE, so the two need not agree.
         """
-        if self.track_seed_for_episode is None:
-            return None
-        return [
-            (
-                self.track_seed_for_episode(int(episode_indices[index]))
-                if reset_mask[index]
-                else None
-            )
-            for index in range(self.execution_config.environment_workers)
+        wave_size = min(self.agent.collection_size - len(self.batch), self.worker_count)
+        wave = np.zeros(self.worker_count, dtype=np.bool_)
+        wave[:wave_size] = True
+        return wave
+
+    def _start_wave(self) -> None:
+        """
+        Reset and unpark the workers that collect the next group of trajectories.
+        """
+        wave = self._wave_mask()
+        self.parked = ~wave
+        self.collector.reset_workers(wave)
+
+    def _update_if_batch_complete(self, *, final: bool) -> None:
+        """
+        Take the policy-gradient step once the batch holds its full episode count.
+        """
+        del final  # A partial batch is never learned from: its returns are complete
+        # but its size is not, and the batch size is what the estimator averages over.
+        if len(self.batch) != self.agent.collection_size:
+            return
+        update_input = AgentUpdateInput(
+            mode=CollectionMode.COMPLETE_EPISODES,
+            episodes=tuple(self.batch),
+        )
+        with self.timer.optimizing() as elapsed:
+            output = self.agent.update(update_input)
+        self.record_update(output, elapsed.seconds)
+        self.batch = []
+        self._start_wave()
+
+    def collector_state(self) -> dict[str, Any]:
+        """
+        Return the partial trajectories and the completed batch for a checkpoint.
+        """
+        return {
+            "mode": CollectionMode.COMPLETE_EPISODES.value,
+            "active": [
+                [transition_to_dict(row) for row in episode]
+                for episode in self.active_trajectories
+            ],
+            "completed": [
+                [transition_to_dict(row) for row in episode.transitions]
+                for episode in self.batch
+            ],
+        }
+
+    def restore_collector(self, state: dict[str, Any]) -> None:
+        """
+        Restore partial trajectories, so resume continues the episodes in flight.
+        """
+        if CollectionMode(state["mode"]) is not CollectionMode.COMPLETE_EPISODES:
+            raise ValueError("checkpoint collection mode does not match the agent.")
+        self.active_trajectories = [
+            [TrainingTransition(**row) for row in episode]
+            for episode in state["active"]
         ]
-
-    def close(self) -> None:
-        """
-        Close the persistent environment processes owned by this engine.
-        """
-        self.environments.close()
-
-
-def _generator_tuple(
-    generators: np.random.Generator | Sequence[np.random.Generator],
-    worker_count: int,
-    role: str,
-) -> tuple[np.random.Generator, ...]:
-    if isinstance(generators, np.random.Generator):
-        values = (generators,)
-    else:
-        values = tuple(generators)
-    if len(values) != worker_count:
-        raise ValueError(f"One {role} generator is required per environment worker.")
-    return values
+        self.batch = [
+            OnPolicyRollout(tuple(TrainingTransition(**row) for row in episode))
+            for episode in state["completed"]
+        ]

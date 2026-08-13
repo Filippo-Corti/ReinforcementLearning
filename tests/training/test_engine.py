@@ -29,13 +29,14 @@ from recording import EpisodeOutcome, RunCategory
 from training import (
     CircuitSplit,
     EvaluationCircuit,
-    OnPolicyTrainingEngine,
+    PPOTrainingEngine,
+    ReinforceTrainingEngine,
     RunningObservationNormalizer,
     TrainingCircuitSchedule,
     TrainingTransition,
     circuit_track_seed,
 )
-from training.engines.shared_engine import _outcome
+from training.engines import TrainingEngine, episode_outcome
 from utils.random import SeedNamespace
 
 
@@ -136,14 +137,19 @@ def _engine(
     workers: int | None = None,
     training_circuit_schedule: TrainingCircuitSchedule | None = None,
     evaluation_circuits: tuple[EvaluationCircuit, ...] | None = None,
-) -> tuple[OnPolicyTrainingEngine, _FixedAgent]:
+) -> tuple[TrainingEngine, _FixedAgent]:
     agent = _FixedAgent(mode, size)
     normalizer = RunningObservationNormalizer(
         FrenetObservation.DIMENSIONS, ObservationNormalizationConfig()
     )
     default_workers = size if mode is CollectionMode.COMPLETE_EPISODES else 1
     worker_count = default_workers if workers is None else workers
-    engine = OnPolicyTrainingEngine(
+    engine_type = (
+        ReinforceTrainingEngine
+        if mode is CollectionMode.COMPLETE_EPISODES
+        else PPOTrainingEngine
+    )
+    engine = engine_type(
         agent,
         _environment(),
         normalizer,
@@ -209,7 +215,7 @@ def test_every_environment_lifecycle_boundary_has_a_recorded_outcome(
     """
     flags = {"lap_completed": False, "collision": False, "stalled": False, **info}
 
-    assert _outcome(terminated, truncated, flags) is expected
+    assert episode_outcome(terminated, truncated, flags) is expected
 
 
 def test_complete_episode_collection_waits_for_complete_batch() -> None:

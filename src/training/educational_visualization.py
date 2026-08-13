@@ -310,17 +310,18 @@ def plot_driving_behavior(
     moving_average_window: int,
 ) -> Figure:
     """
-    Plot mean episode speed and both the signed and absolute throttle action.
+    Plot mean episode speed, the signed throttle, and how often it is positive.
 
-    The magnitude alone cannot distinguish a learned throttle from exploration
-    noise: a zero mean squashed by `tanh` already produces a large and perfectly
-    flat magnitude. The signed mean is the curve that moves only when the policy
-    itself has learned to accelerate.
+    A magnitude cannot distinguish a learned throttle from exploration noise: a
+    zero mean squashed by `tanh` already produces a large and perfectly flat
+    magnitude. The signed mean moves only when the policy has learned to
+    accelerate, and the fraction of accelerating actions says the same thing
+    from the other direction — noise sits at one half whatever its scale.
     """
     episodes = _episode_indices(episode_rows)
     speeds = _episode_values(episode_rows, "mean_speed")
     signed_throttles = _episode_values(episode_rows, "mean_throttle")
-    throttle_magnitudes = _episode_values(episode_rows, "mean_throttle_magnitude")
+    positive_fractions = _episode_values(episode_rows, "positive_throttle_fraction")
     figure, axes = plt.subplots(1, 3, figsize=(19, 4.5), constrained_layout=True)
     for axis, values, title, ylabel in (
         (axes[0], speeds, "Mean training speed", "speed"),
@@ -332,9 +333,9 @@ def plot_driving_behavior(
         ),
         (
             axes[2],
-            throttle_magnitudes,
-            "Mean throttle magnitude",
-            "absolute throttle/brake",
+            positive_fractions,
+            "Fraction of accelerating actions",
+            "fraction",
         ),
     ):
         axis.plot(episodes, values, alpha=0.35, label="training episode")
@@ -347,6 +348,7 @@ def plot_driving_behavior(
         axis.set(title=title, xlabel="episode", ylabel=ylabel)
         axis.legend()
     axes[1].axhline(0.0, color="black", linewidth=0.9, linestyle="--")
+    axes[2].axhline(0.5, color="black", linewidth=0.9, linestyle="--")
     _style_axes(axes)
     return figure
 

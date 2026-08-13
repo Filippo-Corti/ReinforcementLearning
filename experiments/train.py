@@ -39,11 +39,14 @@ from recording import (
     collect_run_metadata,
 )
 from training import (
+    A2CTrainingEngine,
     CircuitSplit,
     EvaluationCircuit,
-    OnPolicyTrainingEngine,
+    PPOTrainingEngine,
+    ReinforceTrainingEngine,
     RunningObservationNormalizer,
     TrainingCircuitSchedule,
+    TrainingEngine,
     circuit_track_seed,
 )
 from utils.random import (
@@ -57,6 +60,14 @@ _ACTORS: dict[str, ActorConfig] = {
     "small": SMALL_ACTOR_CONFIG,
     "medium": MEDIUM_ACTOR_CONFIG,
     "large": LARGE_ACTOR_CONFIG,
+}
+
+# Each algorithm owns its collection strategy, so each owns its engine. They
+# share a constructor signature, and everything that is not collection.
+_ENGINES: dict[Algorithm, type[TrainingEngine]] = {
+    Algorithm.REINFORCE: ReinforceTrainingEngine,
+    Algorithm.A2C: A2CTrainingEngine,
+    Algorithm.PPO: PPOTrainingEngine,
 }
 
 
@@ -79,7 +90,7 @@ def run_reinforce_training(
     training_reference_circuits: int = 0,
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
-) -> OnPolicyTrainingEngine:
+) -> TrainingEngine:
     """
     Train REINFORCE through the shared engine and persist its run records.
     """
@@ -176,7 +187,7 @@ def run_a2c_training(
     training_reference_circuits: int = 0,
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
-) -> OnPolicyTrainingEngine:
+) -> TrainingEngine:
     """
     Train A2C through the shared engine and persist its run records.
     """
@@ -284,7 +295,7 @@ def run_ppo_training(
     training_reference_circuits: int = 0,
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     run_category: RunCategory = RunCategory.REDUCED_VALIDATION,
-) -> OnPolicyTrainingEngine:
+) -> TrainingEngine:
     """
     Train PPO through the shared engine and persist its run records.
     """
@@ -392,7 +403,7 @@ def _run_training(
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     learning_rates: dict[str, float],
     agent_factory: Callable[[int, RunSeedStreams], ParameterizedOnPolicyAgent],
-) -> OnPolicyTrainingEngine:
+) -> TrainingEngine:
     """
     Train one selected on-policy agent through the common run lifecycle.
     """
@@ -478,7 +489,7 @@ def _run_training(
         raise ValueError("RacingEnv must expose a fixed observation dimension.")
     observation_dimensions = observation_shape[0]
     agent = agent_factory(observation_dimensions, streams)
-    engine = OnPolicyTrainingEngine(
+    engine = _ENGINES[algorithm](
         agent,
         environment,
         RunningObservationNormalizer(
@@ -654,7 +665,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
 def _write_engine_records(
     run: RunDirectory,
-    engine: OnPolicyTrainingEngine,
+    engine: TrainingEngine,
     *,
     trajectory_interval: int,
     trajectory_circuits_per_boundary: int,
@@ -754,7 +765,7 @@ def _write_engine_records(
 
 
 def _train_with_checkpoints(
-    engine: OnPolicyTrainingEngine,
+    engine: TrainingEngine,
     config: TrainingConfig,
     checkpoint_directory: Path,
 ) -> None:
