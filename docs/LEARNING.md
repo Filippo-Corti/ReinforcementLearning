@@ -274,23 +274,21 @@ are project engineering choices, not consequences of the policy-gradient theorem
 
 The learned log standard deviations start at $-0.5$, corresponding to
 $\sigma\approx0.61$ before squashing. This is a deliberately moderate initial
-exploration scale. Values are constrained to $[-5,-0.3]$ during use, a scale of
-at most $\sigma\approx0.74$. The lower bound avoids numerical collapse.
+exploration scale. Values are constrained to $[-5,0]$ during use. The lower
+bound avoids numerical collapse. The upper bound is $0$, not $2$, because
+actions are squashed by $\tanh$: at $\sigma\approx1.9$, which a PPO run reached
+under the old bound, nearly every sample saturates at a control limit, the
+policy degenerates into random bang-bang control, and its mean stops being
+identifiable from the data. These dispersion values are project choices and are
+checked during the pre-experiment configuration work.
 
-The upper bound has been lowered twice, for the same reason each time. Actions
-are squashed by $\tanh$, so a large scale makes nearly every sample saturate at
-a control limit, the policy degenerates into random bang-bang control, and its
-mean stops being identifiable from the data. At the original bound of $2$ a PPO
-run reached $\sigma\approx1.9$. At a bound of $0$ a PPO run pressed against the
-ceiling from roughly 650,000 interactions to the end of its budget, and its
-finished deterministic policy still alternated between control limits, while
-REINFORCE and A2C settled near $0.58$ without ever approaching it. The bound is
-now $-0.3$. It applies to every algorithm, as every design choice here does, but
-only PPO has ever reached one.
-
-These dispersion values are project choices and are checked during the
-pre-experiment configuration work. The recorded learning-rate calibration was
-run under the previous bound of $0$.
+**Lowering the bound further was tried and reverted.** At $-0.3$, a scale of
+$0.74$, PPO pressed against that bound instead, ending a 2,000,000-interaction
+run at $-0.343$ and $-0.300$, and its finished deterministic policy still
+alternated between control limits. A cap moves where the dispersion saturates
+without removing the pressure that takes it there, so the tighter one bought
+nothing and is not retained. Only PPO ever approaches a bound at all: REINFORCE
+and A2C settle near $0.58$ unaided under either.
 
 **How the bounds are enforced.** After each actor optimizer step, the learned
 log standard deviations are *projected* back into their interval; the log density
