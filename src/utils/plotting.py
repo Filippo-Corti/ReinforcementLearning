@@ -151,14 +151,21 @@ def plot_convergence_resources(rows: list[TableRow]) -> Figure:
 
 def plot_optimization_diagnostics(rows: list[TableRow]) -> Figure:
     """
-    Plot recorded loss, gradient norm, explained variance, and PPO clipping.
+    Plot recorded loss, gradient dispersion, critic fit, and PPO clipping.
+
+    The two dispersion panels are the ones that speak to estimator variance
+    rather than to optimization progress. Prefer the cosine when comparing
+    algorithms: the ratio is dominated by whichever sub-batch gradient was
+    largest, and REINFORCE's magnitudes are heavy-tailed.
     """
-    figure, axes = plt.subplots(2, 4, figsize=(15, 7), constrained_layout=True)
+    figure, axes = plt.subplots(2, 5, figsize=(19, 7), constrained_layout=True)
     panels = (
         ("actor_loss", "Actor loss"),
         ("critic_loss", "Critic loss"),
         ("actor_gradient_norm", "Actor gradient norm"),
         ("entropy_proxy", "Entropy proxy"),
+        ("gradient_cosine_similarity", "Gradient agreement (cosine)"),
+        ("gradient_signal_to_noise", "Gradient signal-to-noise"),
         ("explained_variance", "Explained variance"),
         ("approximate_kl", "Approximate KL"),
         ("clip_fraction", "PPO clip fraction"),
