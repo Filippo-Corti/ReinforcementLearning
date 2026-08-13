@@ -23,6 +23,7 @@ from training.buffers import (
 
 from .diagnostics import (
     explained_variance,
+    gradient_dispersion,
     parameter_norm,
     parameter_update_norm,
     standardize,
@@ -72,11 +73,13 @@ class PPOAgent:
         *,
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
+        gradient_dispersion_subbatch: int | None = 256,
     ) -> None:
         """
         Construct the PPO models, optimizers, and isolated random generators.
         """
         self._validate_config(config)
+        self.gradient_dispersion_subbatch = gradient_dispersion_subbatch
         self.config = config
         self.actor_config = actor_config
         self.critic_config = critic_config
@@ -206,6 +209,7 @@ class PPOAgent:
         )
         old_log_probabilities = old_log_probabilities.detach().clone()
         advantages = self._standardize_advantages(targets.raw_advantages)
+        dispersion = self._gradient_dispersion(observations, raw_actions, advantages)
         value_targets = targets.value_targets.detach().clone()
         actor_weight_norm = parameter_norm(self.actor.parameters())
         critic_weight_norm = parameter_norm(self.critic.parameters())
@@ -327,6 +331,7 @@ class PPOAgent:
                 "log_standard_deviation_1": float(
                     self.actor.policy.log_standard_deviation[1].detach().item()
                 ),
+                **dispersion,
             }
         )
 
@@ -403,6 +408,30 @@ class PPOAgent:
         Return the immutable row batches used by the most recent PPO update.
         """
         return self._last_minibatch_indices
+
+    def _gradient_dispersion(
+        self,
+        observations: Tensor,
+        raw_actions: Tensor,
+        advantages: Tensor,
+    ) -> dict[str, float | int | None]:
+        """
+        Measure the spread of the advantage-weighted estimator over equal samples.
+        """
+        weights = advantages.detach()
+
+        def subbatch_loss(selected: Tensor) -> Tensor:
+            log_probabilities = self.actor.log_probability(
+                observations[selected], raw_actions[selected]
+            )
+            return -(log_probabilities * weights[selected]).mean()
+
+        return gradient_dispersion(
+            tuple(self.actor.parameters()),
+            subbatch_loss,
+            observations.shape[0],
+            self.gradient_dispersion_subbatch,
+        )
 
     def _update_minibatch(
         self,

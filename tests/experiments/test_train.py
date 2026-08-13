@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
-
-import pytest
 
 from configs import (
     SMALL_ACTOR_CONFIG,
@@ -71,21 +70,38 @@ def test_train_cli_requires_learning_rate_and_accepts_output_alias() -> None:
     assert parsed.actor_learning_rate == 0.001
 
 
-def test_reported_training_requires_explicit_steering_saturation_threshold(
+def test_reported_training_records_the_frozen_steering_saturation_threshold(
     tmp_path,
 ) -> None:
+    """
+    The threshold is frozen in configuration, so a reported run inherits it.
+
+    It used to be absent by default and a reported run refused to start without
+    it. The guard in the training path remains for a configuration that clears
+    the value deliberately, but the value itself is now fixed in one place.
+    """
     root = Path(__file__).parents[1]
-    with pytest.raises(ValueError, match="near-saturated steering threshold"):
-        run_reinforce_training(
-            seed=3,
-            track_path=root / "fixtures" / "tracks" / "valid_circle.json",
-            run_path=tmp_path / "run",
-            actor_config=SMALL_ACTOR_CONFIG,
-            actor_learning_rate=0.01,
-            training_interaction_budget=1,
-            execution_config=_reinforce_execution_config(),
-            run_category=RunCategory.REPORTED,
-        )
+    run_reinforce_training(
+        seed=3,
+        track_path=root / "fixtures" / "tracks" / "valid_circle.json",
+        run_path=tmp_path / "run",
+        actor_config=SMALL_ACTOR_CONFIG,
+        actor_learning_rate=0.01,
+        training_interaction_budget=8,
+        environment_config=_fixture_environment_config(),
+        execution_config=_reinforce_execution_config(),
+        run_category=RunCategory.REPORTED,
+    )
+    run = RunDirectory.open(
+        tmp_path / "run",
+        expected_category=RunCategory.REPORTED,
+        require_complete=True,
+    )
+
+    stored = json.loads((run.path / "config.json").read_text(encoding="utf-8"))
+    logging_config = stored["training"]["logging"]
+    assert logging_config["near_saturated_steering_threshold"] == 0.9
+    assert logging_config["gradient_dispersion_subbatch"] == 256
 
 
 def test_train_entry_point_runs_a2c_and_writes_shared_records(tmp_path) -> None:

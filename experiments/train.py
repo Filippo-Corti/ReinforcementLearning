@@ -94,7 +94,11 @@ def run_reinforce_training(
         ),
         logging=replace(
             base_training_config.logging,
-            near_saturated_steering_threshold=near_saturated_steering_threshold,
+            near_saturated_steering_threshold=(
+                base_training_config.logging.near_saturated_steering_threshold
+                if near_saturated_steering_threshold is None
+                else near_saturated_steering_threshold
+            ),
         ),
         execution=execution_config,
     )
@@ -125,6 +129,9 @@ def run_reinforce_training(
                 for index in range(execution_config.environment_workers)
             ),
             device=execution_config.device,
+            gradient_dispersion_subbatch=(
+                training_config.logging.gradient_dispersion_subbatch
+            ),
         ),
     )
 
@@ -176,7 +183,11 @@ def run_a2c_training(
         ),
         logging=replace(
             base_training_config.logging,
-            near_saturated_steering_threshold=near_saturated_steering_threshold,
+            near_saturated_steering_threshold=(
+                base_training_config.logging.near_saturated_steering_threshold
+                if near_saturated_steering_threshold is None
+                else near_saturated_steering_threshold
+            ),
         ),
         execution=execution_config,
     )
@@ -216,6 +227,9 @@ def run_a2c_training(
                 for index in range(execution_config.environment_workers)
             ),
             device=execution_config.device,
+            gradient_dispersion_subbatch=(
+                training_config.logging.gradient_dispersion_subbatch
+            ),
         ),
     )
 
@@ -267,7 +281,11 @@ def run_ppo_training(
         ),
         logging=replace(
             base_training_config.logging,
-            near_saturated_steering_threshold=near_saturated_steering_threshold,
+            near_saturated_steering_threshold=(
+                base_training_config.logging.near_saturated_steering_threshold
+                if near_saturated_steering_threshold is None
+                else near_saturated_steering_threshold
+            ),
         ),
         execution=execution_config,
     )
@@ -311,6 +329,9 @@ def run_ppo_training(
                 device=execution_config.device,
             ),
             device=execution_config.device,
+            gradient_dispersion_subbatch=(
+                training_config.logging.gradient_dispersion_subbatch
+            ),
         ),
     )
 

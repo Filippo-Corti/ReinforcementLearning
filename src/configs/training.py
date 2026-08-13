@@ -190,6 +190,8 @@ class LoggingConfig(SerializableConfig):
         * trajectory_interval: Training interactions between saved trajectories.
         * near_saturated_steering_threshold: Explicit absolute steering threshold
           used by reported episode summaries.
+        * gradient_dispersion_subbatch: Transitions per sub-batch of the
+          gradient-estimator dispersion probe, or `None` to disable it.
     """
 
     record_episode_metrics: bool = True
@@ -197,7 +199,8 @@ class LoggingConfig(SerializableConfig):
     record_evaluation_metrics: bool = True
     record_hardware_context: bool = True
     trajectory_interval: int = 250_000
-    near_saturated_steering_threshold: float | None = None
+    near_saturated_steering_threshold: float | None = 0.9
+    gradient_dispersion_subbatch: int | None = 256
 
 
 @dataclass(frozen=True, slots=True)

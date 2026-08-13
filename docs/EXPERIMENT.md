@@ -494,10 +494,33 @@ reported run when it is absent; Step 10 freezes the value before data collection
 
 - actor loss, learning rate, entropy proxy and learned log-standard-deviation;
 - actor gradient norm before clipping, weight norm and update norm;
+- gradient-estimator dispersion: the signal-to-noise ratio and mean pairwise
+  cosine similarity of the actor gradient across equal disjoint sub-batches of
+  the same update, with the sub-batch size and count;
 - critic loss, gradient norm, weight norm, predictions, targets, advantages and
   explained variance for A2C and PPO;
 - importance-ratio distribution, clip fraction and approximate KL for PPO; and
 - interaction count and optimization duration.
+
+The dispersion entry is the one measurement here that is not a by-product of
+training. Estimator variance is what separates these algorithms in theory, and no
+norm can show it: a norm describes one averaged gradient rather than how far an
+equally sized second sample would have landed from it. The batch is therefore
+split into disjoint sub-batches of a fixed 256 transitions, each estimating the
+same gradient, and their spread is summarized scale-free so it compares across
+algorithms whose losses carry different constant factors. The size is fixed
+rather than proportional because estimator variance falls as one over the sample
+count, so equal-sized samples are the only fair comparison.
+
+It is measured before any optimizer step of the update. At that point PPO's
+importance ratio is exactly one and its clipped surrogate reduces to the same
+advantage-weighted estimator A2C uses, so the comparison is between *estimators*
+rather than optimization schedules: it separates REINFORCE's return weighting
+from the baselined weighting the other two share, and should not be expected to
+separate A2C from PPO. Report both summaries. The cosine is the more reliable of
+the two when sub-batch gradient magnitudes are heavy-tailed, as REINFORCE's are,
+because the ratio is dominated by the largest sub-batch while the cosine
+normalizes each one.
 
 **Computational cost**
 

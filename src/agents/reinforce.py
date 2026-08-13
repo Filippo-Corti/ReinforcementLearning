@@ -15,7 +15,12 @@ from configs import ActorConfig, ReinforceConfig
 from models import ActorNetwork, agent_parameter_counts
 from training.buffers import OnPolicyRollout, monte_carlo_return_to_go
 
-from .diagnostics import parameter_norm, parameter_update_norm, standardize
+from .diagnostics import (
+    gradient_dispersion,
+    parameter_norm,
+    parameter_update_norm,
+    standardize,
+)
 from .types import (
     AgentUpdateInput,
     AgentUpdateOutput,
@@ -54,10 +59,12 @@ class ReinforceAgent:
         *,
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
+        gradient_dispersion_subbatch: int | None = 256,
     ) -> None:
         """
         Construct the actor and its documented Adam optimizer.
         """
+        self.gradient_dispersion_subbatch = gradient_dispersion_subbatch
         self.config = config
         self.actor_config = actor_config
         self.collection_size = config.completed_episodes_per_update
@@ -172,6 +179,9 @@ class ReinforceAgent:
         actor_loss = torch.stack(trajectory_losses).mean()
 
         # [Compute diagnostics for recording training progress.]
+        dispersion = self._gradient_dispersion(
+            update_input.episodes, standardized_returns
+        )
         entropy_proxy = self._entropy_proxy(update_input.episodes)
         actor_weight_norm = parameter_norm(self.actor.parameters())
         parameters_before = tuple(
@@ -212,6 +222,7 @@ class ReinforceAgent:
                 "log_standard_deviation_1": float(
                     self.actor.policy.log_standard_deviation[1].detach().item()
                 ),
+                **dispersion,
             }
         )
 
@@ -265,6 +276,46 @@ class ReinforceAgent:
         """
         Report that actor-only REINFORCE has no critic parameters.
         """
+
+    def _gradient_dispersion(
+        self,
+        episodes: tuple[OnPolicyRollout, ...],
+        standardized_returns: tuple[Tensor, ...],
+    ) -> dict[str, float | int | None]:
+        """
+        Measure the spread of the return-weighted estimator over equal samples.
+
+        The batch is flattened across trajectories first. REINFORCE's loss sums
+        per-transition terms and divides by a trajectory count, so a sample of
+        transitions estimates the same direction up to that constant, which the
+        scale-free summaries remove.
+        """
+        observations = torch.cat(
+            [
+                episode.tensors(device=self.device).observations.to(dtype=self.dtype)
+                for episode in episodes
+            ]
+        )
+        raw_actions = torch.cat(
+            [
+                episode.tensors(device=self.device).raw_actions.to(dtype=self.dtype)
+                for episode in episodes
+            ]
+        )
+        weights = torch.cat(standardized_returns).detach()
+
+        def subbatch_loss(selected: Tensor) -> Tensor:
+            log_probabilities = self.actor.log_probability(
+                observations[selected], raw_actions[selected]
+            )
+            return -(log_probabilities * weights[selected]).mean()
+
+        return gradient_dispersion(
+            tuple(self.actor.parameters()),
+            subbatch_loss,
+            observations.shape[0],
+            self.gradient_dispersion_subbatch,
+        )
 
     def _trajectory_loss(
         self, episode: OnPolicyRollout, standardized_returns: Tensor

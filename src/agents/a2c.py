@@ -23,6 +23,7 @@ from training.buffers import (
 
 from .diagnostics import (
     explained_variance,
+    gradient_dispersion,
     parameter_norm,
     parameter_update_norm,
     standardize,
@@ -70,10 +71,12 @@ class A2CAgent:
         *,
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
+        gradient_dispersion_subbatch: int | None = 256,
     ) -> None:
         """
         Construct the actor, critic, and their separate documented optimizers.
         """
+        self.gradient_dispersion_subbatch = gradient_dispersion_subbatch
         self.config = config
         self.actor_config = actor_config
         self.critic_config = critic_config
@@ -200,6 +203,7 @@ class A2CAgent:
             self._rollout_training_tensors(rollout)
         )
         advantages = self._standardize_advantages(targets.raw_advantages)
+        dispersion = self._gradient_dispersion(observations, raw_actions, advantages)
         actor_loss = self._actor_loss_tensors(observations, raw_actions, advantages)
         critic_loss, predictions = self._critic_loss(
             observations, targets.value_targets
@@ -280,6 +284,7 @@ class A2CAgent:
                 "log_standard_deviation_1": float(
                     self.actor.policy.log_standard_deviation[1].detach().item()
                 ),
+                **dispersion,
             }
         )
 
@@ -347,6 +352,30 @@ class A2CAgent:
         if count is None:
             raise RuntimeError("A2C must own a critic.")
         return count
+
+    def _gradient_dispersion(
+        self,
+        observations: Tensor,
+        raw_actions: Tensor,
+        advantages: Tensor,
+    ) -> dict[str, float | int | None]:
+        """
+        Measure the spread of the advantage-weighted estimator over equal samples.
+        """
+        weights = advantages.detach()
+
+        def subbatch_loss(selected: Tensor) -> Tensor:
+            log_probabilities = self.actor.log_probability(
+                observations[selected], raw_actions[selected]
+            )
+            return -(log_probabilities * weights[selected]).mean()
+
+        return gradient_dispersion(
+            tuple(self.actor.parameters()),
+            subbatch_loss,
+            observations.shape[0],
+            self.gradient_dispersion_subbatch,
+        )
 
     def _actor_loss(self, rollout: OnPolicyRollout, advantages: Tensor) -> Tensor:
         tensors = rollout.tensors(device=self.device)
