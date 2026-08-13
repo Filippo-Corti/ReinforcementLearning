@@ -1942,3 +1942,83 @@ evaluation checkpoints, which a two-checkpoint validation does not provide.
 
 **Commits**: `feature: measure gradient-estimator dispersion [ai]`,
 `feature: plot gradient dispersion beside the critic fit [ai]`.
+
+## 2026-08-13 — Everything Experiment 2 needs, except Experiment 1
+
+Experiment 2 asks how a PPO actor generalizes from generated circuits to unseen
+ones, and how Frenet compares with local LiDAR sensing. Its actor width is
+chosen by Experiment 1's parsimony rule, so the reported runs cannot start yet.
+Everything else can, and now does.
+
+**Circuits change at every reset.** The vector environment could already
+generate a circuit at reset; the engine never asked it to, and pinned a
+single-circuit pool. A circuit is now named by a logical identity inside its
+split's seed namespace, and the generator seed is derived from that pair. The
+indirection is what lets two runs agree on which circuit they mean.
+
+**Pairing is by worker, not by episode index.** The specification said episode
+index $e$ maps to the same circuit for a paired root. It cannot: episode
+identities are assigned in completion order, and two policies that act
+differently finish episodes in a different order from their first update.
+Measured on two runs differing only in learning rate, agreement in completion
+order was `12/72` — while every worker's own sequence matched exactly. Pairing
+by worker and per-worker episode count survives the difference, and both
+coordinates are now recorded so the claim can be checked from the run output
+instead of trusted. The specification was corrected, not the code.
+
+**An episode carries its own circuit.** Geometry was summarized from the
+prototype environment, which was a faithful stand-in only while there was one
+circuit. With eight workers on eight circuits it would have labelled almost
+every episode with a circuit it never drove.
+
+**LiDAR.** Sixteen rays over $200°$, normalized by a $100\,\mathrm m$ range.
+Rays are tested against every boundary segment in one vectorized pass rather
+than against an arc-length window, because a ray can see track that is metres
+away in space and half a lap away along the centerline. That costs
+$0.14\,\mathrm{ms}$ per observation — about five minutes of processor time over
+a full run — so the spatial index the specification called for is not worth its
+bookkeeping, and `TRACK.md` now describes what the code does. Checked against
+geometry that can be worked out by hand: on the centerline the sideways rays
+read exactly the half width, and against the left wall they read `0.05` and
+`12.13` on a `12 m` circuit.
+
+Two places read speed from a fixed index of the observation vector, which is
+`2` under Frenet and `0` under LiDAR. Both now read the vehicle state. A string
+observation type also selected the default silently, since a string enum
+satisfies equality but not identity.
+
+**The run identity was not unique.** It was algorithm, actor and seed — which
+Experiment 2's paired runs all share. Every analysis table keyed by run identity
+therefore kept only whichever run loaded last, and a four-run rehearsal reported
+two. Found by running the rehearsal, not by reading the code. The identity now
+includes the observation, and loading refuses runs it cannot tell apart.
+
+**Splits.** Eight development, sixteen validation and thirty-two test circuits,
+committed in `tracks/experiment_2_splits.json` with a geometry checksum each, so
+a change to the generator fails loudly instead of quietly redefining a circuit.
+Stratification edges are the development circuits' tertiles. The curvature
+statistic has to be the 90th percentile: over half of every generated circuit is
+straight, so the median is exactly zero on all fifty-six of them.
+
+**Rehearsal.** Two roots × two observations at `60k` interactions, through the
+frozen splits, the in-sample reference, the held-out pass and the full analysis.
+Per-worker schedules agreed across observations at both roots, the two roots
+shared none of their circuits, and every Experiment 2 table and figure was
+produced. Projected cost of the real thing: about `16` minutes per run, so under
+four hours for all ten.
+
+**Left alone.** The notebooks drive their own engines, whose multi-circuit hook
+selects by global episode index and uses a raw seed rather than an identity.
+They work under both observations and all three algorithms, but they do not
+follow the reported protocol.
+
+**Files**: `src/training/circuits.py`, `src/training/engines/shared_engine.py`,
+`src/training/vector_environment.py`, `src/training/evaluation.py`,
+`src/envs/observations/lidar.py`, `src/envs/racing/environment.py`,
+`src/configs/`, `src/recording/records.py`, `src/utils/analysis.py`,
+`experiments/train.py`, `experiments/build_circuit_splits.py`, `tests/`,
+`tracks/experiment_2_splits.json`, `docs/EXPERIMENT.md`, `docs/TRACK.md`.
+
+**Commits**: `feature: train and evaluate across many circuits [ai]`,
+`feature: add the LiDAR observation [ai]`,
+`feature: freeze the Experiment 2 circuit splits [ai]`.
