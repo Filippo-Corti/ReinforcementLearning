@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import partial
-from hashlib import sha256
+from math import isclose
 from pathlib import Path
 
 import numpy as np
@@ -113,21 +113,56 @@ SPLIT_NAMESPACES: dict[CircuitSplit, SeedNamespace] = {
 HELD_OUT_SPLITS = (CircuitSplit.VALIDATION, CircuitSplit.TEST)
 
 
-def circuit_geometry_checksum(track: TrackWithGeometry) -> str:
-    """
-    Fingerprint one circuit's sampled geometry.
+# A circuit is rebuilt from the generator rather than stored, so the frozen
+# splits are only meaningful while the generator keeps producing the same
+# geometry. What is compared has to survive being rebuilt on another machine:
+# generation goes through `math.cos` and `math.sin`, and a platform's libm is
+# not obliged to agree with another's in the last bit. A hash of the raw
+# coordinates therefore differs between Linux and Windows for circuits that are
+# identical to within a picometre. These statistics are compared with a
+# tolerance far below any real change to the generator and far above that noise.
+GEOMETRY_RELATIVE_TOLERANCE = 1e-6
+GEOMETRY_ABSOLUTE_TOLERANCE = 1e-9
 
-    A circuit is named by an identity and rebuilt from the generator on demand
-    rather than stored, which is only safe while the generator is frozen. The
-    checksum turns a change in the generator into a loud mismatch instead of a
-    silent change of what "validation circuit 3" means.
+
+def circuit_geometry_fingerprint(track: TrackWithGeometry) -> dict[str, float]:
     """
-    sampled = track.track
-    digest = sha256()
-    for values in (sampled.x, sampled.y, sampled.curvature):
-        digest.update(np.ascontiguousarray(values, dtype=np.float64).tobytes())
-    digest.update(np.float64(sampled.width).tobytes())
-    return digest.hexdigest()
+    Describe one circuit's geometry closely enough to recognize it again.
+    """
+    absolute_curvature = np.abs(track.track.curvature)
+    return {
+        "track_length": float(track.track.track_length),
+        "straight_fraction": float(np.mean(absolute_curvature < 1.0 / 500.0)),
+        "curvature_q50": float(np.quantile(absolute_curvature, 0.50)),
+        "curvature_q90": float(np.quantile(absolute_curvature, 0.90)),
+        "tightest_radius": float(1.0 / absolute_curvature.max()),
+    }
+
+
+def verify_circuit_geometry(
+    track: TrackWithGeometry,
+    expected: dict[str, float],
+    *,
+    description: str,
+) -> None:
+    """
+    Refuse a circuit whose geometry no longer matches what was frozen.
+    """
+    actual = circuit_geometry_fingerprint(track)
+    for name, value in actual.items():
+        if name not in expected:
+            continue
+        if not isclose(
+            value,
+            float(expected[name]),
+            rel_tol=GEOMETRY_RELATIVE_TOLERANCE,
+            abs_tol=GEOMETRY_ABSOLUTE_TOLERANCE,
+        ):
+            raise ValueError(
+                f"{description} no longer matches the frozen split: {name} was "
+                f"{float(expected[name]):.6g} and is now {value:.6g}. The "
+                "generator or its configuration has changed."
+            )
 
 
 def generated_evaluation_circuits(
@@ -136,7 +171,7 @@ def generated_evaluation_circuits(
     split: CircuitSplit,
     environment_config: EnvironmentConfig,
     namespace: SeedNamespace | None = None,
-    expected_checksums: dict[str, str] | None = None,
+    expected_geometry: dict[str, dict[str, float]] | None = None,
 ) -> tuple[EvaluationCircuit, ...]:
     """
     Prepare one evaluation circuit per identity in a split.
@@ -159,14 +194,12 @@ def generated_evaluation_circuits(
             track_config=environment_config.track,
             vehicle_config=environment_config.vehicle,
         )
-        if expected_checksums is not None:
-            expected = expected_checksums.get(str(identity))
-            actual = circuit_geometry_checksum(track)
-            if expected != actual:
-                raise ValueError(
-                    f"{split.value} circuit {identity} no longer matches the frozen "
-                    "split: the generator or its configuration has changed."
-                )
+        if expected_geometry is not None and str(identity) in expected_geometry:
+            verify_circuit_geometry(
+                track,
+                expected_geometry[str(identity)],
+                description=f"{split.value} circuit {identity}",
+            )
         circuits.append(
             EvaluationCircuit(
                 identity=str(identity),
@@ -195,8 +228,7 @@ def load_split_circuits(
         split=split,
         environment_config=environment_config,
         namespace=SeedNamespace[entry["namespace"]],
-        expected_checksums={
-            str(circuit["identity"]): str(circuit["geometry_checksum"])
-            for circuit in entry["circuits"]
+        expected_geometry={
+            str(circuit["identity"]): circuit for circuit in entry["circuits"]
         },
     )

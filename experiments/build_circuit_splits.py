@@ -25,7 +25,7 @@ from configs import EnvironmentConfig, Experiment2MatrixConfig
 from configs.serialization import to_plain_dict
 from envs.tracks import TrackWithGeometry
 from training import CircuitSplit, circuit_track_seed
-from training.circuits import SPLIT_NAMESPACES, circuit_geometry_checksum
+from training.circuits import SPLIT_NAMESPACES, circuit_geometry_fingerprint
 
 DEFAULT_OUTPUT = Path("tracks/experiment_2_splits.json")
 
@@ -56,7 +56,7 @@ def build_splits(
         }
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         # Recorded because the identities mean nothing without the generator
         # settings that turn them into geometry.
         "track_generation": to_plain_dict(configuration.track),
@@ -94,17 +94,13 @@ def _describe(
         track_config=environment_config.track,
         vehicle_config=environment_config.vehicle,
     )
-    absolute_curvature = np.abs(track.track.curvature)
-    straight_fraction = float(np.mean(absolute_curvature < 1.0 / 500.0))
+    # Exactly the statistics the loader checks on the way back in. Recording
+    # anything else here would put a number in the artefact that looks verified
+    # and is not.
     return {
         "identity": identity,
         "track_seed": seed,
-        "geometry_checksum": circuit_geometry_checksum(track),
-        "track_length": float(track.track.track_length),
-        "straight_fraction": straight_fraction,
-        "curvature_q50": float(np.quantile(absolute_curvature, 0.50)),
-        "curvature_q90": float(np.quantile(absolute_curvature, 0.90)),
-        "tightest_radius": float(1.0 / absolute_curvature.max()),
+        **circuit_geometry_fingerprint(track),
     }
 
 

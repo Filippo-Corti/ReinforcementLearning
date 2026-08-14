@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from configs import EnvironmentConfig
+from envs.tracks import TrackWithGeometry
 from training import (
     CIRCUIT_IDENTITY_LIMIT,
     CircuitSplit,
@@ -83,20 +84,58 @@ def test_a_frozen_split_is_rejected_when_its_geometry_no_longer_matches(
         "splits": {
             "validation": {
                 "namespace": SeedNamespace.EXPERIMENT_2_VALIDATION_TRACK.name,
-                "circuits": [
-                    {"identity": 0, "geometry_checksum": "not-the-frozen-geometry"}
-                ],
+                "circuits": [{"identity": 0, "track_length": 123.4}],
             }
         }
     }
     path = tmp_path / "splits.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="no longer matches the frozen split"):
+    with pytest.raises(ValueError, match="track_length was 123.4"):
         load_split_circuits(
             path,
             CircuitSplit.VALIDATION,
             environment_config=EnvironmentConfig(),
+        )
+
+
+def test_frozen_geometry_survives_a_last_bit_difference_between_machines() -> None:
+    """
+    The check must tolerate a rebuild on another platform, and nothing more.
+
+    Generation runs through `math.cos` and `math.sin`, whose last bit is a
+    property of the platform's libm rather than of the circuit. Comparing raw
+    coordinates byte for byte therefore failed on Linux for circuits identical
+    to within a picometre, while a real change to the generator moves this
+    geometry by metres.
+    """
+    from training.circuits import (
+        circuit_geometry_fingerprint,
+        verify_circuit_geometry,
+    )
+
+    configuration = EnvironmentConfig()
+    track = TrackWithGeometry.generate(
+        circuit_track_seed(SeedNamespace.EXPERIMENT_2_VALIDATION_TRACK, 0),
+        track_config=configuration.track,
+        vehicle_config=configuration.vehicle,
+    )
+    frozen = circuit_geometry_fingerprint(track)
+
+    # A last-bit disagreement, of the size a different libm produces.
+    nudged = {
+        name: value * (1.0 + 1e-12) if value else value
+        for name, value in frozen.items()
+    }
+    verify_circuit_geometry(track, nudged, description="circuit")
+
+    # A change a hundred times smaller than the narrowest real circuit feature
+    # is still caught, so the tolerance buys robustness and not blindness.
+    with pytest.raises(ValueError, match="no longer matches"):
+        verify_circuit_geometry(
+            track,
+            {**frozen, "track_length": frozen["track_length"] + 0.01},
+            description="circuit",
         )
 
 

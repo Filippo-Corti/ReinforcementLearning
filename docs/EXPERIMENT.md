@@ -667,11 +667,22 @@ distribution. These counts are explicit project resource choices, not a formal
 power calculation. Every generated integer seed and geometry summary is stored.
 
 The splits are committed in `tracks/experiment_2_splits.json`, which records for
-each circuit its identity, the generator seed that identity denotes, a checksum
-of its sampled geometry, and its length and curvature summary. The circuits
+each circuit its identity, the generator seed that identity denotes, and its
+length, straight fraction, curvature quantiles and tightest radius. The circuits
 themselves are not stored: they are rebuilt from the frozen generator on demand,
-and the checksum makes any change to the generator a loud failure rather than a
-silent change in what a circuit identity means.
+and those statistics are re-checked on the way back in, so any change to the
+generator is a loud failure rather than a silent change in what a circuit
+identity means.
+
+The comparison uses a relative tolerance of $10^{-6}$ rather than exact
+equality, because a rebuild has to survive moving between machines. Generation
+runs through `math.cos` and `math.sin`, whose last bit belongs to the platform's
+maths library and not to the circuit, so a byte-for-byte comparison of
+coordinates fails on Linux for circuits identical to within a picometre. A real
+change to the generator moves this geometry by metres, and the recorded
+statistics avoid quantities that sit near a decision boundary: every track
+length is an exact multiple of the sample spacing, and no sampled curvature
+comes within a factor of two of the straight/corner threshold.
 
 The **training-reference** circuits are the exception to the split namespaces.
 They are circuits the run itself trained on, taken in per-worker episode order
