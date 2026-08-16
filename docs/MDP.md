@@ -4,31 +4,32 @@ This file contains the formalization of the MDP for the car racing problem.
 
 ## Simulation Details
 
-The decision rate of the agent is set to $\Delta_{t_{agent}} = 0.04s$, meaning that the agent effectively interacts with the environment $25$ times per second. Note that the value of this variable conditions the minimum number of steps needed to finish a lap of a circuit, and therefore the value for the effective horizon $T_{\max}$.
+The simulation models time in seconds. 
+Every $\Delta_{t_{phys}} = 0.01s$, the state of the agent is recomputed according to its current controls and the environments checks for any collision with obstacles.
 
-Importantly, if we were to choose a large $\Delta_{t_{agent}}$, we would increase the chance of the car moving out of bounds between one agent-timestep and the next one.
-For this reason, we define a simulation timestep of $\Delta_{t_{phys}} = 0.01s$. The simulation runs at this frequency, checking at each physical timestep if the car is colliding with an obstacle.
+The decision rate of the agent is set to $\Delta_{t_{agent}} = 0.04s$, meaning that the agent effectively interacts with the environment $25$ times per second. 
 In other words, the agent only reacts every $4$ simulation steps, choosing the action to perform for the next $4$. 
+
+> Note that the value of $\Delta_{t_{agent}}$ conditions the minimum number of steps needed to finish a lap of a circuit, and therefore the value for the effective horizon $T_{\max}$.
 
 ## Environment State
 
 $$ s_t = (x_t, y_t, \theta_t, v_t, \delta_t, C) $$
 
 Where:
-* $x_t, y_t, \theta_t$ describe the current pose of the Car (location and orientation).
-* $v_t$ describes the current velocity of the car.
-* $\delta_t$ is the current front-wheel steering angle.
-* $C$ is the configuration of the circuit, representing the environment.
-
-The steering angle is part of the state because it is rate limited: an action
-requests an angle and the wheels travel toward it over several physics substeps,
-so the angle in force at $t+1$ depends on the angle at $t$.
-This is the same reason why the velocity is part of the state: the throttle does 
-not tell how fast the car is moving.
+* $x_t, y_t, \theta_t$ describe the current pose of the car (location and orientation).
+* $v_t, \delta_t$ describe the current internal state of the car (velocity and front-wheel angle).
+* $C$ is the configuration of the circuit, representing the environment. For more information on that, check [`TRACK.md`](TRACK.md).
 
 This represents fully the environment but it is not what the agent observes.
 
+> Note that $v_t$ and $\delta_t$ are part of the environment because they do not correspond *directly* to the controls of the agent. In fact, the agent controls acceleration and steering, but the actual velocity and heading are subject to physical forces.
+> If this were the case, there would be no need to have them as part of the (observed) state. 
+
 ## Observed State (1) - Frenet Coordinates
+
+A rich **Markov-like** observation of the environment is the one provided by the **Frenet Coordinates**.
+This observation assume that the car can localize itself on the track and has access to the circuit geometry.
 
 $$ o_t^{\text{Frenet}} = (d_t, \phi_{e,t}, v_t, \delta_t, \bar{\kappa}_t) $$
 
@@ -39,16 +40,13 @@ Where:
 * $\delta_t$ is the current front-wheel steering angle.
 * $\bar{\kappa}_t$ is a velocity-dependent summary of the track curvature ahead.
 
-This is a richer, **Markov-like** observation of the environment. It assumes that the
-car can localize itself on the track and has access to the circuit geometry. It is
-not strictly Markov: two track locations can share the same local summary while
-having different geometry farther ahead. The representation is nevertheless
-intended to expose the information most relevant to short-horizon control without
-giving the policy absolute Cartesian coordinates.
-
-The local track geometry is preprocessed and stored with the track, as specified in [`TRACK.md`](TRACK.md).
+> Note that the observation is not strictly **Markov**: for example, the car could be in two different tracks that share a very similar section. They would be locally equal, but as the car progresses the control action would have different effects.
+> Nevertheless, the representation is intended to expose the most relevant information to short-horizon.
 
 ## Observed State (2) - LiDAR Readings
+
+A lower-level observation is given by the **LiDAR Readings**.
+This observation assumes that the car does not know the full circuit, and can only use a LiDAR rangefinder sensor to observe the track around itself.
 
 $$ o_t^{\text{LiDAR}} = (v_t, \delta_t, R) $$
 
@@ -57,15 +55,15 @@ Where:
 * $\delta_t$ describes current front-wheel steering angle.
 * $R$ represents the readings from a LiDAR.
 
-This is a lower-level observation, harder to interpret directly and which assumes that the robot does not know the full circuit.
-This is a real **Partially Observable MDP**, as it is designed willingly to consider partial observability via local sensing and nothing more.
+More precisely, we choose to model a LiDAR sensor with $16$ rays whose first and last rays are included in a field of view (FOV) of $200°$.
+This corresponds to an angular separation of $200°/(16-1) \approx 13.33°$. 
 
-More precisely, we choose to model a LiDAR sensor with $16$ rays whose first and
-last rays are included in a field of view (FOV) of $200°$. This corresponds to an
-angular separation of $200°/(16-1) \approx 13.33°$. Range, normalization and
-no-hit semantics are specified in [`TRACK.md`](TRACK.md).
+> This is a real **Partially Observable MDP**, as it is willingly designed to consider partial observability via local sensing, and nothing more than that.
+
 
 ## Action Space
+
+The agent interacts with the environment via control actions $a_t$:
 
 $$ a_t = (a_t^{throttle}, a_t^{steer}) \in [-1,1]^2 $$
 
@@ -73,7 +71,7 @@ Where:
 * $a_t^{throttle}$ represents acceleration ($a_t^{throttle}>0$) or braking ($a_t^{throttle}<0$).
 * $a_t^{steer}$ represents steering, from left ($a_t^{steer}>0$) to right ($a_t^{steer}<0$).
 
-In the environment, these normalized actions are mapped to physical controls as:
+These are normalized actions, which are mapped to physical controls as:
 
 $$
 \bar{a}_t^{throttle} =
@@ -90,17 +88,11 @@ where:
 * $b_{max} = 20 m/s^2$ is the grip-limited braking deceleration.
 * $\delta_{max} = 30°$ is the maximum steering angle.
 
-Acceleration and braking differ, as it happens in real cars.
-This is due to being limited by different things: the
-engine cannot deliver more than $a_{max}$, while the brakes are limited only by
-the tyres and therefore reach the full friction budget $\mu g$ defined below.
+Acceleration and braking differ, as with real cars: acceleration is limited by the engine, while braking is limited only by tires.
+The effects of these physical controls are not straightforward.
+More on this is specified below.
 
-The steering component is a **requested** angle $\delta_t^{\star}$, not the angle
-that takes effect. The action is a demand; the transition kernel decides what the
-car actually does with it.
-Again, this matches a real car: steering at eccessive speed causes underrotations.
-
-Reversing is not allowed, as assumed not necessary in an F1 circuit.
+> Note that reversing is not allowed, as assumed not necessary in an F1 circuit.
 
 ## Transition Kernel
 
@@ -118,42 +110,41 @@ $$
 $$
 
 Where $L = 3.6m$ is the wheelbase (the distance between front and rear axles).
-These equations are integrated with explicit Euler steps using
-$\Delta_t=\Delta_{t_{phys}}=0.01s$. One agent action is held constant across four
-successive physics steps, and collision is checked after each physics step.
-Notably:
+Some additional constraints are:
 * Since reversing is not allowed, enforce $v_{t+1} \ge 0$.
 * Also enforce $v_{t+1} \le v_{max}$, with $v_{max} = 70 m/s$ (around $250km/h$).
 
-Three limits stand between the requested action and the motion above.
+The environment models the effects of the physical control action according to three physical principles.
 
-**Aerodynamic drag.** The term $c_d v_t^2$ opposes motion at all times. Rather
-than introduce a free constant, $c_d$ is derived so that $v_{max}$ is exactly the
-speed at which drag cancels full throttle:
+#### Aerodynamic Drag
+
+The term $c_d v_t^2$ opposes motion at all times, by reducing the acceleration desired by the car. 
+The constant $c_d$ is derived so that $v_{max}$ is exactly the speed at which drag cancels full throttle, making it impossible for the car to accelerate further:
 
 $$ c_d = \frac{a_{max}}{v_{max}^2} \approx 1.89\cdot 10^{-3}\,\mathrm{m^{-1}} $$
 
-so the speed ceiling is a physical consequence rather than an imposed clamp. The
-clamp at $v_{max}$ is retained only as a numerical guard.
+#### Steering Rate Limit
 
-**Steering rate limit.** The wheels move toward the requested angle at no more
-than $\dot\delta_{max} = 180°/s$:
+The wheels move toward the requested angle at no more than $\dot\delta_{max} = 180°/s$:
 
 $$ \delta_{t+1} = \delta_t + \mathrm{clip}\left(\delta_t^{\star} - \delta_t,\;
    -\dot\delta_{max}\Delta_t,\; +\dot\delta_{max}\Delta_t\right) $$
 
-A full sweep from lock to lock therefore takes a third of a second, or about
-eight agent steps, instead of being available instantaneously. This is what makes
-$\delta_t$ a state variable.
+This means that a full sweep from full-right steer to full-left steer takes a third of a second (about
+eight agent steps), instead of being available instantaneously. 
 
-**Tyre friction budget.** Longitudinal and lateral tyre forces share one budget
-$\mu g = 20\,\mathrm{m/s^2}$, approximately $2g$. Writing the lateral demand of
-the rate-limited angle as
+#### Tire friction
+
+The car decides the wheels' orientation.
+However, when cruising at high speeds, it is possible that the car won't follow the wheels and instead **understeer**.
+This idea is modelled through tire friction.
+
+Longitudinal and lateral tie forces share one budget $\mu g = 20\,\mathrm{m/s^2}$, approximately $2g$. 
+Writing the lateral demand of the rate-limited angle as:
 
 $$ a^{lat}_{t+1} = \frac{v_t^2 \tan(\delta_{t+1})}{L}, $$
 
-the lateral acceleration the tyres can still deliver is whatever the friction
-circle leaves after the longitudinal demand:
+the lateral acceleration the tires can still deliver is whatever the friction circle leaves after the longitudinal demand:
 
 $$ a^{lat}_{avail} = \sqrt{\max\left(0,\;(\mu g)^2 - \min(|\bar{a}_t^{throttle}|, \mu g)^2\right)} $$
 
@@ -167,58 +158,37 @@ $$
 \end{cases}
 $$
 
-The wheels stay where the driver put them; the car simply does not follow. This
-is **understeer**: entering a corner too fast makes the car run wide and hit the
-outer boundary, so the crash arises from geometry rather than from a rule that
-declares excessive cornering illegal. Braking at the limit spends the whole
-budget and leaves nothing to turn with, which is the trade the driver has to
-plan around.
+> At $v = 70\,\mathrm{m/s}$ the tightest corner of a typical generated circuit ($R \approx 15\,\mathrm m$) would demand $330\,\mathrm{m/s^2}$, about $34g$; 
+> the friction budget caps the car at $17\,\mathrm{m/s}$ through that corner while straights remain available at $v_{max}$. 
 
-At $v = 70\,\mathrm{m/s}$ the tightest corner of a typical generated circuit
-($R \approx 15\,\mathrm m$) would demand $330\,\mathrm{m/s^2}$, about $34g$;
-the friction budget caps the car at $17\,\mathrm{m/s}$ through that corner while
-straights remain available at $v_{max}$. Speed is therefore something the policy
-has to spend and recover rather than simply hold.
+#### Remaining physics limitations
 
-### Remaining physics limitations
-
-The model still treats the car as a point at $(x_t,y_t)$ for collision detection
-and has no tyre slip angle, load transfer, or speed-dependent downforce: the
-friction budget is a constant rather than growing with speed as it does on a real
-downforce car. Cornering is quasi-static, so the model cannot represent a car
-that is sliding. These are model limitations, not behaviours to hide through
-reward shaping.
+* The model still treats the car as a point at $(x_t,y_t)$ for collision detection.
+* The car has no tire slip angle, load transfer, or speed-dependent downforce.
+* The friction budget is a constant rather than growing with speed as it does on a real downforce car.
 
 ### Terminal States
 
 A state $s_t$ is `terminal` if:
 * $s_t \in \mathcal{F}$. That is, the car is at the finish line of the circuit. Or,
-* $s_t \in \mathcal{W}$. That is, the car has just hit a wall (which are the boundaries of the track).
-* $s_t \in \mathcal{S}$. That is, the car has stopped racing (see below).
+* $s_t \in \mathcal{W}$. That is, the car has just hit a wall (which are the boundaries of the track). Or,
+* $s_t \in \mathcal{S}$. That is, the car has stopped racing and is simply stalling.
+
+Finishing, crashing and stalling set `terminated=True`.
+Reaching $T_{\max}$ without any of them sets `truncated=True` and does not turn the state into an MDP terminal state.
 
 Indications on how to check if $s_t \in \mathcal{F}$ or $s_t \in \mathcal{W}$ are in [`TRACK.md`](TRACK.md).
 
-In Gymnasium terms, finishing, crashing and stalling set `terminated=True`.
-Reaching $T_{\max}$ without any of them sets `truncated=True` and does not turn
-the state into an MDP terminal state.
+Regarding the stall set $\mathcal{S}$: a car that has advanced less than $\sigma_{\min}=1\,\mathrm m$ over the last $T_{\text{stall}}=3\,\mathrm s$ has stopped racing. Since the state won't change, the control actions also won't change (except for the noise), so the episode ends early. 
 
-**The stall set $\mathcal{S}$.** A car that has advanced less than
-$\sigma_{\min}=1\,\mathrm m$ over the last $T_{\text{stall}}=3\,\mathrm s$ has
-stopped racing. Simulating it for the remaining episode produces no information,
-so the episode ends there.
-
-This must not become a cheap way out. A stalled episode is charged the entire
-time penalty it would have paid by idling to the limit:
-
-$$ r_t = -c_{\text{step}}\left(T_{\max} - t + 1\right)
-   \qquad \text{on entering } \mathcal{S}, $$
-
-so the return of standing still is identical to the return of standing still for
-the full episode. Ending early saves the simulator, not the agent.
+> Note that a stalled episode is still charged a negative reward for the entire time that it would have spent idling to the limit.
+> In other words, this is more of a simulation shortcut than an actual modeling choice.
 
 ### Initial States
 
-**Training.** The start pose is sampled uniformly over the circuit:
+#### Training
+
+The start pose in training is sampled uniformly over the circuit:
 
 $$
 s_0 \sim \left(
@@ -230,34 +200,22 @@ s_0 \sim \left(
 \right)
 $$
 
-A single fixed start makes the zero-speed launch the only state the agent ever
-has to solve, and puts the whole rest of the circuit behind that one bottleneck.
-It also interacts badly with the transition kernel: at $v=0$ the pose and heading
-cannot change, so a deterministic policy whose mean throttle is non-positive at
-that one state never moves at all, however well it drives everywhere else.
-Sampling the pose removes both problems.
+The finish gate moves with the start, so a lap is always one full circuit from wherever the car was placed.
 
-The finish gate moves with the start (see [`TRACK.md`](TRACK.md)), so a lap is
-always one full circuit from wherever the car was placed.
+> A fixed zero-speed start makes successful launch a prerequisite for collecting experience from the remainder of the circuit.
+> This could be an issue if the agent ends up (or starts) in a spot where the throttle is non-positive: the car won't move ($v=0$) and the agent won't explore any other part of the circuit.
+> Sampling the pose solves this. 
 
-**Evaluation.** Deterministic evaluation always launches from the canonical start
-line with $v_0 = 0$:
+#### Evaluation
+
+Deterministic evaluation always launches from the canonical start line with $v_0 = 0$:
 
 $$ s_0 = (x_0, y_0, \theta_0, 0, 0, C) $$
 
-so that every reported number answers the same question and is reproducible from
-the seed alone. Because both the policy and the start are deterministic, one
-evaluation episode per checkpoint is sufficient on a fixed circuit; repeating it
-would produce identical episodes.
-
-### Random Noise
-
-If we later want to model a noisy environment, Gaussian noise can be added to the
-four dynamic components:
-
-$$ s_{t+1} = f(s_t, a_t) + \epsilon_t, \quad \epsilon_t \sim \mathcal{N}(0, \Sigma) $$
 
 ## Reward Function
+
+The reward function for the MDP is the following:
 
 $$
 r_t(s_t, s_{t+1}) =
@@ -269,104 +227,52 @@ R_{\text{finish}} + R_{\text{lap}}\left(1 - \dfrac{t}{T_{\max}}\right) & \text{i
 \end{cases}
 $$
 
-Collision is checked before finish so crossing the gate while off-track cannot
-receive the finish reward.
-
 Where:
 * $R_{\text{finish}} = 100$
-* $R_{\text{lap}} = 100$ is the completion reward that lap time scales.
+* $R_{\text{lap}} = 100$ is the completion reward, scaled by lap time.
 * $R_{\text{crash}} = 5$
 * $c_{\text{step}}= \rho \cdot \Delta_{t_{agent}} = 0.04$, with $\rho = 1s^{-1}$ representing the cost over one agent step.
 * $c_{\text{prog}}=100$
 * $\Delta \tilde{s}_t$ is the progress term, computed as a normalized difference between the current and next locations (see [`TRACK.md`](TRACK.md)).
 
-### Why these magnitudes
+### Choosing the coefficients
 
-The coefficients are not free. They must preserve three orderings, or the task
-becomes unlearnable, or learnable but not a race, by any policy-gradient method
-regardless of its update rule.
+The coefficients cannot be chosen arbitrarily.
+In order for the task to be properly learnable, three conditions are imposed.
 
-**Trying must beat doing nothing.** A policy whose mean throttle is non-positive
-never moves: at $v=0$ the pose and heading cannot change, so the observation and
-reward are constant. That stalled policy earns $-c_{\text{step}}T_{\max}$. Any
-exploratory attempt to drive risks $-R_{\text{crash}}$. If
-$R_{\text{crash}} > c_{\text{step}}T_{\max}$, the stall strictly dominates every
-attempt, and the stall is exactly the behaviour that gradient ascent can reach
-from a neutral initialization. The requirement is therefore
+1. **Trying must beat doing nothing.** A policy that stalls throughout the entirety of the episode (that is, for $T_{\max}$ steps) should be punished harder than one that crashes, even one that crashes immediately. The requirement is:
+  $$ R_{\text{crash}} < c_{\text{step}} \cdot T_{\max}, $$
 
-$$ R_{\text{crash}} < c_{\text{step}} \cdot T_{\max}, $$
+2. **Reaching further must be measurably better.** The progress term is the only signal that distinguishes a policy which crashes immediately from one that crashes at 90% of the lap. The requirement is that the progress term should prevail over the crashes:
+  $$ c_{\text{prog}} \gg R_{\text{crash}}, $$
 
-here $5 < 40$.
+3. **A fast lap must beat a slow lap by a visible margin.** If the goal is racing, the car should not just be incentivized for progressing, but also for finishing fast. Increasing $\rho$ does not work, as it leads to policies that favour instant crashing over finishing. The solution is to add a proper bonus $R_{\text{lap}}$, that scales with the unused episode clock:
 
-**Reaching further must be measurably better.** The shaped term is the only
-signal that distinguishes a policy which crashes at 10% of the lap from one that
-crashes at 90%. Its total authority over an episode is $c_{\text{prog}}$, against
-a one-off $R_{\text{crash}}$. When $c_{\text{prog}} \ll R_{\text{crash}}$ the
-return is, to within estimator noise, a function of *whether* the episode ended
-in a crash and not of *where*, so there is no gradient toward driving further.
-The requirement is
+  $$ \frac{r(\text{fast lap}) - r(\text{slow lap})}{r(\text{fast lap})} > 0.2, $$
 
-$$ c_{\text{prog}} \gg R_{\text{crash}}, $$
+With the values specified above, all 3 conditions are satisfied:
+1. $5 < 40$
+2. $100 \gg 5$
+3. Considering $T_{\max}=1000$, a deterministic reference controller takes at best $22s$ to finish a lap (empirically, over a set of random circuits). Assuming a slow lap to take $1.5 \times$ that, a slow lap takes $33s$. Condition 3 then solves as:
+$$
+r_{\text{fast}}
+= R_{\text{finish}} + R_{\text{lap}}\left(1-\frac{22}{40}\right) - 22
+= 100 + 100(1-0.55)-22
+= 123,\\
+r_{\text{slow}}
+= R_{\text{finish}} + R_{\text{lap}}\left(1-\frac{33}{40}\right) - 33
+= 100 + 100(1-0.825)-33
+= 84.5,\\
+\frac{r_{\text{fast}}-r_{\text{slow}}}{r_{\text{fast}}}
+= \frac{123-84.5}{123}
+\approx 0.313 > 0.2.
+$$
 
-here $100 \gg 5$.
 
-**A fast lap must beat a slow lap by a visible margin.** Progress and the step
-penalty alone leave a crawling lap worth almost as much as an attacking one: a
-lap three times slower loses only a twentieth of its return, so the task rewards
-finishing rather than racing.
 
-The obvious remedy, raising $\rho$ until the step penalty carries the
-difference, cannot work. Raising it also raises what a *failed* attempt pays
-before crashing, and past roughly $\rho = 2s^{-1}$ a policy that drives half a
-lap and then crashes scores below one that crashes immediately, re-inverting the
-first ordering. A term that only ever applies on success has no such side
-effect, which is why $R_{\text{lap}}$ scales with the unused episode clock rather
-than the time penalty being increased further. The requirement is
+## TODO Discounted Horizon Parameter
 
-$$ \frac{r(\text{fast lap}) - r(\text{slow lap})}{r(\text{fast lap})} > 0.2, $$
-
-evaluated over the range of lap times policies actually drive.
-
-`experiments/plot_reward.py` draws all three orderings, next to the coefficients
-this project started from, for which every one of them was violated.
-
-An earlier version of this document used $R_{\text{finish}}=10$,
-$R_{\text{crash}}=20$, $\rho=0.05s^{-1}$ and $c_{\text{prog}}=1$, with no lap
-term. Under those values a policy had to already complete roughly two thirds of
-its laps before attempting the lap beat standing still in expectation, which no
-algorithm can bootstrap from a $0\%$ completion rate. REINFORCE, A2C and PPO all
-converged to the stall.
-
-The maximum episode length is $T_{\max}=1000$ agent steps, corresponding to
-$40s$. The deterministic reference controller laps the generated circuits in
-about $22s$, or $550$ agent steps, and takes at most $28s$ on the slowest of
-twenty-four of them, so the cap leaves roughly a $1.8\times$ margin over a
-reference lap. Both the circuit scale and the cap are configuration values and
-can be changed together for a longer task; the circuit scale was chosen to keep
-a lap inside this cap once circuits gained real straights and became longer.
-
-Here is an example of what may be going on with these values:
-
-* The step penalty over a $22s$ lap is
-  $-c_{\text{step}}\times 22/\Delta_{t_{agent}}=-22$.
-* The normalized progress accumulated over one forward lap is approximately
-  $+100$.
-* The completion reward for a $22s$ lap is $100 + 100\times(1-0.55)=+145$.
-* A $22s$ lap therefore returns approximately $100+145-22=223$. The exact value
-  differs by at most one shaped transition because the terminal branch replaces
-  the normal step reward.
-* A $33s$ lap returns approximately $100+117.5-33=184.5$, seventeen percent less
-  for the same completed circuit.
-* Never leaving the start line returns $-c_{\text{step}}\times T_{\max}=-40$, the
-  worst outcome available, whether the episode is truncated at $T_{\max}$ or
-  ended early by the stall rule.
-* An immediate crash returns $-R_{\text{crash}}=-5$.
-* Crashing after one quarter of the lap returns approximately
-  $100\times0.25-5-c_{\text{step}}\times T_{\text{crash}}\approx+16$, which is
-  above both the stall and the immediate crash. The return is monotone in how far
-  the car got.
-
-## Discounted Horizon Parameter
+> This needs to be revised. I want to make sure it is really necessary to use $\gamma \ne 1$.
 
 The learning contract fixes $\gamma=0.9995$ for all three algorithms. This value
 is chosen from the task timescale:
@@ -382,3 +288,4 @@ $\gamma=1$ would be a meaningful subject for a separate comparison. It is not a
 factor in the approved experiments: changing $\gamma$ by algorithm or actor size
 would confound the intended comparisons. Exact target and boundary semantics are
 specified in [`LEARNING.md`](LEARNING.md).
+
