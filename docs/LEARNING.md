@@ -295,158 +295,169 @@ Input:
     N: batch size (default N = 8)
     γ: discount term 
 
-    # Initialize variables
-    Adam <- torch.optim.Adam(...)
-    interactions <- 0
+# Initialize variables
+Adam <- torch.optim.Adam(a, ...)
+interactions <- 0
 
-    while interactions < B:
-        batch ← ∅
-        # Collect trajectories for a full batch
-        while |batch| < N and interactions < B:
-            for each active environment:
-                O_t <- normalize(O_t)        
-                U_t ∼ 𝓝(μ_θ(O_t), σ²)      
-                A_t <- tanh(U_t)
-                O_t+1, R_t+1, done <- env.step(A_t)
-                store(O_t, U_t, A_t, R_t+1)
-                interactions <- interactions + 1
-                if done:
-                    batch ← batch ∪ {τ}
-        
-        # Stop if budget does not allow enough trajectories to fill batch
-        if |batch| < N: break
+while interactions < B:
+    batch ← ∅
+    # Collect trajectories for a full batch
+    while |batch| < N and interactions < B:
+        for each active environment:
+            O_t <- normalize(O_t)        
+            U_t ∼ 𝓝(μ_θ(O_t), σ²)      
+            A_t <- tanh(U_t)
+            O_t+1, R_t+1, done <- env.step(A_t)
+            store(O_t, U_t, A_t, R_t+1)
+            interactions <- interactions + 1
+            if done:
+                batch ← batch ∪ {τ}
+    
+    # Stop if budget does not allow enough trajectories to fill batch
+    if |batch| < N: break
 
-        # Compute returns-to-go and standardize them
-        for each τ ∈ batch:
-            G <- 0
-            for t <- T-1,...,0:
-                G_t <- R_t+1 + γG
-        G <- standardize(G)
+    # Compute returns-to-go and standardize them
+    for each τ ∈ batch:
+        G <- 0
+        for t <- T-1,...,0:
+            G_t <- R_t+1 + γG
+    G <- standardize(G)
 
-        # Compute REINFORCE loss (use stored data for the log-probs)
-        L <- 0
-        for τ ∈ batch:
-            L <- L - (1/T) Σ_t log π_θ(A_t | O_t) · detach(G_t)
-        L <- L / N
+    # Compute REINFORCE loss (use stored data for the log-probs)
+    L <- 0
+    for τ ∈ batch:
+        L <- L - (1/T) Σ_t log π_θ(A_t | O_t) · detach(G_t)
+    L <- L / N
 
-        # Perform the update step (with clipping)
-        Adam.zero_grad()
-        ∇L <- backprop(L)
-        ∇L <- ∇L · min(1, 0.5 / ||∇L||₂) 
-        Adam.step()
+    # Perform the update step (with clipping)
+    Adam.zero_grad()
+    ∇L <- backprop(L)
+    ∇L <- ∇L · min(1, 0.5 / ||∇L||₂) 
+    Adam.step()
 ```
 ^ TODO: verify if we actually use the GPOMDP cause in the pseudocode we report standard estimator with just one sum instead of two.
 
+Code references:
+* [`REINFORCE Agent`](../src/agents/reinforce.py)
+* [`REINFORCE Training Engine`](../src/training/engines/reinforce.py)
 
 ## A2C with GAE
 
-### Purpose and difference from REINFORCE
+A2C is the first considered actor-critic algorithm.
+It trades some **variance**, which is particularly high in actor-only algorithms like REINFORCE, for some **bias**, which is introduced by the addition of a **value-function approximator**.
+The approximator (the critic $v_{\mathbf w}$) is used to build **bootstrap values** that are used in the construction of a new estimator for the performance function gradient.
 
-A2C adds the value critic $v_{\mathbf w}$. The critic supplies bootstrap values,
-so collection can stop after a fixed number of transitions instead of waiting
-for eight episode endings. GAE combines successive TD errors to reduce variance,
-at the cost of bias from the learned critic. The course notes describe this as a
-synchronous batched V-critic actor-critic method.
+In this implementation, A2C is enhanced with Generalized Advantage Estimation (GAE), which is a more sophisticated way of building the **advantage estimator**, utilizing TD errors from multiple steps instead of just the one-step TD error.
 
-One pooled rollout contains $2048$ valid transitions and may cross several
-episode boundaries. Persistent CPU environments are stepped synchronously and
-stored with shape $(T,n_{\mathrm{envs}},\ldots)$; the final time row may contain
-fewer valid columns when exactly filling the pooled count. This is an
-engineering balance between update frequency and a less noisy batch; unlike
-REINFORCE, it is not imposed by the mathematics. The GAE parameter is
-$\lambda=0.95$. This is a conventional middle point between the
-one-step case $\lambda=0$ and the higher-variance limit near $1$, and will be
-checked before the reported experiment rather than presented as a theorem.
+More precisely, A2C+GAE explores multiple environments until $N=2048$ transitions of experience are collected.
+These can go over multiple episodes; unlike with REINFORCE we do not need an episode to finish in order to actively use it for the updates.
+Of course, different episodes are handled separately.
 
-The implementation-only learning gate uses the same deterministic one-step task
-as REINFORCE: a constant observation $(1)$ with reward equal to the bounded
-throttle action. It uses `(4, 4)` actor and critic networks, $\gamma=0.9$,
-$\lambda=0.95$, validation-only actor and critic learning rates $0.02$, eight
-transitions per rollout, 40 updates, and controlled-problem seed identities
-`0..4`. Every seed must increase deterministic throttle by more than `0.2`
-relative to initialization. These settings validate the A2C implementation and
-are not candidates for either reported racing experiment.
+For any transition happened at timestep $t$ of an episode, we:
+* First, compute the one-step TD errors:
+$$
+\delta_t^{\mathbf w} = r_{t+1} + \gamma B_t - v_{\mathbf w}(O_t) \\
+\text{where} \quad 
+B_t = \begin{cases} 
+0, & \text{if episode ends here} \\
+v_{\mathbf w}(O_{t+1}) & \text{otherwise}
+\end{cases}
+$$
+* Then, compute the GAE advantage estimator as a weighted sum of the TD errors until the end of the episode:
+$$
+\hat{\mathbb{A}}_t^{\text{GAE}} = \sum_{k=0}^{K_t-1} (\gamma \lambda)^k \delta_{t+k}^{\mathbf w}
+$$
+* Finally, compute the return-to-go equivalent (using $\hat{\mathbb{A}}_t^{\text{GAE}}$ as a shortcut):
+$$ G_t = v_{\mathbf w}(O_t) + \hat{\mathbb{A}}_t^{\text{GAE}} $$
 
-With $N$ transitions, A2C minimizes separate mean losses
+Once all transitions are processed, we can use all $N=2048$ of them as a single update batch.
+We compute and optimize the two separate losses:
 
 $$
 \mathcal L_{\mathrm{actor}}(\mathbf\theta)=
--\frac1N\sum_{t=0}^{N-1}
-\log\pi_{\mathbf\theta}(A_t\mid O_t)
-\operatorname{detach}(\widetilde{\mathbb A}_t),
+-\frac{1}{N} 
+\sum_{t=0}^{N-1}
+\log\pi_{\mathbf\theta}(A_t\mid O_t)(\hat{\mathbb A}_t^{\text{GAE}}),
 $$
 
 $$
 \mathcal L_{\mathrm{critic}}(\mathbf w)=
-\frac1{2N}\sum_{t=0}^{N-1}
-\left(v_{\mathbf w}(O_t)-y_t\right)^2.
+\frac{1}{2N}
+\sum_{t=0}^{N-1}
+\left(v_{\mathbf w}(O_t)-G_t\right)^2.
 $$
 
-The actor loss cannot update $\mathbf w$, and the critic target cannot backpropagate
-through the values used to construct it.
 
-### A2C+GAE pseudocode
+### A2C+GAE Pseudocode
 
-```text
-Input:
-    actor and fixed critic architectures
-    actor and critic learning rates
-    gamma = 0.9995, lambda = 0.95, rollout capacity = 2048
-    training-interaction budget and indexed per-worker RNG streams
-
-Initialize:
-    actor parameters theta and learned log standard deviations
-    critic parameters w
-    observation running statistics
-    separate actor and critic Adam optimizers
-    total_training_interactions <- 0
-    spawn the configured environment workers once and receive all O_0 columns
-
-While total_training_interactions < budget:
-    rollout <- empty time-by-environment buffer
-    target_rollout_length <- min(2048, remaining interaction budget)
-
-    While the pooled valid-transition count is below target_rollout_length:
-        select at most the remaining-capacity number of worker columns
-        update observation statistics with their current O_t batch
-        normalize that batch for actor and critic
-        compute batched mu_theta(O_t), standard deviations and v_w(O_t)
-        sample each U_t with its worker RNG and set A_t <- tanh(U_t)
-        compute corrected log pi_theta(A_t | O_t)
-        step the selected workers concurrently
-
-        for each worker transition, set B_t <- 0 after termination
-        otherwise normalize O_(t+1) without updating statistics
-        evaluate all required B_t values in one critic batch
-
-        store the exact normalized inputs, U_t, action, detached value, reward,
-            detached bootstrap value, booleans, episode identity and track identity
-        increment total_training_interactions by the selected-worker count
-
-        reset only workers that terminated or truncated
-        let every other worker continue from O_(t+1)
-
-    For each environment column, moving backward only through that column:
-        compute delta_t <- R_(t+1) + gamma * B_t - v_w(O_t)
-        if terminated, truncated or final stored rollout transition:
-            set raw advantage Ahat_t <- delta_t
-        otherwise within the same uninterrupted worker episode:
-            set Ahat_t <- delta_t + gamma * lambda * Ahat_(t+1)
-        set detached critic target y_t <- Ahat_t + v_w(O_t)
-
-    standardize the raw advantages for the actor only
-    recompute corrected log pi_theta(A_t | O_t) from stored inputs and U_t
-    flatten only valid rows and compute the mean actor loss over the rollout
-    clear actor gradients, backpropagate, record norm, clip and update theta
-    project the log standard deviations back into their approved interval
-    compute the mean half-squared critic loss over the valid rollout rows
-    clear critic gradients, backpropagate, record norm, clip and update w
-    log actor, critic, advantage, target and optimization diagnostics
-
-Save actor, critic, normalizer, both optimizers, RNG states and counters.
 ```
+Input:
+    a_actor: actor learning rate
+    a_critic: critic learning rate
+    B: interaction budget (total number of allowed interactions)
+    N: rollout capacity (default N = 2048)
+    γ: discount term (default γ = 0.9995)
+    λ: GAE parameter (default λ = 0.95)
 
-## Proximal Policy Optimization
+# Initialize variables
+Adam_actor <- torch.optim.Adam(a_actor, ...)
+Adam_critic <- torch.optim.Adam(a_critic, ...)
+interactions <- 0
+
+while interactions < B:
+    rollout <- ∅
+
+    # Collect a rollout of (at most) N transitions
+    while |rollout| <  min(N, B - interactions):
+        for each active environment:
+            O_t <- normalize(O_t)
+            U_t ∼ 𝓝(μ_0(O_t), σ²)
+            A_t = tanh(U_t)
+            log π <- corrected_log_prob(A_t, U_t, μ_0(O_t), σ)
+            O_t+1, R_t+1, done <- env.step(A_t)
+            if done: 
+                B_t <- 0
+            else:
+                B_t <- v_w(normalize(O_t+1))
+
+            store(O_t, U_t, A_t, R_t+1, B_t, ...)
+            interactions <- interactions + 1
+
+    # Compute TD errors, GAE advantages and critic targets
+    for each environment:
+        for t <- last,...,0:
+            δ_t <- R_t+1 + γB_t - v_w(O_t)
+            if terminated or truncated or t is the final rollout transition:
+                Ahat_t <- δ_t
+            else:
+                Ahat_t <- δ_t + γλAhat_t+1
+            y_t <- Ahat_t + v_w(O_t)
+
+    # Standardize advantages for the actor only
+    Ahat <- standardize(Ahat)
+
+    # Compute actor loss, then perform actor update (with clipping)
+    L_actor <- mean(-log π · Ahat)
+    Adam_actor.zero_grad()
+    ∇L_actor <- backprop(L_actor)
+    ∇L_actor <- ∇L_actor · min(1, 0.5 / ||∇L_actor||₂)
+    Adam_actor.step()
+
+    # Compute critic loss, then perform critic update (with clipping)
+    L_critic <- mean(1/2 · (v_w(O) - y)²)
+    Adam_critic.zero_grad()
+    ∇L_critic <- backprop(L_critic)
+    ∇L_critic <- ∇L_critic · min(1, 0.5 / ||∇L_critic||₂)
+    Adam_critic.step()
+
+```
+^ TODO: why do we compute the logprobs in the collection loop here, but we do it separately at end in REINFORCE? But then again we do the standardization? I need to understand these steps better.
+
+Code references:
+* [`A2C Agent`](../src/agents/a2c.py)
+* [`A2C Training Engine`](../src/training/engines/a2c.py)
+
+## PPO
 
 ### Purpose and difference from A2C
 
