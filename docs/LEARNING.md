@@ -1,116 +1,56 @@
 # Learning Contract
 
-This document translates the policy-gradient algorithms in the course notes
-into an exact implementation contract for the racing problem. It explains the
-extra choices needed for bounded continuous actions instead of treating them as
-if they came from the theory.
+This document describes the policy-gradient algorithms used for the project, together with the choices needed to adapt them specifically to the considered racing problem.
 
-The main course references are
-[`policy-gradient-1.md`](theory/policy-gradient-1.md),
-[`policy-gradient-2.md`](theory/policy-gradient-2.md),
-[`actor-critic.md`](theory/actor-critic.md) and
-[`deep-rl.md`](theory/deep-rl.md).
+## Problem Specification
 
-## Configuration, seed and execution contract
-
-The implementation stores immutable training and experiment configurations as
-plain JSON-compatible dictionaries. Actor sizes are named `small`, `medium` and
-`large`, but each serialized configuration retains its literal hidden-width pair:
-`[32, 32]`, `[64, 64]` or `[256, 256]`. The critic always serializes as
-`[64, 64]`. The learning rates remain deliberately unresolved until the
-pre-experiment rule in [`EXPERIMENT.md`](EXPERIMENT.md) selects from its finite
-candidates. The named actor-size configurations therefore keep
-`learning_rate=None`; a runner must copy the selected rate into its per-run
-`ActorConfig` before constructing an agent. This keeps the selected actor rate
-beside the actor settings without giving any network size a silent final rate.
-
-For a run with namespace $n$ and local identity $i$, seed derivation starts from
-`SeedSequence([0, n, i], spawn_key=(stream,))`. Eight immutable stream identities
-separate actor initialization, critic initialization, policy-action sampling,
-environment resets, training-track selection, optimization-batch order,
-evaluation, and track generation, at indices `1..8` respectively. A parallel
-environment with worker identity $j$ derives the corresponding indexed child as
-`spawn_key=(stream, j)`. Each worker therefore advances its own reset,
-track-selection, and policy-sampling state. Deriving a stream never mutates
-another stream or indexed child, so worker scheduling and evaluation cannot
-consume one another's randomness.
-Saved tracks use their split namespace and track index as their logical identity;
-their integer generator seed is the first `uint32` from the track-generation
-stream. A run's training-track-selection stream chooses among those identities.
-
-Seed derivation exposes only fresh NumPy and PyTorch generators and does not
-change global NumPy or PyTorch state. Callers retain a generator when they need
-sequential draws. Environment and track seeds are drawn from their named NumPy
-generators rather than through a separate seed API.
-At run startup, a separate explicit operation configures PyTorch for one
-intra-op and one inter-op thread and deterministic algorithms with errors. The same operation runs inside every persistent
-environment-worker process because process-wide settings are not inherited
-reliably under multiprocessing. Workers are spawned once and reused for the
-training run. That operation intentionally changes process-wide PyTorch settings
-and must run before parallel PyTorch work. It cannot guarantee bitwise equality
-across PyTorch versions, platforms, or kernels without deterministic
-implementations.
-
-## Problem-specific notation
-
-At agent timestep $t$, the policy receives an observation $O_t$. Depending on
-the experiment, this is either
+At agent timestep $t$, the policy $\pi_\theta$ receives an observation $O_t$. 
+Depending on the experiment, the observation can be:
 
 $$
-O_t^{\mathrm{Frenet}}=(d_t,\phi_{e,t},v_t,\bar\kappa_t)
+O_t^{\mathrm{Frenet}}=(d_t,\phi_{e,t},v_t,\bar\kappa_t) \quad \text{or} 
+\quad 
+O_t^{\mathrm{LiDAR}}=(v_t,\widetilde r_t^{(1)},\ldots, \widetilde r_t^{(16)})
 $$
 
-or
+The agent then chooses the bounded action:
 
 $$
-O_t^{\mathrm{LiDAR}}=(v_t,\widetilde r_t^{(1)},\ldots,
-\widetilde r_t^{(16)}).
+A_t=(A_t^{\mathrm{throttle}},A_t^{\mathrm{steer}}) \sim \pi_\theta(\cdot \mid O_t)
 $$
 
-It chooses the bounded action
+After executing $A_t$, the environment returns reward $R_{t+1}$, next observation $O_{t+1}$ and the two booleans:
+* `terminated` is true after completing the lap or crashing;
+* `truncated` is true after reaching the configurable $T_{\max}$-step training time limit.
 
-$$
-A_t=(A_t^{\mathrm{throttle}},A_t^{\mathrm{steer}})\in[-1,1]^2.
-$$
+The actor, represented by the policy $\pi_\theta$, has parameters $\mathbf\theta$. 
+A2C and PPO additionally use a critic, a $V$-function approximator $v_{\mathbf w}(O_t)$ with parameters $\mathbf w$. 
 
-After executing $A_t$, the environment returns reward $R_{t+1}$, next
-observation $O_{t+1}$ and two booleans:
-
-- `terminated` is true after completing the lap or crashing;
-- `truncated` is true after reaching the configurable $1000$-step training
-  time limit.
-
-The actor has parameters $\mathbf\theta$. A2C and PPO additionally use a critic
-$v_{\mathbf w}(O_t)$ with parameters $\mathbf w$. The training objective is
+The training objective is the **performance function** for the policy:
 
 $$
 J(\mathbf\theta)=
 \mathbb E_{\pi_{\mathbf\theta}}
 \left[\sum_{t=0}^{\tau}\gamma^tR_{t+1}\right],
-\qquad \gamma=0.9995.
+\qquad 
+\gamma=0.9995.
 $$
 
 The value of $\gamma$ comes from the task-timescale calculation in
 [`MDP.md`](MDP.md): its effective horizon is $2000$ agent steps, or $80$ simulated
 seconds. The undiscounted episode return is still recorded as a task metric;
 $\gamma$ only controls learning targets.
+^ TODO: revisit if we decide to set $\gamma=1$ instead.
 
-## From a Gaussian policy to bounded controls
+### From the Gaussian Policy to the Control Actions
 
-The course notes define a stochastic policy
-$\pi_{\mathbf\theta}(\cdot\mid O_t)$ but deliberately do not prescribe a
-distribution for continuous actions. This project makes the following design
-choice.
-
-The actor network produces two real numbers
+The actor network produces two real numbers, which represent the mean of a bivariate Gaussian Distribution for the two action dimensions, throttle and steering:
 
 $$
-\boldsymbol\mu_{\mathbf\theta}(O_t)=
-(\mu_t^{\mathrm{throttle}},\mu_t^{\mathrm{steer}}),
+\boldsymbol\mu_{\mathbf\theta}(O_t)= (\mu_t^{\mathrm{throttle}},\mu_t^{\mathrm{steer}}),
 $$
 
-which are the mean of an ordinary Gaussian before action bounds are applied.
-The policy also learns two state-independent log standard deviations
+The policy also learns two state-independent log standard deviations:
 
 $$
 \boldsymbol\ell=(\ell^{\mathrm{throttle}},\ell^{\mathrm{steer}}),
@@ -118,72 +58,41 @@ $$
 \boldsymbol\sigma=\exp(\boldsymbol\ell).
 $$
 
-Using a logarithm lets the optimizer change dispersion while guaranteeing
-$\sigma>0$. A diagonal Gaussian means that the two exploratory noise samples
-are independent once $O_t$ is fixed. Both means still depend on the complete
-observation through the same neural network.
+Using a logarithm lets the optimizer move freely while guaranteeing $\sigma>0$.
 
-The Gaussian sample $U_t$ is unbounded, so it cannot be sent directly to the
-environment. Sampling therefore has two steps:
+The Gaussian sample $(\mu_\mathbf\theta, \ell)$ is unbounded, so it cannot be sent directly to the environment. 
+Sampling therefore has two steps:
 
+1. Sample an unbounded control action $U_t$:
+    $$
+    U_t=\boldsymbol\mu_{\mathbf\theta}(O_t) + \boldsymbol\sigma\odot\varepsilon_t,
+    \qquad 
+    \varepsilon_t\sim\mathcal N(\mathbf0,I),
+    $$
+    where $\odot$ is the componentwise product. 
+2. Apply the bounding via hyperbolic tangent, which smoothly maps every value into $(-1, 1)$.
+    $$ A_t = \tanh(U_t) $$
+
+For deterministic evaluation, we can simply avoid adding the random noise:
+$$ A_t^{\mathrm{eval}}=\tanh \left(\boldsymbol\mu_{\mathbf\theta}(O_t)\right) $$
+
+### Log-Probability Computation
+
+REINFORCE, A2C and PPO all need log-probabilities $\log\pi_{\mathbf\theta}(A_t\mid O_t)$. 
+The Gaussian gives the probability density of $U_t$, not of the bounded action $A_t$. 
+Notice that the $\tanh$ transformation alters the probability distribution, therefore:
+$$ p_{\mathbf\theta}(U_t\mid O_t) \ne \pi_{\mathbf\theta}(A_t\mid O_t) $$
+
+Using probability theory, we can derive $\pi_{\mathbf\theta}(A_t\mid O_t)$ given $p_{\mathbf\theta}(U_t\mid O_t)$ using:
 $$
-U_t=\boldsymbol\mu_{\mathbf\theta}(O_t)
-+\boldsymbol\sigma\odot\varepsilon_t,
-\qquad \varepsilon_t\sim\mathcal N(\mathbf0,I),
-$$
-
-where $\odot$ is the componentwise, or Hadamard, product. Thus
-$U_{t,j}=\mu_{\mathbf\theta,j}(O_t)+\sigma_j\varepsilon_{t,j}$ for each action
-component $j$.
-
-This is the **reparametrization trick**: instead of viewing $U_t$ as an opaque
-random draw whose distribution depends on the policy parameters, draw
-$\varepsilon_t$ from a fixed standard Gaussian independent of those parameters,
-then express $U_t$ as a deterministic differentiable function of
-$\boldsymbol\mu_{\mathbf\theta}$, $\boldsymbol\sigma$ and $\varepsilon_t$. It
-separates the source of randomness from the learned transformation. The present
-algorithms still use the score-function gradient, so the sampled $U_t$ is
-detached before the loss is formed; they do not use the pathwise gradient that
-this parametrization could otherwise provide.
-
-$$
-A_t=\tanh(U_t).
-$$
-
-The hyperbolic tangent smoothly maps every real value into $(-1,1)$. Large
-positive values approach full throttle or full left steering; large negative
-values approach full braking or full right steering. This avoids a hard clip,
-which would collapse many different Gaussian samples onto exactly the same
-boundary action.
-
-For deterministic evaluation, exploration is removed before the transformation:
-
-$$
-A_t^{\mathrm{eval}}=\tanh
-\left(\boldsymbol\mu_{\mathbf\theta}(O_t)\right).
+\pi_{\mathbf\theta}(A_t\mid O_t) = 
+p_{\mathbf\theta}(\operatorname{atanh}(A_t) \mid O_t) 
+\left|
+\det \frac{\partial A_t}{\partial U_t}
+\right|^{-1}
 $$
 
-### Why the log-probability needs a correction
-
-REINFORCE, A2C and PPO all need
-$\log\pi_{\mathbf\theta}(A_t\mid O_t)$. The Gaussian gives the probability
-density of $U_t$, not of the squashed action $A_t$. A change of variables asks
-how that density changes when the coordinates change from $U_t$ to
-$A_t=\tanh(U_t)$. A small region around $U_t$ can shrink after `tanh`, especially
-near the action bounds, so the same probability mass occupies a different
-volume. The density must therefore be divided by this local volume change:
-
-$$
-\pi_{\mathbf\theta}(a\mid o)=
-p_U(u\mid o)
-\left|\det\frac{\partial\tanh(u)}{\partial u}\right|^{-1},
-\qquad u=\operatorname{atanh}(a).
-$$
-
-Because `tanh` acts independently on the two components, its Jacobian is
-diagonal with entries $1-\tanh^2(U_{t,j})$. Taking the logarithm turns the
-determinant product into the sum used by every actor loss:
-
+From this, we derive the following log-probability computation:
 $$
 \log\pi_{\mathbf\theta}(A_t\mid O_t)=
 \sum_{j=1}^{2}
@@ -193,244 +102,104 @@ $$
 \right].
 $$
 
-The sum makes this the probability of the complete throttle-steering vector,
-not two unrelated loss terms.
+Where the term $1-\tanh^2(U_{t,j})$ represents the derivative of $A_t = \tanh(U_t)$, with respect to $U_t$.
 
-Sampling retains $U_t$. If only $A_t$ is available, its components are first
-clamped to $[-1+10^{-6},1-10^{-6}]$ before computing
-$U_t=\operatorname{atanh}(A_t)$. The $10^{-6}$ is solely a numerical guard
-against applying `atanh` to an exactly saturated floating-point action.
-
-The sampled $U_t$ and $A_t$ are treated as constants inside the score-function
-loss. Gradients flow through the log-probability, not backward through the
-random sampling operation itself. Environment collection does not retain an
-autograd graph. REINFORCE and A2C recompute current log-probabilities from stored
-normalized observations and $U_t$ when forming their losses; PPO stores a
-detached behaviour-policy log-probability and separately recomputes the current
-one during optimization.
-
-## Actor and critic architectures
+## Actor and Critic Architectures
 
 Both models are ordinary fully connected multilayer perceptrons with two hidden
 layers and `Tanh` activations.
 
 For observation dimension $d_O$ and actor hidden widths $(h_1,h_2)$:
-
-```text
-normalized O_t in R^(d_O)
-    -> Linear(d_O, h_1) -> Tanh
-    -> Linear(h_1, h_2) -> Tanh
-    -> Linear(h_2, 2)   -> mu_theta(O_t)
-                                      + learned log-standard-deviation vector in R^2
-                                      -> Gaussian sample U_t
-                                      -> Tanh -> bounded action A_t
+```
+O_t ∈ ℝ^{d_O} 
+    -> Linear(d_O, h_1) -> Tanh 
+    -> Linear(h_1, h_2) -> Tanh 
+    -> Linear(h_2 ,2) -> μ ∈ ℝ²
 ```
 
-Experiment 1 changes only $(h_1,h_2)$:
-
-- small actor: `(32, 32)`;
-- medium actor: `(64, 64)`;
-- large actor: `(256, 256)`.
+Experiment 1 changes $(h_1,h_2)$:
+- Small actor: `(32, 32)`;
+- Medium actor: `(64, 64)`;
+- Large actor: `(256, 256)`.
 
 Including the learned two-component log standard deviation, the actor parameter
-count is
+count is:
+$$ (d_O+1)h_1+(h_1+1)h_2+(h_2+1)\cdot2+2 $$
 
-$$
-(d_O+1)h_1+(h_1+1)h_2+(h_2+1)\cdot2+2.
-$$
-
-The critic architecture is fixed for every A2C and PPO comparison:
-
-```text
-normalized O_t in R^(d_O)
-    -> Linear(d_O, 64) -> Tanh
-    -> Linear(64, 64)  -> Tanh
-    -> Linear(64, 1)   -> v_w(O_t)
+The critic architecture is fixed:
+```
+O_t ∈ ℝ^{d_O} 
+    -> Linear(d_O, 64) -> Tanh 
+    -> Linear(64, 64) -> Tanh 
+    -> Linear(64, 1) -> v ∈ ℝ
 ```
 
-Its parameter count is
+Its parameter count is:
+$$ (d_O+1)\cdot64+(64+1)\cdot64+(64+1). $$
 
-$$
-(d_O+1)\cdot64+(64+1)\cdot64+(64+1).
-$$
 
-Fixing the critic at `(64, 64)` prevents critic capacity from changing with the
-actor-size factor. In the LiDAR comparison the input dimension necessarily
-changes from $4$ to $17$, so the resulting input-layer parameter difference is
-reported.
+| Model          | Hidden widths | Parameters ($d_{O_{\text{Frenet}}} = 5$) | Parameters ($d_{O_{\text{LiDAR}}} = 18$) |
+| -------------- | ------------: | ---------------------: | ----------------------: |
+| Actor — Small  |      (32, 32) |                  1,314 |                   1,730 |
+| Actor — Medium |      (64, 64) |                  4,738 |                   5,570 |
+| Actor — Large  |    (256, 256) |                 67,586 |                  70,914 |
+| Critic         |      (64, 64) |                  4,609 |                   5,441 |
 
-Hidden weights use orthogonal initialization with gain $\sqrt2$ (the gain is
-the scalar that multiplies the initial orthogonal matrix, so it controls the
-initial weight norm of the network) and zero bias.
-The actor mean output uses gain $0.01$; the critic output uses gain $1$. The
-actor's output bias is not zero: it starts at $(0.2, 0)$, so the initial policy
-is neutral in **acceleration** rather than in the normalized action. Braking
-reaches $20\,\mathrm{m\,s^{-2}}$ while the engine gives $9.26$, so symmetric
-exploration noise around a zero throttle mean has expected acceleration
-$9.26\,\mathbb E[\tanh^+] - 20\,\mathbb E[\tanh^-] \approx -2.17\,\mathrm{m\,s^{-2}}$;
-an untrained policy brakes to a standstill within seconds and every episode ends
-as a stall. The bias is the value at which that expectation is zero. These gains
-are project engineering choices, not consequences of the policy-gradient theorem.
-
+Hidden network weights are initialized using *orthogonal initialization*, with a gain (multiplier) equal to $\sqrt2$ and bias equal to $0$.
 The learned log standard deviations start at $-0.5$, corresponding to
-$\sigma\approx0.61$ before squashing. This is a deliberately moderate initial
-exploration scale. Values are constrained to $[-5,0]$ during use. The lower
-bound avoids numerical collapse. The upper bound is $0$, not $2$, because
-actions are squashed by $\tanh$: at $\sigma\approx1.9$, which a PPO run reached
-under the old bound, nearly every sample saturates at a control limit, the
-policy degenerates into random bang-bang control, and its mean stops being
-identifiable from the data. These dispersion values are project choices and are
-checked during the pre-experiment configuration work.
+$\sigma\approx0.61$, and is bounded to $[-5, 0]$. 
 
-**Lowering the bound further was tried and reverted.** At $-0.3$, a scale of
-$0.74$, PPO pressed against that bound instead, ending a 2,000,000-interaction
-run at $-0.343$ and $-0.300$, and its finished deterministic policy still
-alternated between control limits. A cap moves where the dispersion saturates
-without removing the pressure that takes it there, so the tighter one bought
-nothing and is not retained. Only PPO ever approaches a bound at all: REINFORCE
-and A2C settle near $0.58$ unaided under either.
+## Input Normalization and Optimization Safeguards
 
-**How the bounds are enforced.** After each actor optimizer step, the learned
-log standard deviations are *projected* back into their interval; the log density
-itself uses the parameter unmodified. The distinction matters. Enforcing the
-bounds with a clamp inside the log density instead leaves the parameter free to
-drift outside the interval, and a clamp has exactly zero gradient there: a log
-scale that once crossed the upper bound would be frozen at maximum dispersion
-for the remainder of the run, because the gradient that should pull it back is
-identically zero. A run under that implementation did exactly this — both
-components crossed $0$ after roughly 350,000 interactions and stayed pinned at
-$\sigma=1$ for the remaining 1,650,000. Projection instead leaves the parameter
-resting *on* the bound, where its gradient is live, so the optimizer can move it
-inward as soon as the data asks for that.
+### Observation Normalization
 
-The upward pressure is not incidental, which is why the enforcement mechanism
-matters. Under the $\tanh$ change of variables the log density of a saturated
-action grows without bound, so
-$\partial\log\pi/\partial\log\sigma$ is strongly positive for samples far from
-the mean: about $+6.9$ at $U_t=2$ and $+18.9$ at $U_t=3$, against $-1.0$ at
-$U_t=0.4$. Whenever the actions with positive advantage are saturated ones —
-which cornering makes routine — the actor objective is improved by widening the
-policy. REINFORCE and A2C take one gradient step per batch and their dispersion
-drifts slowly downward in practice; PPO takes $128$ minibatch steps on each
-rollout, four epochs over thirty-two minibatches, so the same per-step pressure
-compounds and only PPO reaches the bound.
+Since the observation components have incompatible scales, feeding their raw magnitudes into the MLPs would let scale dominate early gradients.
 
-## Input normalization and optimization safeguards
-
-### Observation normalization
-
-The observation components have incompatible scales: heading is measured in
-radians, lateral displacement in metres, speed can approach $70$, and curvature
-is much smaller. Feeding those raw magnitudes into one MLP would let scale alone
-dominate early gradients.
-
-For simplicity, each component uses naive two-pass-style running sums. After
-$n$ observations, store the sum and squared sum
-
+This issue is solved through normalization via **standardization with the previous measurements**:
+* At each new observed value $x$, we update a running sum and running squared sum:
+    $$
+    S_n=\sum_{k=1}^{n}x_k, \qquad S_n\leftarrow S_{n-1}+x \\
+    Q_n=\sum_{k=1}^{n}x_k^2, \qquad Q_n\leftarrow Q_{n-1}+x^2
+    $$
+* Then we can standardize $x$ via:
 $$
-S_n=\sum_{k=1}^{n}x_k,
-\qquad
-Q_n=\sum_{k=1}^{n}x_k^2.
+\mu_n=\frac{S_n}{n}, \qquad \sigma_n^2=\max\left(\frac{Q_n}{n}-\mu_n^2,0\right) \\
+\widetilde x = \frac{x-\mu_n}{\sqrt{\sigma_n^2}},
 $$
-
-On a new value $x$, update $n\leftarrow n+1$, $S_n\leftarrow S_{n-1}+x$ and
-$Q_n\leftarrow Q_{n-1}+x^2$. The population moments are then
-
-$$
-\mu_n=\frac{S_n}{n},
-\qquad
-\sigma_n^2=\max\left(\frac{Q_n}{n}-\mu_n^2,0\right).
-$$
-
-The maximum only removes a tiny negative value that floating-point cancellation
-can create. Counts and sums are accumulated in 64-bit precision. A raw component
-$x$ becomes
-
-$$
-\widetilde x=
-\operatorname{clip}\left(
-\frac{x-\mu_n}
-{\sqrt{\sigma_n^2+10^{-8}}},
--10,10
-\right).
-$$
-
-The $10^{-8}$ prevents division by zero before enough observations have been
-seen. The range $[-10,10]$ is a project safeguard against a rare observation
-producing an extreme network input; it does not alter the environment state or
-reward.
-
-Each current training observation updates the statistics before normalization.
-A next observation used only to bootstrap a critic is normalized with the
-current statistics but does not update them. Rollouts retain the normalized
-values actually given to the networks. Evaluation freezes the statistics, so
-evaluating more often cannot change training.
 
 ### Optimizer and gradient-norm clipping
 
-Actor and critic use separate Adam optimizers. The moment parameters
-$\beta_1=0.9$, $\beta_2=0.999$ and numerical constant $10^{-8}$ are the defaults
-recommended in the original Adam paper. Learning rates are selected separately
-during pre-experiment configuration because the course equations do not
-determine them.
+Actor and critic use separate Adam optimizers. 
+The moment parameters $\beta_1=0.9$, $\beta_2=0.999$ and numerical constant $10^{-8}$ are the defaults recommended in the original Adam paper. 
+Learning rates are selected separately during pre-experiment configuration.
 
-After backpropagation and before `optimizer.step()`, compute the global Euclidean
-norm of all gradients belonging to one network. If the norm exceeds $0.5$, scale
-that network's gradients together so their norm becomes $0.5$. Actor and critic
-are clipped separately, and the norm before clipping is logged. This is a
-project stability safeguard: one unusually noisy batch cannot produce an
-arbitrarily large parameter update. It rescales the gradient vector without
-changing the loss equation, clipping individual parameters or clipping actions.
+After `loss.backward()` and before `optimizer.step()`, gradients are clipped by their global Elucidean norm:
+$$ 
+g \leftarrow g \cdot \min \left(1, \frac{0.5}{\Vert g \Vert_2} \right)
+$$
+This is a standard practice to improve stability, avoiding that unusually noisy batches produce arbitrarily large parameter updates.
 
-This is distinct from **PPO ratio clipping**. Gradient-norm clipping is applied
-to every algorithm after backpropagation and uses the norm threshold $0.5$.
-PPO ratio clipping appears only inside the PPO actor objective: it limits the
-importance ratio $\omega_t$ to $[1-\epsilon,1+\epsilon]$ in one surrogate branch,
-with $\epsilon=0.2$, so a sample cannot keep rewarding a policy change that has
-moved too far from the behaviour policy. It changes PPO's objective but does not
-directly clip its gradients. PPO value clipping would be a third, separate
-mechanism; it is disabled here.
+## Episode Endings and Value Bootstrap
 
-Weight decay is disabled for all three algorithms. REINFORCE previously carried
-an optional Adam L2 penalty on its MLP weights, set to $10^{-4}$ in its
-notebook. It has been removed: no other algorithm had it, which broke the
-comparison, and over a 2,000,000-interaction run it shrank the actor weight norm
-monotonically toward a zero-output mean while the policy-gradient term made no
-net progress.
+The environment distinguishes genuine MDP endings from an external time limit, using the `terminated` and `truncated` flags.
 
-No entropy bonus, learning-rate scheduler or PPO value clipping is enabled. PPO
-**does** stop an update early when the mean approximate KL of an epoch exceeds
-$0.02$; see the PPO section. The sampled value
-$-\log\pi_{\mathbf\theta}(A_t\mid O_t)$ is logged only as a dispersion diagnostic.
-
-## Episode endings and value bootstrap
-
-The environment distinguishes genuine MDP endings from an external time limit.
-The equations use explicit cases rather than multiplying by numeric masks.
-
-For A2C and PPO, define the next-state bootstrap value as
-
+For A2C and PPO, the next-state bootstrap value is defined as as:
 $$
 B_t=
 \begin{cases}
-0,
-& \text{if `terminated` is true},\\
-v_{\mathbf w}(O_{t+1}),
-& \text{otherwise}.
+0, & \text{if terminated},\\
+v_{\mathbf w}(O_{t+1}), & \text{otherwise}.
 \end{cases}
 $$
 
-A finish or crash therefore has no future value. A time-limit ending is not an
-MDP terminal state, so it still uses the critic's estimate of $O_{t+1}$. The TD
-error is
-
+A time-limit ending is not an MDP terminal state, so it still uses the critic's estimate of $O_{t+1}$. The TD
+error is:
 $$
 \delta_t^{\mathbf w}=
 R_{t+1}+\gamma B_t-v_{\mathbf w}(O_t).
 $$
 
-GAE is computed backward as
-
+The GAE Advantage is computed as:
 $$
 \widehat{\mathbb A}_t=
 \begin{cases}
@@ -455,173 +224,121 @@ y_t=\operatorname{detach}\left(
 \right).
 $$
 
-$\operatorname{detach}(x)$ has the same numerical value as $x$ but no autograd
-path through the expression that produced it. This is the mathematical notation
-used here for PyTorch's `Tensor.detach()` operation.
-
 The raw advantage creates $y_t$. For the actor only, advantages are standardized
 once over the rollout. PPO retains those same standardized values for all
 optimization epochs.
 
-## Where each algorithm's code lives
+# Learning Algorithms
 
-Each algorithm has one engine, in one file, holding one training loop:
-`src/training/engines/{reinforce,a2c,ppo}.py`. Reading `PPOTrainingEngine.train`
-tells you what PPO does, in PPO's terms, without following a call into shared
-code.
+All algorithms share the goal of maximizing the **performance function**:
+$$ J(\theta) = \mathbb{E} \left[ \sum_{t=0}^{\tau}\gamma^t r(S_t, A_t) \right] $$
 
-The dividing line is deliberate:
+The performance function corresponds to the expected return from a full **episode** in which we apply the policy $\pi_\theta$.
+The objective of the training is to find the parameters $\theta$ that describe the policy $\pi_\theta$ that has the maximum expected return over random episodes. 
 
-> Anything that decides **what the experiment measures** is written once and
-> shared — the circuit schedule, the splits, the record schema, evaluation,
-> checkpoints. Anything that shows **how an algorithm collects and updates**
-> lives in that algorithm's own file.
-
-The shared side is `TrainingEngine` and its collaborators: `StepCollector` turns
-one vector step into transitions, `EpisodeRecorder` accumulates episodes and
-emits their records, `EvaluationSchedule` evaluates a set of circuits at a
-checkpoint, `TrainingTimer` separates the durations, and `EngineCheckpoint`
-guards what a checkpoint may be restored onto. None of them contains a loop.
-
-A2C and PPO collect identically — a fixed rollout in `(time, worker)` shape —
-and their two files say so in the same number of lines. That repetition is
-accepted on purpose: what separates the two algorithms is what they then do with
-the rollout, and a reader looking for PPO should find PPO rather than a shared
-abstraction with PPO among its cases. What is *not* accepted is repeating the
-machinery around the loop, which is why none of it is in these files.
+All algorithms apply **stochastic gradient descent**, updating $\theta$ periodically:
+$$ \theta_{k+1} \leftarrow \theta_k + \alpha \nabla J(\theta_k)  $$
+Instead, they differ in the way they compute $J(\theta)$ and the gradient $\nabla J(\theta)$.
 
 ## REINFORCE
 
-### Purpose and expected behaviour
+REINFORCE is the simplest algorithm considered in the experiment.
+It is actor-only and Monte Carlo. 
+This means that it:
+1. Collects full episodes by interacting with the environment.
+2. Uses the colected returns to build an estimate for $\nabla J(\theta)$.
+3. Update $\theta$ using this estimate.
 
-REINFORCE is the simplest algorithm in the comparison. It directly applies the
-score-function estimator from the policy-gradient notes and has no critic. It
-therefore provides the cleanest baseline for studying actor capacity, but its
-Monte Carlo targets can have high variance and it cannot learn from an episode
-until that episode ends.
+Its approach is:
+* **High variance**, as playing the policy $\pi_theta$ for a full episode, with many steps, results in a long chain of choices which can easily cause large swings in the final return of the episode.
+* **Low bias**, as it updates its estimate purely based on data it collects, without introducing any assumption or prior knowledge.
 
-Because there is no value function from which to bootstrap, REINFORCE collects
-complete episodes. Eight episodes form one update batch so the update averages
-several independently generated trajectories. The choice of eight is a project
-trade-off: fewer episodes update more frequently but noisily, while more delay
-every update and require more memory.
+To limit the effect of variance on the updates, REINFORCE is implemented with **batches**, which for the experiment are set to be of size $n=8$.
 
-The batch size and the number of environment workers are independent. Workers
-are an execution resource shared with A2C and PPO, and all three algorithms use
-the same count so that reported timing compares like with like; the batch size
-belongs to REINFORCE alone. Trajectories are collected concurrently, one per
-active worker, and a worker that reaches an episode boundary is parked. When a
-batch needs more trajectories than there are workers, it is filled over several
-successive waves. No optimizer step happens between the waves of one batch, so
-all eight trajectories are still drawn from a single policy, which is what the
-Monte Carlo estimator requires. If a batch has room for fewer trajectories than
-there are workers, only that many workers are activated, so a batch never
-overshoots its size.
+### GPOMDP REINFORCE Estimator
 
-The implementation-only learning gate uses a deterministic one-step task with
-constant observation $(1)$ and reward equal to the bounded throttle action.
-It uses a `(4, 4)` actor, $\gamma=0.9$, validation-only learning rate $0.02$,
-eight episodes per update, 40 updates and controlled-problem seed identities
-`0..4`. Every seed must increase its deterministic throttle by more than `0.2`
-relative to initialization. These settings validate the implementation; they
-are not candidates for either reported racing experiment.
+For the implementation, we consider the **GPOMDP** variant of **REINFORCE**, which arranges the terms of the estimation in the REINFORCE procedure in a way that exploits the temporal structure of the MDP.
 
-For complete trajectory $i$, compute return-to-go backward:
+For a complete trajectory $i$, REINFORCE computes returns-to-go by iterating backwards on the recorded rewards:
 
 $$
 G_t^i=
 \begin{cases}
-R_{t+1}^i,
+r_{t+1}^i,
 & \text{if `terminated` or `truncated` is true},\\
-R_{t+1}^i+\gamma G_{t+1}^i,
+r_{t+1}^i+\gamma G_{t+1}^i,
 & \text{otherwise}.
 \end{cases}
 $$
 
-Across every transition in the eight-episode batch, standardize the returns as
-$\widetilde G_t^i=(G_t^i-\overline G)/(s_G+10^{-8})$. This supplies a non-learned
-batch baseline and scale, following the variance-reduction motivation in the
-course notes. It does not add a critic.
+Then, it normalizes the returns-to-go using **standardization** as a **non-learned batch baseline**, which is a very simply variance-reduction technique:
+$$ \widetilde G_t^i=\frac{G_t^i-\overline G}{s_G} $$
 
-The actor minimizes
-
+Finally, the gradient step is executed by using the **REINFORCE estimator**:
 $$
-\mathcal L_{\mathrm{REINFORCE}}(\mathbf\theta)=
--\frac1n\sum_{i=1}^{n}\sum_{t=0}^{\tau_i}
-\log\pi_{\mathbf\theta}(A_t^i\mid O_t^i)
-\operatorname{detach}(\widetilde G_t^i),
-\qquad n=8.
+\hat{\nabla} J(\theta) = 
+\frac{1}{n} 
+\sum_{i=1}^{n}\sum_{t=0}^{\tau_i} 
+\log\pi_{\mathbf\theta}(A_t^i\mid O_t^i)(\widetilde G_t^i)
 $$
 
-### REINFORCE pseudocode
+> Note that, in the formulation, $G_\tau^i$ is the full return of the trajectory: standard REINFORCE uses this in its estimation. 
+> Instead, GPOMDP REINFORCE uses all $G_t^i$, the **returns-to-go**.
+> This distinction makes sure that probabilities are correcly aligned with the parts of the reward they contribute to, instead of assuming that all probabilities contribute to all of it.
 
-```text
-Input:
-    actor architecture and actor learning rate
-    training-interaction budget
-    batch size of 8 complete trajectories
-    independent actor-initialization RNG and one indexed policy/reset RNG per worker
+### REINFORCE Pseudocode
 
-Initialize:
-    actor parameters theta and learned log standard deviations
-    observation running statistics
-    actor Adam optimizer
-    total_training_interactions <- 0
-    spawn the configured environment workers once and reset each worker
-    batch <- empty list of complete trajectories
-
-While enough budget remains to continue collecting:
-    wave_size <- min(8 - size of batch, worker count)
-    mark the first wave_size workers active and park the rest
-
-    While at least one worker is active and budget remains:
-        update observation statistics with all active current observations
-        normalize the active observation batch
-        run one batched actor forward pass
-        sample each pre-squash U_t from that worker's policy RNG
-        set every A_t <- tanh(U_t)
-        step all active workers concurrently
-        store each transition in its worker's trajectory
-        increment total_training_interactions by the active-worker count
-        when a worker terminates or truncates, append its trajectory to batch
-            and park it
-
-    If the budget interrupted any trajectory before its environment boundary:
-        retain all interactions and episode metrics for accounting
-        do not use this incomplete batch in a Monte Carlo update
-        stop collection
-
-    If the batch holds fewer than 8 complete trajectories:
-        reset the workers of the next wave and continue collecting
-        no optimizer step separates the waves of one batch
-
-    For every trajectory in the batch, moving backward from its last transition:
-        set G_t <- R_(t+1) at termination or time-limit truncation
-        otherwise set G_t <- R_(t+1) + gamma * G_(t+1)
-
-    standardize all G_t values in the batch
-    recompute corrected log pi_theta(A_t | O_t) from stored inputs and U_t
-    compute each trajectory's sum of log-probability times detached G_t
-    average those trajectory losses to obtain L_REINFORCE
-    clear actor gradients
-    backpropagate L_REINFORCE
-    record the actor gradient norm and clip it if it exceeds 0.5
-    apply one Adam update to theta and the log standard deviations
-    project the log standard deviations back into their approved interval
-    log losses, dispersion, parameter norms, update size and interaction count
-    empty the batch and start the next collection wave
-
-Save the final actor, normalizer, optimizer, RNG states and counters.
 ```
+Input:
+    a: learning rate
+    B: interaction budget (total number of allowed interactions)
+    N: batch size (default N = 8)
+    γ: discount term 
 
-If the global budget ends during an episode or before eight new complete
-episodes are available, all interactions and completed-episode records remain
-counted but that incomplete update batch is not optimized. Recomputing
-log-probabilities after collection avoids retaining a neural-network computation
-graph for as many as 8,000 environment transitions. This keeps the reported
-interaction budget exact without inventing a critic for REINFORCE.
+    # Initialize variables
+    Adam <- torch.optim.Adam(...)
+    interactions <- 0
 
-## A2C with Generalized Advantage Estimation
+    while interactions < B:
+        batch ← ∅
+        # Collect trajectories for a full batch
+        while |batch| < N and interactions < B:
+            for each active environment:
+                O_t <- normalize(O_t)        
+                U_t ∼ 𝓝(μ_θ(O_t), σ²)      
+                A_t <- tanh(U_t)
+                O_t+1, R_t+1, done <- env.step(A_t)
+                store(O_t, U_t, A_t, R_t+1)
+                interactions <- interactions + 1
+                if done:
+                    batch ← batch ∪ {τ}
+        
+        # Stop if budget does not allow enough trajectories to fill batch
+        if |batch| < N: break
+
+        # Compute returns-to-go and standardize them
+        for each τ ∈ batch:
+            G <- 0
+            for t <- T-1,...,0:
+                G_t <- R_t+1 + γG
+        G <- standardize(G)
+
+        # Compute REINFORCE loss (use stored data for the log-probs)
+        L <- 0
+        for τ ∈ batch:
+            L <- L - (1/T) Σ_t log π_θ(A_t | O_t) · detach(G_t)
+        L <- L / N
+
+        # Perform the update step (with clipping)
+        Adam.zero_grad()
+        ∇L <- backprop(L)
+        ∇L <- ∇L · min(1, 0.5 / ||∇L||₂) 
+        Adam.step()
+```
+^ TODO: verify if we actually use the GPOMDP cause in the pseudocode we report standard estimator with just one sum instead of two.
+
+
+## A2C with GAE
 
 ### Purpose and difference from REINFORCE
 
