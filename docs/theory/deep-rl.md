@@ -30,7 +30,7 @@ The algorithm works as follows:
     * Define the **Actor Loss**:
         $$ \mathcal{L}_\text{actor}(\mathbf{\theta}) = - \sum_{t=0}^{T-1} \log{\pi_{\mathbf{\theta}}(A_t \mid S_t)} \delta_t^{\mathbf{w}} $$
     * Define the **Critic Loss**:
-        $$ \mathcal{L}_\text{critic}(\mathbf{w}) = \frac{1}{2} \sum_{t=0}^{T-1} (v_{\mathbf{w}}(S_t) - G_t)^2
+        $$ \mathcal{L}_\text{critic}(\mathbf{w}) = \frac{1}{2} \sum_{t=0}^{T-1} (v_{\mathbf{w}}(S_t) - G_t)^2 $$
     * Run a step of **Gradient Descent** using **Adam Optimizer**, minimizing the loss:
         $$ \mathcal{L}_\text{actor}(\mathbf{\theta}) + \mathcal{L}_\text{critic}(\mathbf{w}) $$
         with respect to the parameters $\mathbf{\theta}$ and $\mathbf{w}$.
