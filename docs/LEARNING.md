@@ -219,12 +219,12 @@ error bootstraps, while GAE does not refer to data outside the collected batch.
 The fixed value target is
 
 $$
-y_t=\operatorname{detach}\left(
+G_t=\operatorname{detach}\left(
 \widehat{\mathbb A}_t+v_{\mathbf w}(O_t)
 \right).
 $$
 
-The raw advantage creates $y_t$. For the actor only, advantages are standardized
+The raw advantage creates $G_t$. For the actor only, advantages are standardized
 once over the rollout. PPO retains those same standardized values for all
 optimization epochs.
 
@@ -431,7 +431,7 @@ while interactions < B:
                 Ahat_t <- δ_t
             else:
                 Ahat_t <- δ_t + γλAhat_t+1
-            y_t <- Ahat_t + v_w(O_t)
+            G_t <- Ahat_t + v_w(O_t)
 
     # Standardize advantages for the actor only
     Ahat <- standardize(Ahat)
@@ -444,7 +444,7 @@ while interactions < B:
     Adam_actor.step()
 
     # Compute critic loss, then perform critic update (with clipping)
-    L_critic <- mean(1/2 · (v_w(O) - y)²)
+    L_critic <- mean(1/2 · (v_w(O) - G_t)²)
     Adam_critic.zero_grad()
     ∇L_critic <- backprop(L_critic)
     ∇L_critic <- ∇L_critic · min(1, 0.5 / ||∇L_critic||₂)
@@ -459,145 +459,146 @@ Code references:
 
 ## PPO
 
-### Purpose and difference from A2C
+PPO is another actor-critic algorithm, which employs a **sample reuse** technique to gain more experience from the same number of interactions.
 
-PPO keeps the A2C critic and GAE targets but reuses each rollout for several
-optimization epochs. Reuse makes the current policy differ from the policy that
-collected the actions. PPO therefore applies the importance ratio and clipped
-surrogate objective presented in the course notes, limiting overly optimistic
-improvements while retaining the sampled data.
+In order for previous transitions to stay valuable even after they have already been used, PPO makes sure that each optimization step does not drift the policy too far into one direction. 
+With this caution, previous samples can be reused if their log-probability is adjusted to the probability of them being observed with the current policy.
 
-The original PPO paper defines this repeated-minibatch structure. Its
-continuous-control configuration motivates the starting choices of $2048$
-rollout transitions and clipping parameter $\epsilon=0.2$. This project uses
-minibatches of $64$, matching that reference configuration rather than the
-previously unexplained value $256$.
-
-Epochs are $4$, not the paper's $10$. Clipping bounds how far one minibatch step
-may move the policy, but nothing bounds the drift accumulated across many reuses
-of the same rollout, and a 2,000,000-interaction run under $10$ epochs showed
-PPO repeatedly collapsing from a completed lap to near-zero return and relearning.
-Four epochs also cost less than half the optimizer time: at $10$ epochs the
-optimizer alone accounted for roughly fourteen minutes of a run in which A2C's
-optimizer took seconds.
-
-The implementation-only learning gate uses the same deterministic one-step task
-as REINFORCE and A2C: a constant observation $(1)$ with reward equal to the
-bounded throttle action. It uses `(4, 4)` actor and critic networks,
-$\gamma=0.9$, $\lambda=0.95$, validation-only actor and critic learning rates
-$0.02$, eight transitions per rollout, ten PPO epochs, an eight-row minibatch,
-$\epsilon=0.2$, 40 updates, and controlled-problem seed identities `0..4`.
-Every seed must increase deterministic throttle by more than `0.2` relative to
-initialization. These settings validate the implementation; they are not
-candidates for either reported racing experiment.
-
-Store and detach the behaviour-policy log-probability at collection time. During
-an update,
-
-$$
-\omega_{\mathbf\theta/\mathbf\theta_{\mathrm{old}},t}
-=\exp\left(
-\log\pi_{\mathbf\theta}(A_t\mid O_t)
--\log\pi_{\mathbf\theta_{\mathrm{old}}}(A_t\mid O_t)
-\right).
+In practice, PPO does not optimize the performance function $J(\theta)$ directly.
+Instead, it optimizies a *surrogate* objective which measures the **performance difference** between the new policies and the previous one, assuming the two policies have the same state distribution:
+$$ 
+J(\theta') - J(\theta) = \mathbb{E}_{\substack{S\sim d_{\pi}\\ A\sim\pi(\cdot\mid S)}}
+\left[
+\frac{\pi'(A\mid S)}{\pi(A\mid S)}
+\mathbb{A}^{\pi}(S,A)
+\right]
 $$
 
-For minibatch $B$, minimize
+Where the fraction $\omega_{\theta' / \theta} =\frac{\pi'(A\mid S)}{\pi(A\mid S)}$ is the **importance ratio**.
+Importantly, the above estimator is a good proxy for the policy improvement **only if** the new policies does not move too far from the policy that generated the transitions.
+To ensure that this holds, PPO clips $\omega_{\theta' / \theta}$.
 
-$$
-\mathcal L_{\mathrm{actor}}(\mathbf\theta)=
--\frac1{|B|}\sum_{t\in B}
-\min\left\{
-\omega_t\widetilde{\mathbb A}_t,
-\operatorname{clip}(\omega_t,1-\epsilon,1+\epsilon)
-\widetilde{\mathbb A}_t
-\right\},
-$$
+### PPO Optimization
 
-$$
-\mathcal L_{\mathrm{critic}}(\mathbf w)=
-\frac1{2|B|}\sum_{t\in B}
-\left(v_{\mathbf w}(O_t)-y_t\right)^2.
-$$
+Just like A2C, PPO starts by collecting $N=2048$ transitions.
+Then, for each of these transitions it computes:
+* The GAE advantage estimator, just like A2C+GAE:
+    $$
+    \hat{\mathbb{A}}_t^{\text{GAE}} = \sum_{k=0}^{K_t-1} (\gamma \lambda)^k \delta_{t+k}^{\mathbf w}
+    $$
+* The critic target, just like A2C+GAE:
+    $$ G_t = v_{\mathbf w}(O_t) + \hat{\mathbb{A}}_t^{\text{GAE}} $$
+* The log-probability of the transition (unlike A2C+GAE, which can compute it later since the policy won't change):
+    $$ \log \pi_\theta(A_t \mid O_t) $$
 
-Old log-probabilities, standardized advantages and value targets remain fixed
-for every epoch. Each seeded epoch permutation covers every rollout row once.
-The approximate-KL diagnostic is the nonnegative sample mean
-$((\omega_t-1)-\log\omega_t)$, while clip fraction is the sample fraction with
-$|\omega_t-1|>\epsilon$.
+Then, PPO uses all $N$ transitions for $K$ times (epochs), permutating them and splitting them into mini-batches.
+In each mini-batch, it:
+* Computes the importance ratio using:
+    $$ \omega_t = \exp(\log \pi_{\theta'}(A_t \mid O_t) - \log \pi_{\theta}(A_t \mid O_t)) $$
+* Computes the two losses and updates the parameters based on them, making sure that the actor loss properly clips the importance ratio:
+    $$
+    \mathcal L_{\mathrm{actor}}(\mathbf\theta)=
+    -\frac1{|B|}\sum_{t\in B}
+    \min\left\{
+    \omega_t\widetilde{\mathbb A}_t,
+    \operatorname{clip}(\omega_t,1-\epsilon,1+\epsilon)
+    \widetilde{\mathbb A}_t
+    \right\},
+    $$
 
-The approximate KL is also a control, not only a diagnostic. After each complete
-epoch, if its mean exceeds the target $0.02$ the update ends and the remaining
-epochs are skipped. The number of epochs actually run is recorded as
-`completed_epochs`. Value clipping remains disabled.
+    $$
+    \mathcal L_{\mathrm{critic}}(\mathbf w)=
+    \frac1{2|B|}\sum_{t\in B}
+    \left(v_{\mathbf w}(O_t)-G_t\right)^2.
+    $$
 
-### PPO pseudocode
+### PPO Pseudocode
 
-```text
-Input:
-    actor and fixed critic architectures
-    actor and critic learning rates
-    gamma = 0.9995, lambda = 0.95
-    rollout capacity = 2048, minibatch size = 64
-    update epochs = 4, clipping epsilon = 0.2, target KL = 0.02
-    training-interaction budget and indexed per-worker RNG streams
-
-Initialize:
-    actor parameters theta and learned log standard deviations
-    critic parameters w
-    observation running statistics
-    separate actor and critic Adam optimizers
-    total_training_interactions <- 0
-    spawn the configured environment workers once and receive all O_0 columns
-
-While total_training_interactions < budget:
-    theta_old denotes the policy used for this collection
-    rollout <- empty time-by-environment buffer
-    target_rollout_length <- min(2048, remaining interaction budget)
-
-    While the pooled valid-transition count is below target_rollout_length:
-        select at most the remaining-capacity number of worker columns
-        update and apply observation normalization to the selected batch as in A2C
-        compute batched mu_theta_old(O_t), standard deviations and v_w(O_t)
-        sample each U_t from its worker RNG and compute old_log_probability_t
-        step the selected workers concurrently
-        set bootstrap value to zero after true termination
-        otherwise evaluate v_w on the normalized next-observation batch
-        store normalized inputs, U_t, A_t, detached old log-probability,
-            detached old value, reward, detached bootstrap value, booleans,
-            episode identity and track identity
-        increment total_training_interactions by the selected-worker count
-        reset only ended workers; every other column continues its episode
-
-    For each environment column, moving backward only through that column:
-        compute TD errors, raw GAE advantages and detached critic targets
-        stop recursion at termination, truncation and the rollout boundary
-
-    standardize advantages once and keep them fixed
-    keep old log-probabilities and critic targets fixed
-
-    For epoch = 1, ..., 10:
-        create a permutation using the dedicated minibatch RNG
-        divide the permutation into minibatches of 64 without replacement
-
-        For each minibatch B:
-            recompute log pi_theta(A_t | O_t) under the current actor
-            compute omega_t from current minus old log-probability
-            compute the clipped actor loss using fixed advantages
-            clear actor gradients, backpropagate, record norm, clip and update theta
-            project the log standard deviations back into their approved interval
-
-            compute the unclipped half-squared critic loss using fixed y_t
-            clear critic gradients, backpropagate, record norm, clip and update w
-
-            log actor loss, critic loss, approximate KL, clip fraction,
-                importance-ratio statistics and gradient diagnostics
-
-    verify that every rollout row appeared exactly once in every epoch
-    discard the rollout before collecting with the updated policy
-
-Save actor, critic, normalizer, both optimizers, RNG states and counters.
 ```
+Input:
+    a_actor: actor learning rate
+    a_critic: critic learning rate
+    B: interaction budget (total number of allowed interactions)
+    N: rollout capacity (default N = 2048)
+    M: minibatch size (default M = 64)
+    K: number of optimization epochs (default K = 4)
+    γ: discount term (default γ = 0.9995)
+    λ: GAE parameter (default λ = 0.95)
+    ε: PPO clipping parameter (default ε = 0.2)
+    KL_target: target KL divergence (default KL_target = 0.02)
+
+# Initialize variables
+Adam_actor <- torch.optim.Adam(a_actor, ...)
+Adam_critic <- torch.optim.Adam(a_critic, ...)
+interactions <- 0
+
+while interactions < B:
+    rollout <- ∅
+    θ_old <- θ
+
+    # Collect a rollout of (at most) N transitions
+    while |rollout| < min(N, B - interactions):
+        for each active environment:
+            O_t <- normalize(O_t)
+            μ_old <- μ_θ_old(O_t)
+            σ <- actor standard deviations
+            U_t ∼ 𝓝(μ_old, σ²)
+            A_t <- tanh(U_t)
+            old_log_π_t <- corrected_log_prob(A_t, U_t, μ_old, σ)
+            O_t+1, R_t+1, done <- env.step(A_t)
+            if done:
+                B_t <- 0
+            else:
+                B_t <- v_w(normalize(O_t+1))
+
+            store(O_t, U_t, A_t, old_log_π_t, R_t+1, B_t, ...)
+            interactions <- interactions + 1
+
+    # Compute TD errors, GAE advantages and critic targets
+    for each environment:
+        for t <- last,...,0:
+            δ_t <- R_t+1 + γB_t - v_w(O_t)
+            if terminated or truncated or t is the final rollout transition:
+                Ahat_t <- δ_t
+            else:
+                Ahat_t <- δ_t + γλAhat_t+1
+            G_t <- Ahat_t + v_w(O_t)
+
+    # Standardize advantages once and keep all targets fixed
+    Ahat <- standardize(Ahat)
+
+    # Reuse the same rollout for K optimization epochs
+    for epoch <- 1,...,K:
+        permutation <- random_permutation(rollout)
+        for each minibatch of size M:
+            log π <- corrected_log_prob(A_t, U_t, μ_θ(O_t), σ)
+            ω_t <- exp(log π - old_log_π_t)
+
+            # Compute clipped actor loss
+            L_actor <- mean(-min(ω_t · Ahat_t, clip(ω_t, 1 - ε, 1 + ε) · Ahat_t))
+
+            # Perform actor update (with clipping)
+            Adam_actor.zero_grad()
+            ∇L_actor <- backprop(L_actor)
+            ∇L_actor <- ∇L_actor · min(1, 0.5 / ||∇L_actor||₂)
+            Adam_actor.step()
+            project(log standard deviations)
+
+            # Compute critic loss and perform critic update (with clipping)
+            L_critic <- mean(1/2 · (v_w(O_t) - G_t)²)
+            Adam_critic.zero_grad()
+            ∇L_critic <- backprop(L_critic)
+            ∇L_critic <- ∇L_critic · min(1, 0.5 / ||∇L_critic||₂)
+            Adam_critic.step()
+        
+        # Check policy drift after each complete epoch
+        KL <- mean(approximate_KL(old_log_π, current_log_π))
+        if KL > KL_target: break
+```
+
+Code references:
+* [`PPO Agent`](../src/agents/ppo.py)
+* [`PPO Training Engine`](../src/training/engines/ppo.py)
 
 ## Provenance of numerical choices
 
@@ -605,22 +606,21 @@ The following distinction is intentional:
 
 | Choice | Origin |
 |---|---|
-| Policy-gradient, actor-critic, GAE and clipped-PPO equations | Repository course notes |
+| Policy-gradient, actor-critic, GAE and clipped-PPO equations | Course notes |
 | $\gamma=0.9995$ | Racing timescale derivation in `MDP.md` |
 | Actor widths | Scientific factor fixed by the experiment design |
 | Fixed `(64, 64)` critic | Project control that prevents a critic-capacity confound |
 | Adam $\beta_1$, $\beta_2$ and $10^{-8}$ | Defaults recommended in the original Adam paper |
 | PPO rollout 2048, minibatch 64 and clip 0.2 | Starting configuration reported for continuous control in the original PPO paper |
-| PPO 4 epochs and target KL 0.02 | Project stability choice after observing repeated policy collapse under 10 unconditional epochs |
-| Actor output bias $(0.2, 0)$ | Makes the initial policy neutral in acceleration, which a zero bias is not |
-| $\lambda=0.95$ | Conventional GAE/PPO starting value, checked before reported runs |
-| Squashed Gaussian, state-independent dispersion and its bounds | Explicit project policy-class choice required by the bounded action space |
+| PPO 4 epochs and target KL 0.02 | Stability choice after observing repeated policy collapse under 10 unconditional epochs |
+| $\lambda=0.95$ | Conventional GAE/PPO starting value |
+| Squashed Gaussian, state-independent dispersion and its bounds | Explicit policy-class choice required by the bounded action space |
 | Naive running-sum normalization | Explicit project simplicity choice |
-| Initialization gains, observation clipping and gradient norm 0.5 | Explicit project stability choices, not derived from course theory |
+| Initialization gains, observation clipping and gradient norm 0.5 | Explicit stability choices |
 | REINFORCE batch of 8 and A2C rollout of 2048 | Explicit collection trade-offs, checked before reported runs |
 
-Primary external references for choices absent from the course notes are the
-[GAE paper](https://arxiv.org/abs/1506.02438),
-[PPO paper](https://arxiv.org/abs/1707.06347),
-[Adam paper](https://arxiv.org/abs/1412.6980) and
-[PyTorch reproducibility guidance](https://docs.pytorch.org/docs/stable/notes/randomness.html).
+Primary external references for choices absent from the course notes are:
+* [GAE paper](https://arxiv.org/abs/1506.02438)
+* [PPO paper](https://arxiv.org/abs/1707.06347)
+* [Adam paper](https://arxiv.org/abs/1412.6980)
+* [PyTorch reproducibility guidance](https://docs.pytorch.org/docs/stable/notes/randomness.html)
