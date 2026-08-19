@@ -16,6 +16,7 @@ from agents import (
     CollectionMode,
     CompleteEpisodesInput,
     FixedRolloutInput,
+    OnPolicyAgent,
 )
 from configs import (
     EnvironmentConfig,
@@ -42,7 +43,7 @@ from training.engines import TrainingEngine
 from utils.random import SeedNamespace
 
 
-class _FixedAgent:
+class _FixedAgent(OnPolicyAgent):
     collection_mode: CollectionMode
     collection_size: int
 
@@ -108,6 +109,20 @@ class _FixedAgent:
             "updates": self.updates,
             "generator": deepcopy(self.generator.bit_generator.state),
         }
+
+    @property
+    def actor_parameter_count(self) -> int:
+        """
+        Report no trainable parameters, since this stand-in owns no models.
+        """
+        return 0
+
+    @property
+    def critic_parameter_count(self) -> int | None:
+        """
+        Report no critic, since this stand-in owns no models.
+        """
+        return None
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
         self.training_actions = [tuple(row) for row in state["training_actions"]]

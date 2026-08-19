@@ -11,6 +11,7 @@ from agents import (
     CollectedAction,
     CollectedActionBatch,
     CollectionMode,
+    OnPolicyAgent,
 )
 from configs import (
     EnvironmentConfig,
@@ -25,7 +26,7 @@ from recording import RunCategory
 from training import RunningObservationNormalizer, evaluate_deterministic
 
 
-class _EvaluationAgent:
+class _EvaluationAgent(OnPolicyAgent):
     collection_mode = CollectionMode.FIXED_ROLLOUT
     collection_size = 1
 
@@ -67,6 +68,20 @@ class _EvaluationAgent:
 
     def load_state_dict(self, state: dict[str, object]) -> None:
         del state
+
+    @property
+    def actor_parameter_count(self) -> int:
+        """
+        Report no trainable parameters, since this stand-in owns no models.
+        """
+        return 0
+
+    @property
+    def critic_parameter_count(self) -> int | None:
+        """
+        Report no critic, since this stand-in owns no models.
+        """
+        return None
 
 
 def _environment() -> RacingEnv:
