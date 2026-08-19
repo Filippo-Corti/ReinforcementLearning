@@ -51,7 +51,7 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
    ```python
    class ExampleClass:
      """
-     This class represents an example of a how a comment should be written 
+     ExampleClass represents an example of a how a comment should be written 
      for a class in this repository.
 
      Fields:
@@ -83,8 +83,7 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
    should have a clear, stable purpose.
 8. **Use names that reveal role and timescale.** Distinguish data from the
     processor that creates it, physical transitions from lifecycle outcomes, and
-    per-action results from complete-episode summaries. Avoid generic names such
-    as `Result`, `Manager`, or `Geometry` when a more specific role is known.
+    per-action results from complete-episode summaries.
 9. **Preserve semantic data until framework boundaries.** Represent meaningful
     internal records with named dataclasses rather than anonymous arrays or
     tuples. Convert to NumPy arrays only at numerical or framework interfaces
@@ -98,6 +97,67 @@ Try to learn a policy that can solve multiple circuits, in particular circuits n
     mutation scope clear without requiring the caller to read the implementation.
 12. **Explain framework-required declarations.** Add a short explanation for
     otherwise opaque class attributes, metadata or hooks.
+13. **Name the kind of a value, not only its contents.** When the type does not
+    reveal how a value is used, say it in the name: a boolean array used to
+    select entries is a `..._mask`, never a bare adjective. The reverse holds
+    too — when a value is something ordinary, use the ordinary word. An integer
+    position is an `index`, not an `identity`.
+14. **One word, one concept.** Words acquire meanings inside a codebase. 
+    Check how a word is already used before reusing
+    it, and pick a different one rather than overloading it.
+15. **Never leave a name arguing with its signature.** A name that promises
+    something its parameters or return type contradict is a defect: a
+    `..._indices` helper that also *takes* indices, or an `x_thing` method that
+    returns `Y` objects. Rename it — or, when both halves are genuinely correct,
+    make the docstring reconcile them head-on instead of leaving the reader to
+    wonder.
+16. **Name things for what they do, not for who calls them or where they came from.** 
+    A module named after its audience, its origin story, or the one
+    notebook that first needed it is wrong the moment a second caller appears.
+    Describe the behaviour.
+17. **Do not let an attribute be vaguer than its type.** A carefully named class
+    stored under a shortened attribute throws the naming away at the point of
+    use, which is where it is read most. Keep the whole concept on both sides,
+    eventually shortened if it gets very long.
+18. **Place a helper with the type it serves, not the caller that first needed it.** 
+    If the arguments and result belong to one domain, the function belongs
+    in that domain's package no matter who happens to call it. When placement is
+    unclear, read the actual call sites and imports before deciding rather than
+    leaving it where it was written.
+19. **Give a type the functions that build or classify it.** A function whose
+    whole job is to produce or select a member of a type belongs on that type,
+    as a classmethod or factory — not loose in whichever module needed it first.
+20. **A package holds only what it is named for.** Things merely *used by* its
+    contents are not part of it. Push them up to the parent so the package keeps
+    the shape its name promises; a package of four concepts plus six helpers has
+    stopped describing itself.
+21. **Merge what is one concern; group what collaborates.** Two modules covering
+    a single concern should be one file. Files that only make sense together
+    belong in a sub-package. Keep module names descriptive but short — neither a
+    vague gerund nor a full sentence.
+22. **If one object conceptually owns another, let it construct it.** A caller
+    holding both an object and the thing that manages it is holding one idea
+    under two names. Pass the manager what it needs and let it build and own the
+    rest, so the caller has one thing to reason about.
+23. **Let a class enforce its own invariants.** Validate in the constructor
+    instead of expecting every caller to remember a separate check first. A rule
+    that must be invoked from outside will eventually not be, and it clutters
+    every call site until then.
+24. **Collapse operations that differ only by a switch.** Two methods sharing a
+    body and differing by a side effect or a precondition should be one method
+    with an explicit named parameter, not two names encoding the variant.
+25. **Ask for the values you use, not the object that holds them.** Do not
+    accept a heavyweight object in order to read two fields off it; take the two
+    fields. The wider parameter hides what the code actually depends on.
+26. **Trust your own interfaces.** If a protocol declares an operation, call it
+    directly. Runtime `getattr`/`hasattr` probing against types you control is
+    not defensive — it is dead code that converts a broken implementation into
+    silent fallback behaviour.
+27. **Say why a guard exists, not only what it does.** Anything that reads as
+    redundant — a category field, a version stamp, a check that looks
+    duplicated — will eventually be deleted by someone who cannot see its
+    purpose. Name the failure it prevents in its docstring so the next reader
+    has to argue with a reason instead of a mystery.
 
 ### Suggested code structure:
 This is the suggested layout. Feel free to adapt it as you wish, but make sure to update this if you ever choose to:
