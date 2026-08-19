@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
-from agents import A2CAgent, ParameterizedOnPolicyAgent, PPOAgent, ReinforceAgent
+from agents import A2CAgent, OnPolicyAgent, PPOAgent, ReinforceAgent
 from configs import (
     FIXED_CRITIC_CONFIG,
     LARGE_ACTOR_CONFIG,
@@ -402,7 +402,7 @@ def _run_training(
     training_reference_circuits: int = 0,
     observation: ObservationRepresentation = ObservationRepresentation.FRENET,
     learning_rates: dict[str, float],
-    agent_factory: Callable[[int, RunSeedStreams], ParameterizedOnPolicyAgent],
+    agent_factory: Callable[[int, RunSeedStreams], OnPolicyAgent],
 ) -> TrainingEngine:
     """
     Train one selected on-policy agent through the common run lifecycle.

@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from agents.models import Policy
 from envs.racing import RacingEnv
 from envs.tracks import track_geometry_summary
 from evaluation import trajectory_state
-from models import Policy
 from recording.records import (
     EpisodeOutcome,
     EpisodeRecord,

@@ -4,17 +4,11 @@ import numpy as np
 import pytest
 import torch
 
+from agents.targets import compute_vector_gae_targets, monte_carlo_return_to_go
 from training import TrainingTransition
-from training.buffers import (
-    FixedRolloutBuffer,
-    OnPolicyRollout,
-    ReinforceEpisodeBuffer,
-    VectorOnPolicyRollout,
-    VectorRolloutBuffer,
-    compute_gae_targets,
-    compute_vector_gae_targets,
-    monte_carlo_return_to_go,
-)
+from training.buffers import Trajectory
+from training.multienvs import VectorRollout
+from utils.vectors import stack_vectors
 
 
 def _transition(
@@ -88,50 +82,60 @@ def test_transition_detaches_tensor_vector_fields() -> None:
     )
 
 
-def test_rollout_tensors_have_framework_ready_vector_shapes_and_dtypes() -> None:
-    rollout = OnPolicyRollout((_transition(0, next_value=0.2),))
+def test_stacked_transition_fields_have_framework_ready_shapes_and_dtypes() -> None:
+    trajectory = Trajectory((_transition(0, next_value=0.2),))
 
-    tensors = rollout.tensors()
+    observations = stack_vectors(
+        (transition.normalized_observation for transition in trajectory),
+        name="normalized_observation",
+    )
 
-    assert tensors.observations.shape == (1, 2)
-    assert tensors.raw_actions.shape == (1, 2)
-    assert tensors.env_actions.shape == (1, 2)
-    assert tensors.next_observations.shape == (1, 2)
-    assert tensors.observations.dtype == torch.float32
-    assert tensors.terminated.dtype == torch.bool
-    assert tensors.current_values is not None
-    assert not tensors.current_values.requires_grad
+    assert observations.shape == (1, 2)
+    assert observations.dtype == torch.float32
+    assert not observations.requires_grad
 
 
 def test_monte_carlo_returns_match_complete_time_limited_episode() -> None:
-    episode = OnPolicyRollout(
+    episode = Trajectory(
         (
             _transition(0, reward=1.0),
             _transition(1, reward=2.0, truncated=True),
         )
     )
 
-    returns = monte_carlo_return_to_go(episode, discount=0.5)
+    returns = monte_carlo_return_to_go(episode.transitions, discount=0.5)
 
     torch.testing.assert_close(returns, torch.tensor([2.0, 2.0]))
 
 
 def test_monte_carlo_returns_reject_incomplete_episode() -> None:
-    episode = OnPolicyRollout((_transition(0),))
+    episode = Trajectory((_transition(0),))
 
     with pytest.raises(ValueError, match="complete episode"):
-        monte_carlo_return_to_go(episode, discount=0.9)
+        monte_carlo_return_to_go(episode.transitions, discount=0.9)
+
+
+def _single_column(*transitions: TrainingTransition) -> VectorRollout:
+    """
+    Wrap one worker's transitions as a one-column vector rollout.
+
+    A single column is the simplest rollout there is, which makes it the right
+    shape for pinning down the boundary rules the recursion must obey before a
+    second column is introduced.
+    """
+    rollout = VectorRollout(capacity=len(transitions), environment_count=1)
+    for transition in transitions:
+        rollout.append_step((transition,))
+    return rollout
 
 
 def test_gae_handles_ordinary_transition_and_rollout_cut() -> None:
-    rollout = OnPolicyRollout(
-        (
-            _transition(0, reward=1.0, value=0.5, next_value=0.6),
-            _transition(1, reward=2.0, value=0.6, next_value=0.7),
-        )
+    rollout = _single_column(
+        _transition(0, reward=1.0, value=0.5, next_value=0.6),
+        _transition(1, reward=2.0, value=0.6, next_value=0.7),
     )
 
-    targets = compute_gae_targets(rollout, discount=0.5, gae_lambda=0.5)
+    targets = compute_vector_gae_targets(rollout, discount=0.5, gae_lambda=0.5)
 
     torch.testing.assert_close(
         targets.temporal_difference_errors, torch.tensor([0.8, 1.75])
@@ -142,11 +146,11 @@ def test_gae_handles_ordinary_transition_and_rollout_cut() -> None:
 
 
 def test_gae_removes_bootstrap_after_true_termination() -> None:
-    rollout = OnPolicyRollout(
-        (_transition(0, reward=2.0, value=0.5, next_value=0.0, terminated=True),)
+    rollout = _single_column(
+        _transition(0, reward=2.0, value=0.5, next_value=0.0, terminated=True)
     )
 
-    targets = compute_gae_targets(rollout, discount=0.5, gae_lambda=0.95)
+    targets = compute_vector_gae_targets(rollout, discount=0.5, gae_lambda=0.95)
 
     torch.testing.assert_close(targets.temporal_difference_errors, torch.tensor([1.5]))
     torch.testing.assert_close(targets.raw_advantages, torch.tensor([1.5]))
@@ -159,27 +163,23 @@ def test_transition_rejects_nonzero_bootstrap_after_true_termination() -> None:
 
 
 def test_gae_bootstraps_once_but_does_not_recurse_after_truncation() -> None:
-    rollout = OnPolicyRollout(
-        (
-            _transition(0, reward=1.0, value=0.0, next_value=2.0, truncated=True),
-            _transition(0, episode=1, reward=8.0, value=0.0, next_value=0.0),
-        )
+    rollout = _single_column(
+        _transition(0, reward=1.0, value=0.0, next_value=2.0, truncated=True),
+        _transition(0, episode=1, reward=8.0, value=0.0, next_value=0.0),
     )
 
-    targets = compute_gae_targets(rollout, discount=0.5, gae_lambda=0.5)
+    targets = compute_vector_gae_targets(rollout, discount=0.5, gae_lambda=0.5)
 
     torch.testing.assert_close(targets.raw_advantages, torch.tensor([2.0, 8.0]))
 
 
 def test_gae_lambda_zero_equals_one_step_td_errors() -> None:
-    rollout = OnPolicyRollout(
-        (
-            _transition(0, reward=1.0, value=0.5, next_value=0.6),
-            _transition(1, reward=2.0, value=0.6, next_value=0.0, terminated=True),
-        )
+    rollout = _single_column(
+        _transition(0, reward=1.0, value=0.5, next_value=0.6),
+        _transition(1, reward=2.0, value=0.6, next_value=0.0, terminated=True),
     )
 
-    targets = compute_gae_targets(rollout, discount=0.5, gae_lambda=0.0)
+    targets = compute_vector_gae_targets(rollout, discount=0.5, gae_lambda=0.0)
 
     torch.testing.assert_close(
         targets.raw_advantages, targets.temporal_difference_errors
@@ -187,30 +187,17 @@ def test_gae_lambda_zero_equals_one_step_td_errors() -> None:
 
 
 def test_gae_combines_truncation_termination_and_final_rollout_cut() -> None:
-    rollout = OnPolicyRollout(
-        (
-            _transition(0, reward=1.0, value=0.5, next_value=1.0),
-            _transition(
-                1,
-                reward=2.0,
-                value=1.0,
-                next_value=4.0,
-                truncated=True,
-            ),
-            _transition(0, episode=1, reward=3.0, value=2.0, next_value=0.0),
-            _transition(
-                1,
-                episode=1,
-                reward=4.0,
-                value=3.0,
-                next_value=0.0,
-                terminated=True,
-            ),
-            _transition(0, episode=2, reward=5.0, value=1.0, next_value=6.0),
-        )
+    rollout = _single_column(
+        _transition(0, reward=1.0, value=0.5, next_value=1.0),
+        _transition(1, reward=2.0, value=1.0, next_value=4.0, truncated=True),
+        _transition(0, episode=1, reward=3.0, value=2.0, next_value=0.0),
+        _transition(
+            1, episode=1, reward=4.0, value=3.0, next_value=0.0, terminated=True
+        ),
+        _transition(0, episode=2, reward=5.0, value=1.0, next_value=6.0),
     )
 
-    targets = compute_gae_targets(rollout, discount=0.5, gae_lambda=0.5)
+    targets = compute_vector_gae_targets(rollout, discount=0.5, gae_lambda=0.5)
 
     torch.testing.assert_close(
         targets.temporal_difference_errors,
@@ -226,136 +213,78 @@ def test_gae_combines_truncation_termination_and_final_rollout_cut() -> None:
     )
 
 
-def test_reinforce_buffer_excludes_incomplete_episodes_and_preserves_rows() -> None:
-    buffer = ReinforceEpisodeBuffer()
-    first = _transition(0, reward=1.0)
-    second = _transition(1, reward=2.0, terminated=True)
-    buffer.append(first)
-    buffer.append(second)
-
-    completed = buffer.finalize_episode()
-
-    assert completed.transitions == (first, second)
-    assert buffer.take_completed_batch(2) is None
-    assert buffer.take_completed_batch(1) == (completed,)
-    assert buffer.active_episode == ()
-
-
-def test_reinforce_buffer_rejects_incomplete_or_cross_episode_finalization() -> None:
-    buffer = ReinforceEpisodeBuffer()
-    buffer.append(_transition(0))
-
-    with pytest.raises(ValueError, match="terminated or truncated"):
-        buffer.finalize_episode()
-    with pytest.raises(ValueError, match="cannot mix episode identities"):
-        buffer.append(_transition(1, episode=1))
-
-
-def test_fixed_rollout_preserves_multi_episode_rows_and_resets_after_finalize() -> None:
-    buffer = FixedRolloutBuffer(capacity=3)
-    first = _transition(3, episode=4, reward=1.0)
-    second = _transition(4, episode=4, reward=2.0, truncated=True)
-    third = _transition(0, episode=5, circuit="track-b", reward=3.0)
-    buffer.append(first)
-    buffer.append(second)
-    buffer.append(third)
-
-    rollout = buffer.finalize()
-
-    assert rollout.transitions == (first, second, third)
-    assert buffer.transitions == ()
-    buffer.append(_transition(1, episode=5, circuit="track-b"))
-    assert buffer.transitions[0].episode_step_index == 1
-
-
-def test_fixed_rollout_rejects_duplicate_row_after_a_rollout_cut() -> None:
-    buffer = FixedRolloutBuffer(capacity=2)
-    buffer.append(_transition(0))
-    buffer.finalize()
-
+def test_vector_rollout_rejects_a_gap_in_one_column() -> None:
     with pytest.raises(ValueError, match="consecutive"):
-        buffer.append(_transition(0))
+        _single_column(_transition(0), _transition(2))
 
 
-def test_fixed_rollout_rejects_cross_episode_without_boundary_and_overflow() -> None:
-    buffer = FixedRolloutBuffer(capacity=1)
-    buffer.append(_transition(0))
-
-    with pytest.raises(ValueError, match="Finalize the full rollout"):
-        buffer.append(_transition(1))
-
-    buffer = FixedRolloutBuffer(capacity=3)
-    buffer.append(_transition(0))
+def test_vector_rollout_rejects_a_new_episode_without_a_boundary() -> None:
     with pytest.raises(ValueError, match="environment boundary"):
-        buffer.append(_transition(0, episode=1))
+        _single_column(_transition(0), _transition(0, episode=1))
 
 
-def test_vector_rollout_preserves_time_environment_shape_and_valid_mask() -> None:
-    buffer = VectorRolloutBuffer(capacity=3, environment_count=2)
+def test_vector_rollout_flattens_time_major_and_survives_being_cleared() -> None:
+    rollout = VectorRollout(capacity=3, environment_count=2)
     first = _transition(0, environment=0)
     second = _transition(0, episode=1, environment=1)
     third = _transition(1, environment=0, terminated=True)
-    buffer.append_step((first, second))
-    buffer.append_step((third, None))
+    rollout.append_step((first, second))
+    rollout.append_step((third, None))
 
-    rollout = buffer.finalize()
-    tensors = rollout.tensors()
-
-    assert tensors.observations.shape == (2, 2, 2)
-    assert tensors.rewards.shape == (2, 2)
-    assert tensors.valid.tolist() == [[True, True], [True, False]]
     assert rollout.transitions == (first, second, third)
+    assert rollout.transition_count == 3
+    assert rollout.remaining_capacity == 0
+    assert rollout.transition_steps == ((first, second), (third, None))
+
+    rollout.clear()
+
+    # Emptying starts the next rollout but keeps each column's last transition,
+    # so continuity is still checked across the boundary between two rollouts.
+    assert rollout.transitions == ()
+    assert rollout.previous_transitions == (third, second)
 
 
 def test_vector_gae_recurses_independently_down_environment_columns() -> None:
-    rollout = VectorOnPolicyRollout(
+    rollout = VectorRollout(capacity=4, environment_count=2)
+    rollout.append_step(
         (
-            (
-                _transition(
-                    0,
-                    reward=1.0,
-                    value=0.5,
-                    next_value=0.6,
-                    environment=0,
-                ),
-                _transition(
-                    0,
-                    episode=1,
-                    reward=10.0,
-                    value=1.0,
-                    next_value=2.0,
-                    environment=1,
-                ),
+            _transition(0, reward=1.0, value=0.5, next_value=0.6, environment=0),
+            _transition(
+                0, episode=1, reward=10.0, value=1.0, next_value=2.0, environment=1
             ),
-            (
-                _transition(
-                    1,
-                    reward=2.0,
-                    value=0.6,
-                    next_value=0.0,
-                    terminated=True,
-                    environment=0,
-                ),
-                _transition(
-                    1,
-                    episode=1,
-                    reward=20.0,
-                    value=2.0,
-                    next_value=4.0,
-                    truncated=True,
-                    environment=1,
-                ),
+        )
+    )
+    rollout.append_step(
+        (
+            _transition(
+                1,
+                reward=2.0,
+                value=0.6,
+                next_value=0.0,
+                terminated=True,
+                environment=0,
+            ),
+            _transition(
+                1,
+                episode=1,
+                reward=20.0,
+                value=2.0,
+                next_value=4.0,
+                truncated=True,
+                environment=1,
             ),
         )
     )
 
     targets = compute_vector_gae_targets(rollout, discount=0.5, gae_lambda=0.5)
 
+    # Flat order is time-major, so the columns interleave: worker 0 then
+    # worker 1 at each tick. Neither column borrows from the other.
     torch.testing.assert_close(
         targets.temporal_difference_errors,
-        torch.tensor([[0.8, 10.0], [1.4, 20.0]]),
+        torch.tensor([0.8, 10.0, 1.4, 20.0]),
     )
     torch.testing.assert_close(
         targets.raw_advantages,
-        torch.tensor([[1.15, 15.0], [1.4, 20.0]]),
+        torch.tensor([1.15, 15.0, 1.4, 20.0]),
     )

@@ -14,6 +14,8 @@ from agents import (
     CollectedAction,
     CollectedActionBatch,
     CollectionMode,
+    CompleteEpisodesInput,
+    FixedRolloutInput,
 )
 from configs import (
     EnvironmentConfig,
@@ -86,23 +88,19 @@ class _FixedAgent:
         return np.zeros(len(normalized_observations), dtype=np.float32)
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
-        rows = (
-            sum(len(episode.transitions) for episode in update_input.episodes)
-            if update_input.rollout is None
-            else len(update_input.rollout.transitions)
-        )
-        self.updates.append(rows)
-        if update_input.rollout is not None:
-            self.received.append(update_input.rollout.transitions)
-        else:
-            self.received.append(
-                tuple(
-                    row
-                    for episode in update_input.episodes
-                    for row in episode.transitions
-                )
+        if isinstance(update_input, FixedRolloutInput):
+            transitions = update_input.rollout.transitions
+        elif isinstance(update_input, CompleteEpisodesInput):
+            transitions = tuple(
+                transition
+                for episode in update_input.episodes
+                for transition in episode
             )
-        return AgentUpdateOutput({"rows": rows})
+        else:
+            raise TypeError("Unsupported update input.")
+        self.updates.append(len(transitions))
+        self.received.append(transitions)
+        return AgentUpdateOutput({"rows": len(transitions)})
 
     def state_dict(self) -> dict[str, Any]:
         return {

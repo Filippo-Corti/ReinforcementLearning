@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Literal, overload
 
 import numpy as np
@@ -102,3 +102,32 @@ def optional_tensor(
         dtype=torch.float32,
         device=device,
     )
+
+
+def stack_vectors(
+    values: Iterable[object],
+    *,
+    name: str,
+    device: torch.device | str | None = None,
+) -> Tensor:
+    """
+    Stack per-transition vectors into one `(rows, features)` float32 tensor.
+
+    Callers name the single field they need rather than converting a whole
+    record, so nothing is built that the update will not read.
+    """
+    return torch.as_tensor(
+        np.stack([to_vector(value, name=name) for value in values]), device=device
+    )
+
+
+def scalar_tensor(
+    values: Iterable[float | bool],
+    *,
+    device: torch.device | str | None = None,
+    dtype: torch.dtype = torch.float32,
+) -> Tensor:
+    """
+    Collect one scalar per transition into a `(rows,)` tensor.
+    """
+    return torch.tensor(list(values), dtype=dtype, device=device)

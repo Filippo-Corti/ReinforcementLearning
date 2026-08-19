@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -12,26 +12,31 @@ from numpy.typing import NDArray
 from torch import Tensor
 
 from configs import ActorConfig, ReinforceConfig
-from models import ActorNetwork, agent_parameter_counts
-from training.buffers import OnPolicyRollout, monte_carlo_return_to_go
 from utils.vectors import to_tensor
 
-from .diagnostics import (
+from ..diagnostics import (
     gradient_dispersion,
     parameter_norm,
     parameter_update_norm,
     standardize,
 )
-from .types import (
+from ..models import ActorNetwork, agent_parameter_counts
+from ..targets import monte_carlo_return_to_go
+from ..types import (
     AgentUpdateInput,
     AgentUpdateOutput,
     CollectedAction,
     CollectedActionBatch,
     CollectionMode,
+    CompleteEpisodesInput,
 )
+from .base import OnPolicyAgent
+
+if TYPE_CHECKING:
+    from training.buffers import Trajectory
 
 
-class ReinforceAgent:
+class ReinforceAgent(OnPolicyAgent):
     """
     Optimize a bounded Gaussian actor with complete-episode Monte Carlo returns.
 
@@ -161,8 +166,8 @@ class ReinforceAgent:
         """
         Apply one exact complete-episode REINFORCE optimizer update.
         """
-        if update_input.mode is not CollectionMode.COMPLETE_EPISODES:
-            raise ValueError("REINFORCE requires complete-episode update input.")
+        if not isinstance(update_input, CompleteEpisodesInput):
+            raise TypeError("REINFORCE requires complete-episode update input.")
         if len(update_input.episodes) != self.collection_size:
             raise ValueError(
                 "REINFORCE updates require exactly "
@@ -172,7 +177,9 @@ class ReinforceAgent:
         # 1. Compute the returns-to-go G for each trajectory in the batch, then
         # apply a standardization to reduce variance.
         returns = tuple(
-            monte_carlo_return_to_go(episode, self.config.discount, device=self.device)
+            monte_carlo_return_to_go(
+                episode.transitions, self.config.discount, device=self.device
+            )
             for episode in update_input.episodes
         )
         standardized_returns = self._standardize_returns(returns)
@@ -285,10 +292,11 @@ class ReinforceAgent:
         """
         Report that actor-only REINFORCE has no critic parameters.
         """
+        return None
 
     def _gradient_dispersion(
         self,
-        episodes: tuple[OnPolicyRollout, ...],
+        episodes: tuple[Trajectory, ...],
         standardized_returns: tuple[Tensor, ...],
     ) -> dict[str, float | int | None]:
         """
@@ -299,18 +307,10 @@ class ReinforceAgent:
         transitions estimates the same direction up to that constant, which the
         scale-free summaries remove.
         """
-        observations = torch.cat(
-            [
-                episode.tensors(device=self.device).observations.to(dtype=self.dtype)
-                for episode in episodes
-            ]
+        transitions = tuple(
+            transition for episode in episodes for transition in episode
         )
-        raw_actions = torch.cat(
-            [
-                episode.tensors(device=self.device).raw_actions.to(dtype=self.dtype)
-                for episode in episodes
-            ]
-        )
+        observations, raw_actions = self._policy_inputs(transitions)
         weights = torch.cat(standardized_returns).detach()
 
         def subbatch_loss(selected: Tensor) -> Tensor:
@@ -327,15 +327,13 @@ class ReinforceAgent:
         )
 
     def _trajectory_loss(
-        self, episode: OnPolicyRollout, standardized_returns: Tensor
+        self, episode: Trajectory, standardized_returns: Tensor
     ) -> Tensor:
         log_probabilities = self._log_probabilities(episode)
         return -(log_probabilities * standardized_returns.detach()).sum()
 
-    def _log_probabilities(self, episode: OnPolicyRollout) -> Tensor:
-        tensors = episode.tensors(device=self.device)
-        observations = tensors.observations.to(dtype=self.dtype)
-        raw_actions = tensors.raw_actions.to(dtype=self.dtype)
+    def _log_probabilities(self, episode: Trajectory) -> Tensor:
+        observations, raw_actions = self._policy_inputs(episode.transitions)
         return self.actor.log_probability(observations, raw_actions)
 
     def _standardize_returns(self, returns: tuple[Tensor, ...]) -> tuple[Tensor, ...]:
@@ -344,7 +342,7 @@ class ReinforceAgent:
         lengths = tuple(return_.numel() for return_ in returns)
         return tuple(torch.split(standardized, list(lengths)))
 
-    def _entropy_proxy(self, episodes: tuple[OnPolicyRollout, ...]) -> float:
+    def _entropy_proxy(self, episodes: tuple[Trajectory, ...]) -> float:
         """
         Return the negative mean collection log probability as a dispersion proxy.
         """
@@ -361,39 +359,3 @@ class ReinforceAgent:
             .mean()
             .item()
         )
-
-    @staticmethod
-    def _sampling_generators(
-        generators: torch.Generator | Sequence[torch.Generator],
-    ) -> tuple[torch.Generator, ...]:
-        if isinstance(generators, torch.Generator):
-            return (generators,)
-        values = tuple(generators)
-        if not values:
-            raise ValueError("At least one policy-sampling generator is required.")
-        return values
-
-    def _resolve_stream_indices(
-        self,
-        row_count: int,
-        environment_indices: Sequence[int] | None,
-    ) -> tuple[int, ...]:
-        """
-        Resolve and validate which sampling-generator stream serves each action row.
-
-        Defaults to one stream per row, in order, when no explicit environment
-        indices are given. Always checks that there is exactly one index per row
-        and that every index names an existing sampling stream.
-        """
-        indices = (
-            tuple(range(row_count))
-            if environment_indices is None
-            else tuple(environment_indices)
-        )
-        if len(indices) != row_count:
-            raise ValueError("One environment index is required per action row.")
-        if any(
-            index < 0 or index >= len(self.sampling_generators) for index in indices
-        ):
-            raise ValueError("Policy-sampling environment index is out of range.")
-        return indices

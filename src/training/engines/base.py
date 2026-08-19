@@ -19,7 +19,8 @@ from typing import Any
 
 import numpy as np
 
-from agents.types import AgentUpdateOutput, OnPolicyAgent
+from agents import OnPolicyAgent
+from agents.types import AgentUpdateOutput, CollectionMode
 from circuits import (
     CircuitSplit,
     EvaluationCircuit,
@@ -274,6 +275,13 @@ class TrainingEngine(ABC):
         return self.evaluation_scheduler.records
 
     @property
+    def collection_mode(self) -> CollectionMode:
+        """
+        Return whether this engine collects whole episodes or fixed rollouts.
+        """
+        return self.agent.collection_mode
+
+    @property
     def counters(self) -> TrainingCounters:
         """
         Return the run's counters, each read from whichever object owns it.
@@ -294,6 +302,60 @@ class TrainingEngine(ABC):
         """
         Collect and optimize until the exact requested interaction budget is reached.
         """
+
+    @abstractmethod
+    def try_update(self, *, final: bool) -> None:
+        """
+        Optimize if enough has been collected, and do nothing otherwise.
+
+        *Try*, because the loop asks after every single step and only the
+        algorithm knows whether there is yet anything it is allowed to learn
+        from. Answering "not yet" is the normal case, not a failure: REINFORCE
+        needs a full batch of finished episodes, and an actor-critic needs a
+        full rollout.
+
+        An implementation optimizes and nothing else. Deciding what the workers
+        do next belongs to the loop that called this, which is the only place
+        that can see both the collection and the budget.
+
+        `final` marks the last call of a training call, where an algorithm that
+        can learn from a partly filled collection may choose to do so rather
+        than discard it.
+        """
+
+    def interaction_allowance(self, interaction_budget: int) -> int:
+        """
+        Return how many interactions this iteration may spend.
+
+        Every boundary the run has to land on exactly is a limit here, and the
+        nearest one wins. Two of them belong to every engine: the budget itself,
+        and the next evaluation checkpoint. An algorithm that has a limit of its
+        own narrows the result by overriding this.
+
+        Because one active worker spends exactly one interaction, this doubles
+        as the largest number of workers that may step. Stopping short keeps
+        `evaluation_scheduler.due` exact rather than approximate — the counter
+        lands *on* a checkpoint instead of stepping over it.
+        """
+        allowance = interaction_budget - self.training_interactions
+        interval = self.evaluation_scheduler.interval
+        if interval is not None:
+            allowance = min(
+                allowance, interval - (self.training_interactions % interval)
+            )
+        return allowance
+
+    def active_worker_mask(self, allowance: int) -> np.ndarray:
+        """
+        Select up to `allowance` unparked workers to step next.
+
+        Each selected worker spends one interaction, so the allowance caps the
+        selection directly.
+        """
+        selected = np.flatnonzero(~self.parked_mask)[:allowance]
+        mask = np.zeros(self.worker_count, dtype=np.bool_)
+        mask[selected] = True
+        return mask
 
     def state(self) -> TrainingRunState:
         """
@@ -322,7 +384,7 @@ class TrainingEngine(ABC):
                     "environments": self.envs_manager.state(),
                     "schedule": self.evaluation_scheduler.state(),
                     "parked_mask": self.parked_mask.tolist(),
-                    "collector": self.collector_state(),
+                    "collection": self.collection_state(),
                     "updates": self.updates,
                     "timing": self.timer.state(),
                 },
@@ -350,7 +412,7 @@ class TrainingEngine(ABC):
         self.envs_manager.restore(mapping(state, "environments"))
         self.evaluation_scheduler.restore(mapping(state, "schedule"))
         self.parked_mask = np.asarray(state["parked_mask"], dtype=np.bool_)
-        self.restore_collector(mapping(state, "collector"))
+        self.restore_collection(mapping(state, "collection"))
         self.updates = typed_list(state, "updates", TrainingUpdate)
         self.timer.restore(mapping(state, "timing"))
 
@@ -410,22 +472,31 @@ class TrainingEngine(ABC):
             namespace=self.training_circuit_schedule.namespace,
         )
 
+    def try_evaluate(self) -> tuple[DeterministicEvaluationRecord, ...]:
+        """
+        Evaluate the scheduled circuits, but only when a checkpoint falls here.
+
+        *Try*, in the same sense as `try_update`: the loop asks after every
+        single step and the usual answer is that it is not time yet, so this
+        returns nothing far more often than it evaluates. The counter can land
+        exactly on a checkpoint because `interaction_allowance` stops a step
+        from carrying it past one.
+        """
+        if not self.evaluation_scheduler.due(self.training_interactions):
+            return ()
+        return self.evaluate(self.evaluation_scheduler.circuits)
+
     def evaluate(
-        self, circuits: Sequence[EvaluationCircuit] | None = None
+        self, circuits: Sequence[EvaluationCircuit]
     ) -> tuple[DeterministicEvaluationRecord, ...]:
         """
-        Evaluate the deterministic policy, on the schedule or on demand.
+        Evaluate the deterministic policy once on each circuit given.
 
-        With no circuits given, this evaluates the checkpoint schedule's own
-        circuits, but only when a checkpoint is due here. With circuits given
-        explicitly — the held-out set, run once after training ends — it always
-        evaluates them: passing them in is itself the request, so nothing the
-        engine holds can leak a test result into learning by evaluating it early.
+        Circuits are always an argument, never read from something the engine
+        holds. Held-out circuits are evaluated through here after training ends,
+        and requiring the caller to name them is what stops a test result from
+        reaching training: the engine has nothing to leak.
         """
-        if circuits is None:
-            if not self.evaluation_scheduler.due(self.training_interactions):
-                return ()
-            circuits = self.evaluation_scheduler.circuits
         with self.timer.evaluating():
             return self.evaluation_scheduler.run(
                 circuits,
@@ -450,16 +521,42 @@ class TrainingEngine(ABC):
         )
         self.optimizer_updates += 1
 
-    @abstractmethod
-    def collector_state(self) -> dict[str, Any]:
+    def collection_state(self) -> dict[str, Any]:
         """
-        Return the algorithm's partially collected experience for a checkpoint.
+        Return the partly collected experience, stamped with its collection mode.
+
+        The stamp is written here rather than by each algorithm because it is
+        the one part of this that is not algorithm-specific: what differs is the
+        shape of what was collected, not the fact that it was collected one way
+        rather than the other.
+        """
+        return {
+            "mode": self.collection_mode.value,
+            **self._collection_payload(),
+        }
+
+    def restore_collection(self, state: dict[str, Any]) -> None:
+        """
+        Restore partly collected experience, refusing a mismatched mode.
+
+        A rollout restored into an engine that collects whole episodes would not
+        fail at load; it would fail much later and look like a learning bug, so
+        the mode is checked before the payload is touched at all.
+        """
+        if CollectionMode(state["mode"]) is not self.collection_mode:
+            raise ValueError("checkpoint collection mode does not match the agent.")
+        self._restore_collection_payload(state)
+
+    @abstractmethod
+    def _collection_payload(self) -> dict[str, Any]:
+        """
+        Return whatever this algorithm has collected but not yet learned from.
         """
 
     @abstractmethod
-    def restore_collector(self, state: dict[str, Any]) -> None:
+    def _restore_collection_payload(self, state: dict[str, Any]) -> None:
         """
-        Restore the algorithm's partially collected experience.
+        Restore whatever this algorithm had collected but not yet learned from.
         """
 
     def _engine_configuration(self) -> dict[str, Any]:
@@ -545,23 +642,23 @@ def resolve_generators(
     return values
 
 
-def transition_to_dict(row: Any) -> dict[str, Any]:
+def transition_to_dict(transition: Any) -> dict[str, Any]:
     """
-    Serialize one immutable rollout row without retaining framework objects.
+    Serialize one immutable transition without retaining framework objects.
     """
     return {
-        "normalized_observation": row.normalized_observation.tolist(),
-        "raw_action": row.raw_action.tolist(),
-        "env_action": row.env_action.tolist(),
-        "reward": row.reward,
-        "behaviour_log_probability": row.behaviour_log_probability,
-        "current_value": row.current_value,
-        "next_value": row.next_value,
-        "terminated": row.terminated,
-        "truncated": row.truncated,
-        "next_normalized_observation": row.next_normalized_observation.tolist(),
-        "episode_identity": row.episode_identity,
-        "episode_step_index": row.episode_step_index,
-        "circuit_identity": row.circuit_identity,
-        "environment_index": row.environment_index,
+        "normalized_observation": transition.normalized_observation.tolist(),
+        "raw_action": transition.raw_action.tolist(),
+        "env_action": transition.env_action.tolist(),
+        "reward": transition.reward,
+        "behaviour_log_probability": transition.behaviour_log_probability,
+        "current_value": transition.current_value,
+        "next_value": transition.next_value,
+        "terminated": transition.terminated,
+        "truncated": transition.truncated,
+        "next_normalized_observation": transition.next_normalized_observation.tolist(),
+        "episode_identity": transition.episode_identity,
+        "episode_step_index": transition.episode_step_index,
+        "circuit_identity": transition.circuit_identity,
+        "environment_index": transition.environment_index,
     }

@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch import nn
 
-from models import make_mlp
+from agents.models import make_mlp
 
 
 def test_mlp_has_requested_topology_and_initialization() -> None:

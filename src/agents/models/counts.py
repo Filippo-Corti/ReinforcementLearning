@@ -1,4 +1,8 @@
-"""Shared neural components for project-owned reinforcement-learning agents."""
+"""Trainable parameter counts, reported per model role.
+
+Kept apart from the networks themselves because it is about describing a
+trained agent for the run log, not about computing anything the agent needs.
+"""
 
 from __future__ import annotations
 
@@ -8,14 +12,6 @@ from torch import nn
 
 from .actor import ActorNetwork
 from .critic import CriticNetwork
-from .mlp import make_mlp
-from .policies import (
-    GaussianPolicy,
-    Policy,
-    PolicySample,
-    RandomPolicy,
-    ScriptedFrenetPolicy,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,18 +54,3 @@ def agent_parameter_counts(
         actor=trainable_parameter_count(actor),
         critic=trainable_parameter_count(critic) if critic is not None else None,
     )
-
-
-__all__ = [
-    "ActorNetwork",
-    "CriticNetwork",
-    "GaussianPolicy",
-    "Policy",
-    "PolicySample",
-    "RandomPolicy",
-    "ScriptedFrenetPolicy",
-    "TrainableParameterCounts",
-    "agent_parameter_counts",
-    "make_mlp",
-    "trainable_parameter_count",
-]

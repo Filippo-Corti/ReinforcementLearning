@@ -4,11 +4,11 @@ import numpy as np
 import pytest
 import torch
 
-from agents import AgentUpdateInput, CollectedAction, CollectionMode, ReinforceAgent
+from agents import CollectedAction, CompleteEpisodesInput, ReinforceAgent
 from configs import ActorConfig, ReinforceConfig
 from tests.fixtures.envs.continuous_control import PositiveThrottleEnvironment
 from training import TrainingTransition
-from training.buffers import OnPolicyRollout
+from training.buffers import Trajectory
 
 
 def _agent(
@@ -35,7 +35,7 @@ def _episode(
     reward: float,
     pre_squash_action: tuple[float, float] | None = None,
     identity: int,
-) -> OnPolicyRollout:
+) -> Trajectory:
     observation = np.asarray((1.0,), dtype=np.float32)
     if pre_squash_action is None:
         choice = agent.collect_action(observation)
@@ -47,7 +47,7 @@ def _episode(
             behaviour_log_probability=None,
             current_value=None,
         )
-    return OnPolicyRollout(
+    return Trajectory(
         (
             TrainingTransition(
                 normalized_observation=observation,
@@ -68,7 +68,7 @@ def _episode(
     )
 
 
-def _batch(agent: ReinforceAgent) -> AgentUpdateInput:
+def _batch(agent: ReinforceAgent) -> CompleteEpisodesInput:
     environment = PositiveThrottleEnvironment()
     episodes = []
     for identity in range(agent.collection_size):
@@ -76,7 +76,7 @@ def _batch(agent: ReinforceAgent) -> AgentUpdateInput:
         decision = agent.collect_action(observation)
         _, reward = environment.step(decision.env_action)
         episodes.append(
-            OnPolicyRollout(
+            Trajectory(
                 (
                     TrainingTransition(
                         normalized_observation=observation,
@@ -96,7 +96,7 @@ def _batch(agent: ReinforceAgent) -> AgentUpdateInput:
                 )
             )
         )
-    return AgentUpdateInput(CollectionMode.COMPLETE_EPISODES, tuple(episodes))
+    return CompleteEpisodesInput(episodes=tuple(episodes))
 
 
 def test_reinforce_requires_an_explicit_actor_learning_rate() -> None:
@@ -131,7 +131,7 @@ def test_reinforce_loss_matches_the_documented_per_trajectory_reduction() -> Non
     )
     expected = -(log_probabilities * standardized).sum() / len(episodes)
 
-    result = agent.update(AgentUpdateInput(CollectionMode.COMPLETE_EPISODES, episodes))
+    result = agent.update(CompleteEpisodesInput(episodes=episodes))
 
     assert result.diagnostics["actor_loss"] == pytest.approx(float(expected.item()))
 
@@ -151,7 +151,7 @@ def test_one_controlled_update_increases_the_probability_of_positive_throttle() 
     observation = np.asarray((1.0,), dtype=np.float32)
     before = float(agent.deterministic_action(observation)[0])
 
-    agent.update(AgentUpdateInput(CollectionMode.COMPLETE_EPISODES, episodes))
+    agent.update(CompleteEpisodesInput(episodes=episodes))
 
     assert float(agent.deterministic_action(observation)[0]) > before
 

@@ -10,20 +10,7 @@ from circuits import (
 from evaluation import evaluate_deterministic
 from normalization import RunningObservationNormalizer
 
-from .buffers import (
-    FixedRolloutBuffer,
-    GAETargets,
-    OnPolicyRollout,
-    OnPolicyTensors,
-    ReinforceEpisodeBuffer,
-    TrainingTransition,
-    VectorOnPolicyRollout,
-    VectorOnPolicyTensors,
-    VectorRolloutBuffer,
-    compute_gae_targets,
-    compute_vector_gae_targets,
-    monte_carlo_return_to_go,
-)
+from .buffers import TrainingTransition, Trajectory
 from .checkpointing import (
     CHECKPOINT_SCHEMA_VERSION,
     CheckpointError,
@@ -41,9 +28,11 @@ from .engines import (
 )
 from .multienvs import (
     MultiEnvironmentManager,
+    MultiEnvTrainingTransition,
     PersistentRacingVectorEnv,
     RacingWorkerState,
     VectorRacingState,
+    VectorRollout,
     vector_info,
     vector_worker_info,
 )
@@ -55,15 +44,11 @@ __all__ = [
     "CheckpointError",
     "CircuitSplit",
     "EvaluationCircuit",
-    "FixedRolloutBuffer",
-    "GAETargets",
+    "MultiEnvTrainingTransition",
     "MultiEnvironmentManager",
-    "OnPolicyRollout",
-    "OnPolicyTensors",
     "PPOTrainingEngine",
     "PersistentRacingVectorEnv",
     "RacingWorkerState",
-    "ReinforceEpisodeBuffer",
     "ReinforceTrainingEngine",
     "RunningObservationNormalizer",
     "TrainingCircuitSchedule",
@@ -72,16 +57,12 @@ __all__ = [
     "TrainingRunState",
     "TrainingTransition",
     "TrainingUpdate",
-    "VectorOnPolicyRollout",
-    "VectorOnPolicyTensors",
+    "Trajectory",
     "VectorRacingState",
-    "VectorRolloutBuffer",
+    "VectorRollout",
     "circuit_track_seed",
-    "compute_gae_targets",
-    "compute_vector_gae_targets",
     "evaluate_deterministic",
     "load_checkpoint",
-    "monte_carlo_return_to_go",
     "save_checkpoint",
     "vector_info",
     "vector_worker_info",

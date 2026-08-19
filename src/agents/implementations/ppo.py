@@ -12,33 +12,29 @@ from numpy.typing import NDArray
 from torch import Tensor
 
 from configs import ActorConfig, CriticConfig, PPOConfig
-from models import ActorNetwork, CriticNetwork, agent_parameter_counts
-from training.buffers import (
-    GAETargets,
-    OnPolicyRollout,
-    VectorOnPolicyRollout,
-    compute_gae_targets,
-    compute_vector_gae_targets,
-)
-from utils.vectors import to_tensor
+from utils.vectors import optional_tensor, to_tensor
 
-from .diagnostics import (
+from ..diagnostics import (
     explained_variance,
     gradient_dispersion,
     parameter_norm,
     parameter_update_norm,
     standardize,
 )
-from .types import (
+from ..models import ActorNetwork, CriticNetwork, agent_parameter_counts
+from ..targets import compute_vector_gae_targets
+from ..types import (
     AgentUpdateInput,
     AgentUpdateOutput,
     CollectedAction,
     CollectedActionBatch,
     CollectionMode,
+    FixedRolloutInput,
 )
+from .base import OnPolicyAgent
 
 
-class PPOAgent:
+class PPOAgent(OnPolicyAgent):
     """
     Optimize a bounded Gaussian actor with clipped multi-epoch sample reuse.
 
@@ -209,18 +205,27 @@ class PPOAgent:
         """
         Optimize one fixed rollout through every seeded PPO minibatch epoch.
         """
-        if update_input.mode is not CollectionMode.FIXED_ROLLOUT:
-            raise ValueError("PPO requires fixed-rollout update input.")
+        if not isinstance(update_input, FixedRolloutInput):
+            raise TypeError("PPO requires fixed-rollout update input.")
         rollout = update_input.rollout
-        if rollout is None:
-            raise ValueError("PPO fixed-rollout input lacks a rollout.")
-        if len(rollout.transitions) > self.collection_size:
+        if rollout.transition_count > self.collection_size:
             raise ValueError("PPO rollout exceeds its configured collection size.")
 
-        observations, raw_actions, old_log_probabilities, targets = (
-            self._rollout_training_tensors(rollout)
+        transitions = rollout.transitions
+        observations, raw_actions = self._policy_inputs(transitions)
+        targets = compute_vector_gae_targets(
+            rollout, self.config.discount, self.config.gae_lambda, device=self.device
         )
-        old_log_probabilities = old_log_probabilities.detach().clone()
+        # Every later epoch scores these same actions under a policy that has
+        # already moved, so the ratio is only meaningful against what the
+        # collecting policy actually assigned them.
+        stored_log_probabilities = optional_tensor(
+            [transition.behaviour_log_probability for transition in transitions],
+            device=self.device,
+        )
+        if stored_log_probabilities is None:
+            raise ValueError("PPO requires collection log probabilities.")
+        old_log_probabilities = stored_log_probabilities.detach().clone()
         advantages = self._standardize_advantages(targets.raw_advantages)
         dispersion = self._gradient_dispersion(observations, raw_actions, advantages)
         value_targets = targets.value_targets.detach().clone()
@@ -534,85 +539,6 @@ class PPOAgent:
 
     def _standardize_advantages(self, advantages: Tensor) -> Tensor:
         return standardize(advantages, self.config.optimizer_epsilon)
-
-    def _rollout_training_tensors(
-        self,
-        rollout: OnPolicyRollout | VectorOnPolicyRollout,
-    ) -> tuple[Tensor, Tensor, Tensor, GAETargets]:
-        if isinstance(rollout, VectorOnPolicyRollout):
-            tensors = rollout.tensors(device=self.device)
-            if tensors.behaviour_log_probabilities is None:
-                raise ValueError("PPO requires collection log probabilities.")
-            vector_targets = compute_vector_gae_targets(
-                rollout,
-                self.config.discount,
-                self.config.gae_lambda,
-                device=self.device,
-            )
-            targets = GAETargets(
-                temporal_difference_errors=tensors.flatten_valid(
-                    vector_targets.temporal_difference_errors
-                ),
-                raw_advantages=tensors.flatten_valid(vector_targets.raw_advantages),
-                value_targets=tensors.flatten_valid(vector_targets.value_targets),
-            )
-            return (
-                tensors.flatten_valid(tensors.observations).to(dtype=self.dtype),
-                tensors.flatten_valid(tensors.raw_actions).to(dtype=self.dtype),
-                tensors.flatten_valid(tensors.behaviour_log_probabilities),
-                targets,
-            )
-        tensors = rollout.tensors(device=self.device)
-        if tensors.behaviour_log_probabilities is None:
-            raise ValueError("PPO requires collection log probabilities.")
-        targets = compute_gae_targets(
-            rollout,
-            self.config.discount,
-            self.config.gae_lambda,
-            device=self.device,
-        )
-        return (
-            tensors.observations.to(dtype=self.dtype),
-            tensors.raw_actions.to(dtype=self.dtype),
-            tensors.behaviour_log_probabilities,
-            targets,
-        )
-
-    @staticmethod
-    def _sampling_generators(
-        generators: torch.Generator | Sequence[torch.Generator],
-    ) -> tuple[torch.Generator, ...]:
-        if isinstance(generators, torch.Generator):
-            return (generators,)
-        values = tuple(generators)
-        if not values:
-            raise ValueError("At least one policy-sampling generator is required.")
-        return values
-
-    def _resolve_stream_indices(
-        self,
-        row_count: int,
-        environment_indices: Sequence[int] | None,
-    ) -> tuple[int, ...]:
-        """
-        Resolve and validate which sampling-generator stream serves each action row.
-
-        Defaults to one stream per row, in order, when no explicit environment
-        indices are given. Always checks that there is exactly one index per row
-        and that every index names an existing sampling stream.
-        """
-        indices = (
-            tuple(range(row_count))
-            if environment_indices is None
-            else tuple(environment_indices)
-        )
-        if len(indices) != row_count:
-            raise ValueError("One environment index is required per action row.")
-        if any(
-            index < 0 or index >= len(self.sampling_generators) for index in indices
-        ):
-            raise ValueError("Policy-sampling environment index is out of range.")
-        return indices
 
     @staticmethod
     def _validate_config(config: PPOConfig) -> None:

@@ -13,7 +13,8 @@ from typing import Any
 
 import numpy as np
 
-from agents.types import CollectedActionBatch, OnPolicyAgent
+from agents import OnPolicyAgent
+from agents.types import CollectedActionBatch
 from circuits import CircuitSplit, TrainingCircuitSchedule
 from configs import EnvironmentConfig, ExecutionConfig, ObservationRepresentation
 from envs.tracks import TrackWithGeometry
@@ -22,6 +23,7 @@ from recording.records import EpisodeRecord, RunCategory
 
 from ..buffers import TrainingTransition
 from .episodes import EpisodeCollector
+from .rollout import MultiEnvTrainingTransition
 from .vector_env import (
     PersistentRacingVectorEnv,
     VectorRacingState,
@@ -40,7 +42,7 @@ class CollectedStep:
         * interactions: Transitions that count against the training budget.
     """
 
-    transitions: list[TrainingTransition | None]
+    transitions: MultiEnvTrainingTransition
     finished: tuple[int, ...]
     interactions: int
 
@@ -211,7 +213,7 @@ class MultiEnvironmentManager:
 
         self.observations = next_observations
         return CollectedStep(
-            transitions=transitions,
+            transitions=tuple(transitions),
             finished=tuple(finished),
             interactions=interactions,
         )

@@ -4,10 +4,12 @@
 learning. `manager` drives them for one policy step and turns the result into
 transitions and finished episodes, which is what a training loop actually wants.
 `episodes` accumulates the in-flight episode each worker is racing.
+`rollout` holds what those steps add up to, laid out time by worker.
 """
 
+from .envs_manager import CollectedStep, MultiEnvironmentManager
 from .episodes import ActiveEpisode, EpisodeCollector
-from .manager import CollectedStep, MultiEnvironmentManager
+from .rollout import MultiEnvTrainingTransition, VectorRollout
 from .vector_env import (
     PersistentRacingVectorEnv,
     RacingWorkerState,
@@ -20,10 +22,12 @@ __all__ = [
     "ActiveEpisode",
     "CollectedStep",
     "EpisodeCollector",
+    "MultiEnvTrainingTransition",
     "MultiEnvironmentManager",
     "PersistentRacingVectorEnv",
     "RacingWorkerState",
     "VectorRacingState",
+    "VectorRollout",
     "vector_info",
     "vector_worker_info",
 ]

@@ -6,9 +6,9 @@ from typing import Any
 
 import numpy as np
 
-from agents.types import AgentUpdateInput, CollectionMode
+from agents.types import CompleteEpisodesInput
 
-from ..buffers import OnPolicyRollout, TrainingTransition
+from ..buffers import TrainingTransition, Trajectory
 from .base import TrainingEngine, TrainingRunState, transition_to_dict
 
 
@@ -19,17 +19,24 @@ class ReinforceTrainingEngine(TrainingEngine):
     REINFORCE has no critic, so its target is the actual return from each state
     to the end of the episode. Nothing can be learned from a half-finished
     episode: the return is not known until the car crashes or crosses the line.
-    Collection therefore runs until an episode ends rather than until a fixed
+    Collection therefore runs until episodes end rather than until a fixed
     number of transitions have been gathered.
 
-    A worker that finishes is *parked* instead of restarted. Restarting it would
-    begin an episode under the current policy that would still be running when
-    the policy changed, and the batch would then mix trajectories from two
-    different policies — which the estimator this implements does not allow.
+    Spreading collection over parallel workers introduces two aspects:
+        * A worker is **parked** when the episode it was racing has just ended. It
+        stops stepping and waits, holding its finished trajectory, instead of
+        immediately starting another one.
+        Restarting it at once would open an episode under the current policy
+        that would still be running after the next optimizer step, so
+        the batch would end up mixing trajectories from two different policies.
 
-    A batch needing more trajectories than there are workers is filled over
-    several waves. No optimizer step happens between waves, so one batch still
-    holds trajectories from a single policy.
+        * A **wave** is one group of workers released to race at the same time, sized
+        to however many trajectories the batch still needs. Eight workers and a
+        batch of eight is a single wave. Eight workers and a batch of twenty is
+        three waves of eight, eight and four. No optimizer step happens between the
+        waves of one batch, so every trajectory in it still comes from a single
+        policy; the next batch's first wave is the one that starts under the updated
+        policy.
 
     Fields:
         * active_trajectories: Transitions gathered so far, per worker.
@@ -40,11 +47,11 @@ class ReinforceTrainingEngine(TrainingEngine):
         """
         Open the per-worker trajectories and park the workers a wave excludes.
         """
-        self.active_trajectories: list[list[TrainingTransition]] = [
-            [] for _ in range(self.worker_count)
+        self.active_trajectories: list[Trajectory] = [
+            Trajectory() for _ in range(self.worker_count)
         ]
-        self.batch: list[OnPolicyRollout] = []
-        self.parked_mask = ~self._wave_mask()
+        self.batch: list[Trajectory] = []
+        self.parked_mask = ~self._build_wave_mask()
 
     def train(
         self, interaction_budget: int, *, finalize: bool = True
@@ -56,37 +63,31 @@ class ReinforceTrainingEngine(TrainingEngine):
             raise ValueError("Training budget cannot be below consumed interactions.")
         self.progress.start(self.training_interactions, interaction_budget)
 
-        # As long as we have interaction budget to spend:
+        # As long as we have budget to spend:
         while self.training_interactions < interaction_budget:
 
-            # First, select the workers that are still active (those that have not finished their episode(s) yet).
-            rows = interaction_budget - self.training_interactions
-            if self.evaluation_scheduler.interval is not None:
-                rows = min(
-                    rows,
-                    self.evaluation_scheduler.interval
-                    - (self.training_interactions % self.evaluation_scheduler.interval),
-                )
-            active_indices = np.flatnonzero(~self.parked_mask)[:rows]
-            if active_indices.size == 0:
-                # Every worker is parked: either the batch is complete and can
-                # be learned from, or the next wave_mask has to be released.
-                self._update_if_batch_complete(final=False)
-                if self.parked_mask.all():
-                    self._start_wave()
-                continue
-            active_mask = np.zeros(self.worker_count, dtype=np.bool_)
-            active_mask[active_indices] = True
+            # Determine how many interactions we can run (before hitting budget/batch/evaluation limits),
+            # and, consequently, how many workers to activate
+            allowance = self.interaction_allowance(interaction_budget)
+            active_mask = self.active_worker_mask(allowance)
 
-            # Collect one step from each active worker, extending their trajectories and parking finishers
+            if not active_mask.any():
+                # If there are no active workers, we should try to update the policy.
+                # If the batch is full, we update and start a new wave.
+                # if the batch is not full, we start a new wave and continue collecting.
+                self.try_update(final=False)
+                self._start_wave()
+                continue
+
+            # Advance the environments one step each and collect the transitions
             self._collect_step(active_mask)
             self.progress.advance(self.training_interactions)
 
-            # If the schedule is due for an evaluation, run it now
-            self._update_if_batch_complete(final=False)
-            self.evaluate()
+            # Check if it's time to run evaluation
+            self.try_evaluate()
 
-        self._update_if_batch_complete(final=finalize)
+        # Run the final update, if possible
+        self.try_update(final=finalize)
         self.progress.close()
         return self.state()
 
@@ -111,13 +112,11 @@ class ReinforceTrainingEngine(TrainingEngine):
         """
         Move a finished episode into the batch and park the worker that ran it.
         """
-        self.batch.append(
-            OnPolicyRollout(tuple(self.active_trajectories[worker_index]))
-        )
-        self.active_trajectories[worker_index] = []
+        self.batch.append(self.active_trajectories[worker_index])
+        self.active_trajectories[worker_index] = Trajectory()
         self.parked_mask[worker_index] = True
 
-    def _wave_mask(self) -> np.ndarray:
+    def _build_wave_mask(self) -> np.ndarray:
         """
         Select only the workers the current batch still has room for.
 
@@ -133,55 +132,53 @@ class ReinforceTrainingEngine(TrainingEngine):
         """
         Reset and unpark the workers that collect the next group of trajectories.
         """
-        wave_mask = self._wave_mask()
+        wave_mask = self._build_wave_mask()
         self.parked_mask = ~wave_mask
         self.envs_manager.reset_workers(wave_mask)
 
-    def _update_if_batch_complete(self, *, final: bool) -> None:
+    def try_update(self, *, final: bool) -> None:
         """
         Take the policy-gradient step once the batch holds its full episode count.
+
+        A partial batch is never learned from, `final` or not: its returns are
+        complete but its size is not, and the batch size is the denominator the
+        estimator averages over. Discarding the remainder at the end of a
+        training call is the honest option, since resuming continues the same
+        batch from the checkpoint anyway.
         """
-        del final  # A partial batch is never learned from: its returns are complete
-        # but its size is not, and the batch size is what the estimator averages over.
+        del final
         if len(self.batch) != self.agent.collection_size:
             return
-        update_input = AgentUpdateInput(
-            mode=CollectionMode.COMPLETE_EPISODES,
-            episodes=tuple(self.batch),
-        )
+        update_input = CompleteEpisodesInput(episodes=tuple(self.batch))
         with self.timer.optimizing() as elapsed:
             output = self.agent.update(update_input)
         self.record_update(output, elapsed.seconds)
         self.batch = []
-        self._start_wave()
 
-    def collector_state(self) -> dict[str, Any]:
+    def _collection_payload(self) -> dict[str, Any]:
         """
         Return the partial trajectories and the completed batch for a checkpoint.
         """
         return {
-            "mode": CollectionMode.COMPLETE_EPISODES.value,
             "active": [
-                [transition_to_dict(row) for row in episode]
+                [transition_to_dict(transition) for transition in episode]
                 for episode in self.active_trajectories
             ],
             "completed": [
-                [transition_to_dict(row) for row in episode.transitions]
+                [transition_to_dict(transition) for transition in episode.transitions]
                 for episode in self.batch
             ],
         }
 
-    def restore_collector(self, state: dict[str, Any]) -> None:
+    def _restore_collection_payload(self, state: dict[str, Any]) -> None:
         """
         Restore partial trajectories, so resume continues the episodes in flight.
         """
-        if CollectionMode(state["mode"]) is not CollectionMode.COMPLETE_EPISODES:
-            raise ValueError("checkpoint collection mode does not match the agent.")
         self.active_trajectories = [
-            [TrainingTransition(**row) for row in episode]
+            Trajectory(TrainingTransition(**transition) for transition in episode)
             for episode in state["active"]
         ]
         self.batch = [
-            OnPolicyRollout(tuple(TrainingTransition(**row) for row in episode))
+            Trajectory(TrainingTransition(**transition) for transition in episode)
             for episode in state["completed"]
         ]

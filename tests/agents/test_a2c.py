@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import pytest
 import torch
 
-from agents import A2CAgent, AgentUpdateInput, CollectedAction, CollectionMode
+from agents import A2CAgent, CollectedAction, FixedRolloutInput
+from agents.targets import compute_vector_gae_targets
 from configs import A2CConfig, ActorConfig, CriticConfig
 from tests.fixtures.envs.continuous_control import PositiveThrottleEnvironment
 from training import TrainingTransition
-from training.buffers import OnPolicyRollout, compute_gae_targets
+from training.multienvs import VectorRollout
 
 
 def _agent(
@@ -74,7 +77,20 @@ def _transition(
     )
 
 
-def _rollout(agent: A2CAgent) -> OnPolicyRollout:
+def _single_column(
+    transitions: Sequence[TrainingTransition],
+) -> VectorRollout:
+    """
+    Wrap one worker's transitions as the one-column rollout the agent consumes.
+    """
+    transitions = tuple(transitions)
+    rollout = VectorRollout(capacity=len(transitions), environment_count=1)
+    for transition in transitions:
+        rollout.append_step((transition,))
+    return rollout
+
+
+def _rollout(agent: A2CAgent) -> VectorRollout:
     environment = PositiveThrottleEnvironment()
     rows = []
     for identity in range(agent.collection_size):
@@ -98,12 +114,12 @@ def _rollout(agent: A2CAgent) -> OnPolicyRollout:
                 circuit_identity="controlled",
             )
         )
-    return OnPolicyRollout(tuple(rows))
+    return _single_column(rows)
 
 
 def test_a2c_losses_match_the_documented_mean_reductions() -> None:
     agent = _agent(4)
-    rollout = OnPolicyRollout(
+    rollout = _single_column(
         (
             _transition(
                 agent,
@@ -126,19 +142,15 @@ def test_a2c_losses_match_the_documented_mean_reductions() -> None:
             ),
         )
     )
-    targets = compute_gae_targets(rollout, discount=0.9, gae_lambda=0.95)
+    targets = compute_vector_gae_targets(rollout, discount=0.9, gae_lambda=0.95)
     advantages = agent._standardize_advantages(targets.raw_advantages)
-    tensors = rollout.tensors()
-    log_probabilities = agent.actor.log_probability(
-        tensors.observations, tensors.raw_actions
-    )
+    observations, raw_actions = agent._policy_inputs(rollout.transitions)
+    log_probabilities = agent.actor.log_probability(observations, raw_actions)
     expected_actor_loss = -(log_probabilities * advantages).mean()
-    predictions = agent.critic(tensors.observations)
+    predictions = agent.critic(observations)
     expected_critic_loss = 0.5 * (predictions - targets.value_targets).square().mean()
 
-    output = agent.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=rollout)
-    )
+    output = agent.update(FixedRolloutInput(rollout=rollout))
 
     assert output.diagnostics["actor_loss"] == pytest.approx(
         float(expected_actor_loss.item())
@@ -150,7 +162,7 @@ def test_a2c_losses_match_the_documented_mean_reductions() -> None:
 
 def test_a2c_lambda_zero_uses_one_step_advantages_and_targets() -> None:
     agent = _agent(5, gae_lambda=0.0)
-    rollout = OnPolicyRollout(
+    rollout = _single_column(
         (
             _transition(
                 agent,
@@ -174,7 +186,7 @@ def test_a2c_lambda_zero_uses_one_step_advantages_and_targets() -> None:
         )
     )
 
-    targets = compute_gae_targets(rollout, discount=0.9, gae_lambda=0.0)
+    targets = compute_vector_gae_targets(rollout, discount=0.9, gae_lambda=0.0)
 
     torch.testing.assert_close(
         targets.raw_advantages, targets.temporal_difference_errors
@@ -185,20 +197,20 @@ def test_a2c_lambda_zero_uses_one_step_advantages_and_targets() -> None:
 def test_a2c_actor_and_critic_gradients_are_isolated() -> None:
     agent = _agent(6)
     rollout = _rollout(agent)
-    targets = compute_gae_targets(rollout, discount=0.9, gae_lambda=0.95)
+    targets = compute_vector_gae_targets(rollout, discount=0.9, gae_lambda=0.95)
     advantages = agent._standardize_advantages(targets.raw_advantages)
+    observations, raw_actions = agent._policy_inputs(rollout.transitions)
 
     agent.actor_optimizer.zero_grad(set_to_none=True)
     agent.critic_optimizer.zero_grad(set_to_none=True)
-    agent._actor_loss(rollout, advantages).backward()
+    agent._actor_loss_tensors(observations, raw_actions, advantages).backward()
 
     assert all(parameter.grad is not None for parameter in agent.actor.parameters())
     assert all(parameter.grad is None for parameter in agent.critic.parameters())
 
     agent.actor_optimizer.zero_grad(set_to_none=True)
     agent.critic_optimizer.zero_grad(set_to_none=True)
-    tensors = rollout.tensors()
-    critic_loss, _ = agent._critic_loss(tensors.observations, targets.value_targets)
+    critic_loss, _ = agent._critic_loss(observations, targets.value_targets)
     critic_loss.backward()
 
     assert all(parameter.grad is None for parameter in agent.actor.parameters())
@@ -211,9 +223,7 @@ def test_controlled_problem_improves_for_all_validation_seeds() -> None:
         agent = _agent(seed)
         before = float(agent.deterministic_action(observation)[0])
         for _ in range(40):
-            agent.update(
-                AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(agent))
-            )
+            agent.update(FixedRolloutInput(rollout=_rollout(agent)))
         after = float(agent.deterministic_action(observation)[0])
 
         assert after > before + 0.2
@@ -222,12 +232,8 @@ def test_controlled_problem_improves_for_all_validation_seeds() -> None:
 def test_same_seed_reproduces_actions_diagnostics_and_parameters() -> None:
     first = _agent(9)
     second = _agent(9)
-    first_output = first.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(first))
-    )
-    second_output = second.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(second))
-    )
+    first_output = first.update(FixedRolloutInput(rollout=_rollout(first)))
+    second_output = second.update(FixedRolloutInput(rollout=_rollout(second)))
 
     assert first_output == second_output
     assert all(

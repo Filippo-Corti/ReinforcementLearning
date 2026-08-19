@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -12,33 +12,32 @@ from numpy.typing import NDArray
 from torch import Tensor
 
 from configs import A2CConfig, ActorConfig, CriticConfig
-from models import ActorNetwork, CriticNetwork, agent_parameter_counts
-from training.buffers import (
-    GAETargets,
-    OnPolicyRollout,
-    VectorOnPolicyRollout,
-    compute_gae_targets,
-    compute_vector_gae_targets,
-)
-from utils.vectors import to_tensor
+from utils.vectors import optional_tensor, to_tensor
 
-from .diagnostics import (
+from ..diagnostics import (
     explained_variance,
     gradient_dispersion,
     parameter_norm,
     parameter_update_norm,
     standardize,
 )
-from .types import (
+from ..models import ActorNetwork, CriticNetwork, agent_parameter_counts
+from ..targets import compute_vector_gae_targets
+from ..types import (
     AgentUpdateInput,
     AgentUpdateOutput,
     CollectedAction,
     CollectedActionBatch,
     CollectionMode,
+    FixedRolloutInput,
 )
+from .base import OnPolicyAgent
+
+if TYPE_CHECKING:
+    from training.buffers import TrainingTransition
 
 
-class A2CAgent:
+class A2CAgent(OnPolicyAgent):
     """
     Optimize a bounded Gaussian actor and a fixed-capacity value critic.
 
@@ -204,16 +203,19 @@ class A2CAgent:
         """
         Apply one actor update and one critic update from a fixed rollout.
         """
-        if update_input.mode is not CollectionMode.FIXED_ROLLOUT:
-            raise ValueError("A2C requires fixed-rollout update input.")
+        if not isinstance(update_input, FixedRolloutInput):
+            raise TypeError("A2C requires fixed-rollout update input.")
         rollout = update_input.rollout
-        if rollout is None:
-            raise ValueError("A2C fixed-rollout input lacks a rollout.")
-        if len(rollout.transitions) > self.collection_size:
+        if rollout.transition_count > self.collection_size:
             raise ValueError("A2C rollout exceeds its configured collection size.")
 
-        observations, raw_actions, behaviour_log_probabilities, targets = (
-            self._rollout_training_tensors(rollout)
+        transitions = rollout.transitions
+        observations, raw_actions = self._policy_inputs(transitions)
+        targets = compute_vector_gae_targets(
+            rollout, self.config.discount, self.config.gae_lambda, device=self.device
+        )
+        behaviour_log_probabilities = self._behaviour_log_probabilities(
+            transitions, observations, raw_actions
         )
         advantages = self._standardize_advantages(targets.raw_advantages)
         dispersion = self._gradient_dispersion(observations, raw_actions, advantages)
@@ -390,14 +392,6 @@ class A2CAgent:
             self.gradient_dispersion_subbatch,
         )
 
-    def _actor_loss(self, rollout: OnPolicyRollout, advantages: Tensor) -> Tensor:
-        tensors = rollout.tensors(device=self.device)
-        return self._actor_loss_tensors(
-            tensors.observations.to(dtype=self.dtype),
-            tensors.raw_actions.to(dtype=self.dtype),
-            advantages,
-        )
-
     def _actor_loss_tensors(
         self,
         observations: Tensor,
@@ -416,104 +410,23 @@ class A2CAgent:
     def _standardize_advantages(self, advantages: Tensor) -> Tensor:
         return standardize(advantages, self.config.optimizer_epsilon)
 
-    def _entropy_proxy(self, rollout: OnPolicyRollout) -> float:
-        collection_values = tuple(
-            row.behaviour_log_probability for row in rollout.transitions
-        )
-        if all(value is not None for value in collection_values):
-            return float(-np.mean(np.asarray(collection_values, dtype=np.float64)))
-        tensors = rollout.tensors(device=self.device)
-        return float(
-            -self.actor.log_probability(
-                tensors.observations.to(dtype=self.dtype),
-                tensors.raw_actions.to(dtype=self.dtype),
-            )
-            .detach()
-            .mean()
-            .item()
-        )
-
-    def _rollout_training_tensors(
+    def _behaviour_log_probabilities(
         self,
-        rollout: OnPolicyRollout | VectorOnPolicyRollout,
-    ) -> tuple[Tensor, Tensor, Tensor, GAETargets]:
-        if isinstance(rollout, VectorOnPolicyRollout):
-            tensors = rollout.tensors(device=self.device)
-            vector_targets = compute_vector_gae_targets(
-                rollout,
-                self.config.discount,
-                self.config.gae_lambda,
-                device=self.device,
-            )
-            targets = GAETargets(
-                temporal_difference_errors=tensors.flatten_valid(
-                    vector_targets.temporal_difference_errors
-                ),
-                raw_advantages=tensors.flatten_valid(vector_targets.raw_advantages),
-                value_targets=tensors.flatten_valid(vector_targets.value_targets),
-            )
-            observations = tensors.flatten_valid(tensors.observations).to(
-                dtype=self.dtype
-            )
-            raw_actions = tensors.flatten_valid(tensors.raw_actions).to(
-                dtype=self.dtype
-            )
-            probabilities = tensors.behaviour_log_probabilities
-            if probabilities is None:
-                flattened_probabilities = self.actor.log_probability(
-                    observations, raw_actions
-                ).detach()
-            else:
-                flattened_probabilities = tensors.flatten_valid(probabilities)
-            return observations, raw_actions, flattened_probabilities, targets
-        tensors = rollout.tensors(device=self.device)
-        targets = compute_gae_targets(
-            rollout,
-            self.config.discount,
-            self.config.gae_lambda,
+        transitions: Sequence[TrainingTransition],
+        observations: Tensor,
+        raw_actions: Tensor,
+    ) -> Tensor:
+        """
+        Return the log probabilities the collecting policy assigned each action.
+
+        A2C looks at every transition once, so when the collector stored none
+        the current actor is still the one that chose them and recomputing is
+        exact rather than an approximation.
+        """
+        stored = optional_tensor(
+            [transition.behaviour_log_probability for transition in transitions],
             device=self.device,
         )
-        observations = tensors.observations.to(dtype=self.dtype)
-        raw_actions = tensors.raw_actions.to(dtype=self.dtype)
-        probabilities = tensors.behaviour_log_probabilities
-        if probabilities is None:
-            probabilities = self.actor.log_probability(
-                observations, raw_actions
-            ).detach()
-        return observations, raw_actions, probabilities, targets
-
-    @staticmethod
-    def _sampling_generators(
-        generators: torch.Generator | Sequence[torch.Generator],
-    ) -> tuple[torch.Generator, ...]:
-        if isinstance(generators, torch.Generator):
-            return (generators,)
-        values = tuple(generators)
-        if not values:
-            raise ValueError("At least one policy-sampling generator is required.")
-        return values
-
-    def _resolve_stream_indices(
-        self,
-        row_count: int,
-        environment_indices: Sequence[int] | None,
-    ) -> tuple[int, ...]:
-        """
-        Resolve and validate which sampling-generator stream serves each action row.
-
-        Defaults to one stream per row, in order, when no explicit environment
-        indices are given. Always checks that there is exactly one index per row
-        and that every index names an existing sampling stream.
-        """
-        indices = (
-            tuple(range(row_count))
-            if environment_indices is None
-            else tuple(environment_indices)
-        )
-        if len(indices) != row_count:
-            raise ValueError("One environment index is required per action row.")
-        if any(
-            index < 0 or index >= len(self.sampling_generators) for index in indices
-        ):
-            raise ValueError("Policy-sampling environment index is out of range.")
-        return indices
+        if stored is not None:
+            return stored
+        return self.actor.log_probability(observations, raw_actions).detach()

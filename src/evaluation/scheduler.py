@@ -3,22 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 import gymnasium as gym
 import numpy as np
 
+from agents import OnPolicyAgent
 from circuits import EvaluationCircuit
 from configs import ObservationRepresentation
 from normalization import RunningObservationNormalizer
 from recording.records import DeterministicEvaluationRecord, RunCategory
 
 from .deterministic import evaluate_deterministic
-
-if TYPE_CHECKING:
-    # See deterministic.py: deferred to avoid importing `agents` (and, through
-    # it, `training`) back into this package while it is still loading.
-    from agents.types import OnPolicyAgent
 
 
 class EvaluationScheduler:

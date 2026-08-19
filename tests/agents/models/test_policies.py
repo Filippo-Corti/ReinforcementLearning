@@ -4,13 +4,13 @@ from math import exp, log
 
 import torch
 
+from agents.models import ActorNetwork, agent_parameter_counts
 from configs import (
     LARGE_ACTOR_CONFIG,
     MEDIUM_ACTOR_CONFIG,
     SMALL_ACTOR_CONFIG,
     CarConfig,
 )
-from models import ActorNetwork, agent_parameter_counts
 
 
 def _actor(config=SMALL_ACTOR_CONFIG, seed: int = 10) -> ActorNetwork:

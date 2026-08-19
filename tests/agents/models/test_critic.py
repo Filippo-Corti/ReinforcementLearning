@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import torch
 
+from agents.models import ActorNetwork, CriticNetwork, agent_parameter_counts
 from configs import FIXED_CRITIC_CONFIG, SMALL_ACTOR_CONFIG
-from models import ActorNetwork, CriticNetwork, agent_parameter_counts
 
 
 def _critic(seed: int = 21) -> CriticNetwork:

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 import numpy as np
 import pytest
 import torch
 
-from agents import AgentUpdateInput, CollectionMode, PPOAgent
+from agents import FixedRolloutInput, PPOAgent
 from configs import ActorConfig, CriticConfig, PPOConfig
 from tests.fixtures.envs.continuous_control import PositiveThrottleEnvironment
 from training import TrainingTransition
-from training.buffers import OnPolicyRollout
+from training.multienvs import VectorRollout
 
 
 def _agent(
@@ -85,7 +86,20 @@ def _transition(
     )
 
 
-def _rollout(agent: PPOAgent) -> OnPolicyRollout:
+def _single_column(
+    transitions: Sequence[TrainingTransition],
+) -> VectorRollout:
+    """
+    Wrap one worker's transitions as the one-column rollout the agent consumes.
+    """
+    transitions = tuple(transitions)
+    rollout = VectorRollout(capacity=len(transitions), environment_count=1)
+    for transition in transitions:
+        rollout.append_step((transition,))
+    return rollout
+
+
+def _rollout(agent: PPOAgent) -> VectorRollout:
     environment = PositiveThrottleEnvironment()
     rows = []
     for identity in range(agent.collection_size):
@@ -109,7 +123,7 @@ def _rollout(agent: PPOAgent) -> OnPolicyRollout:
                 circuit_identity="controlled",
             )
         )
-    return OnPolicyRollout(tuple(rows))
+    return _single_column(rows)
 
 
 def test_ppo_clipped_surrogate_matches_positive_and_negative_advantages() -> None:
@@ -161,9 +175,7 @@ def test_ppo_unchanged_policy_has_unit_ratios_and_zero_approximate_kl() -> None:
 
 def test_ppo_minibatches_cover_every_rollout_row_once_per_epoch() -> None:
     agent = _agent(6, optimization_epochs=4, minibatch_size=3)
-    agent.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(agent))
-    )
+    agent.update(FixedRolloutInput(rollout=_rollout(agent)))
 
     assert len(agent.last_minibatch_indices) == 4
     for epoch in agent.last_minibatch_indices:
@@ -183,12 +195,8 @@ def test_ppo_kl_early_stop_ends_an_update_that_moves_the_policy_too_far() -> Non
         target_kl=1e-6,
     )
 
-    unbounded_output = unbounded.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(unbounded))
-    )
-    stopped_output = stopped.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(stopped))
-    )
+    unbounded_output = unbounded.update(FixedRolloutInput(rollout=_rollout(unbounded)))
+    stopped_output = stopped.update(FixedRolloutInput(rollout=_rollout(stopped)))
 
     assert unbounded_output.diagnostics["completed_epochs"] == 4.0
     assert stopped_output.diagnostics["completed_epochs"] == 1.0
@@ -203,7 +211,7 @@ def test_ppo_keeps_collection_log_probabilities_fixed_for_all_epochs() -> None:
         minibatch_size=8,
     )
     log_ratio = math.log(1.3)
-    rollout = OnPolicyRollout(
+    rollout = _single_column(
         tuple(
             _transition(
                 agent,
@@ -228,9 +236,7 @@ def test_ppo_keeps_collection_log_probabilities_fixed_for_all_epochs() -> None:
         )
     )
 
-    output = agent.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=rollout)
-    )
+    output = agent.update(FixedRolloutInput(rollout=rollout))
 
     assert output.diagnostics["ratio_mean"] == pytest.approx(1.3)
     assert output.diagnostics["approximate_kl"] == pytest.approx(
@@ -244,9 +250,7 @@ def test_controlled_problem_improves_for_all_validation_seeds() -> None:
         agent = _agent(seed, optimization_epochs=10, minibatch_size=8)
         before = float(agent.deterministic_action(observation)[0])
         for _ in range(40):
-            agent.update(
-                AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(agent))
-            )
+            agent.update(FixedRolloutInput(rollout=_rollout(agent)))
         after = float(agent.deterministic_action(observation)[0])
 
         assert after > before + 0.2
@@ -255,12 +259,8 @@ def test_controlled_problem_improves_for_all_validation_seeds() -> None:
 def test_same_seed_reproduces_minibatch_order_diagnostics_and_parameters() -> None:
     first = _agent(9)
     second = _agent(9)
-    first_output = first.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(first))
-    )
-    second_output = second.update(
-        AgentUpdateInput(CollectionMode.FIXED_ROLLOUT, rollout=_rollout(second))
-    )
+    first_output = first.update(FixedRolloutInput(rollout=_rollout(first)))
+    second_output = second.update(FixedRolloutInput(rollout=_rollout(second)))
 
     assert first.last_minibatch_indices == second.last_minibatch_indices
     assert first_output == second_output

@@ -1,17 +1,17 @@
-"""Project-owned contracts shared by every on-policy learning agent."""
+"""The records an agent and an engine exchange, independent of either one."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from training.buffers import OnPolicyRollout, VectorOnPolicyRollout
+    from training.buffers import Trajectory
+    from training.multienvs import VectorRollout
 
 
 class CollectionMode(StrEnum):
@@ -116,31 +116,55 @@ class CollectedActionBatch:
 @dataclass(frozen=True, slots=True)
 class AgentUpdateInput:
     """
-    Describe one complete-episode or fixed-rollout optimization input.
+    Carry whatever one optimizer step is allowed to learn from.
 
-    Fields:
-        * mode: Collection boundary that made the data eligible for learning.
-        * episodes: Complete trajectories for a Monte Carlo update.
-        * rollout: A fixed-length rollout for an actor-critic update.
+    There is no field here, on purpose. What an update needs depends entirely
+    on which boundary released it, and the two boundaries have nothing in
+    common: a Monte Carlo estimator needs finished episodes and an actor-critic
+    needs a fixed rollout. A single class carrying both would be half empty
+    whichever way it was built, and would have to be told by a mode flag which
+    half to believe. The subclasses make that unrepresentable instead.
     """
 
-    mode: CollectionMode
-    episodes: tuple[OnPolicyRollout, ...] = ()
-    rollout: OnPolicyRollout | VectorOnPolicyRollout | None = None
+
+@dataclass(frozen=True, slots=True)
+class CompleteEpisodesInput(AgentUpdateInput):
+    """
+    Hand a Monte Carlo update the finished episodes it averages over.
+
+    Fields:
+        * episodes: Complete trajectories, one per finished episode.
+    """
+
+    episodes: tuple[Trajectory, ...]
 
     def __post_init__(self) -> None:
         """
-        Require exactly the data shape implied by the collection mode.
+        Require episodes that actually ended, since the returns depend on it.
         """
-        if self.mode is CollectionMode.COMPLETE_EPISODES:
-            if not self.episodes or self.rollout is not None:
-                raise ValueError(
-                    "Complete-episode updates require episodes and no rollout."
-                )
-        elif self.episodes or self.rollout is None:
-            raise ValueError(
-                "Fixed-rollout updates require one rollout and no episodes."
-            )
+        if not self.episodes:
+            raise ValueError("A complete-episode update requires episodes.")
+        if not all(episode.is_complete for episode in self.episodes):
+            raise ValueError("A complete-episode update requires ended episodes.")
+
+
+@dataclass(frozen=True, slots=True)
+class FixedRolloutInput(AgentUpdateInput):
+    """
+    Hand an actor-critic update the rollout it bootstraps from.
+
+    Fields:
+        * rollout: Collected transitions in time-by-worker order.
+    """
+
+    rollout: VectorRollout
+
+    def __post_init__(self) -> None:
+        """
+        Reject an empty rollout, whose targets would have no meaningful shape.
+        """
+        if not self.rollout.transition_count:
+            raise ValueError("A fixed-rollout update requires a transition.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,97 +177,3 @@ class AgentUpdateOutput:
     """
 
     diagnostics: dict[str, float | int | None] = field(default_factory=dict)
-
-
-@runtime_checkable
-class OnPolicyAgent(Protocol):
-    """
-    Define the learning boundary for bounded continuous on-policy agents.
-
-    Agents own models, optimizers, policy/minibatch random generators and their
-    serializable state. The shared engine owns environment interaction,
-    normalization, episode lifecycle and accounting.
-    """
-
-    collection_mode: CollectionMode
-    collection_size: int
-
-    def collect_action(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> CollectedAction:
-        """
-        Sample one stochastic bounded action for training collection.
-        """
-        ...
-
-    def collect_actions(
-        self,
-        normalized_observations: NDArray[np.float32],
-        environment_indices: Sequence[int] | None = None,
-    ) -> CollectedActionBatch:
-        """
-        Sample one stochastic action per vector-environment observation.
-        """
-        ...
-
-    def bootstrap_values(
-        self, normalized_observations: NDArray[np.float32]
-    ) -> NDArray[np.float32] | None:
-        """
-        Return detached critic values for a batch of bootstrap states.
-        """
-        ...
-
-    def deterministic_action(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> NDArray[np.float32]:
-        """
-        Return one bounded action without consuming a training random stream.
-        """
-        ...
-
-    def bootstrap_value(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> float | None:
-        """
-        Return a detached critic value for one bootstrap state when applicable.
-        """
-        ...
-
-    def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
-        """
-        Optimize owned state from detached rollout records.
-        """
-        ...
-
-    def state_dict(self) -> dict[str, Any]:
-        """
-        Return all owned model, optimizer and mutable generator state.
-        """
-        ...
-
-    def load_state_dict(self, state: dict[str, Any]) -> None:
-        """
-        Restore all owned model, optimizer and mutable generator state.
-        """
-        ...
-
-
-class ParameterizedOnPolicyAgent(OnPolicyAgent, Protocol):
-    """
-    Extend the engine contract with parameter counts required by run recording.
-    """
-
-    @property
-    def actor_parameter_count(self) -> int:
-        """
-        Return the number of trainable actor parameters.
-        """
-        ...
-
-    @property
-    def critic_parameter_count(self) -> int | None:
-        """
-        Return trainable critic parameters, or `None` for actor-only agents.
-        """
-        ...

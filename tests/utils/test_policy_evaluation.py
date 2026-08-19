@@ -6,10 +6,10 @@ from math import log
 
 import numpy as np
 
+from agents.models import Policy, RandomPolicy, ScriptedFrenetPolicy
 from envs.observations import FrenetObservation
 from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry, generate_track
-from models import Policy, RandomPolicy, ScriptedFrenetPolicy
 from recording import EpisodeOutcome, RunCategory
 from utils.policy_evaluation import evaluate_policy_episode
 from utils.random import RunSeedStreams, SeedNamespace, SeedStream

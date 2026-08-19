@@ -8,10 +8,10 @@ from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
 
+from agents.models import RandomPolicy, ScriptedFrenetPolicy
 from configs import EnvironmentConfig
 from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry, generate_track_file
-from models import RandomPolicy, ScriptedFrenetPolicy
 from recording import (
     EvaluationRecord,
     MetricScope,

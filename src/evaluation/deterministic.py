@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
+from agents import OnPolicyAgent
 from configs import ObservationRepresentation
 from envs.racing import RacingEnv
 from envs.tracks import track_geometry_summary
@@ -24,13 +24,6 @@ from recording.records import (
 from utils.statistics import scalar_summary
 
 from .utils import trajectory_state
-
-if TYPE_CHECKING:
-    # Deferred: `agents` eagerly imports its concrete classes, which need
-    # `training.buffers`, which needs this package back. Nothing here calls
-    # `agent.*` in a way that requires the runtime Protocol, only the
-    # annotation, so the import can stay type-checking-only.
-    from agents.types import OnPolicyAgent
 
 
 def evaluate_deterministic(
