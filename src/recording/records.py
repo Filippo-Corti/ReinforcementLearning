@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -12,6 +13,15 @@ METRICS_SCHEMA_VERSION = 2
 class RunCategory(StrEnum):
     """
     Identify the purpose of a run and the namespace of its recorded outputs.
+
+    This is not a restatement of the interaction budget: a pre-experiment run
+    can use the full reported budget (a calibration probe, say), and the
+    budget alone cannot tell a validation rehearsal apart from the reported
+    run it rehearses. `RunDirectory` (`recording/runs.py`) stamps this value
+    into every snapshot and record it writes and refuses to load or append
+    data whose category disagrees, which is the guard that stops a
+    calibration or validation run from being silently read back as reported
+    experiment data.
     """
 
     PRE_EXPERIMENT = "pre_experiment_configuration"
@@ -38,6 +48,23 @@ class EpisodeOutcome(StrEnum):
     CRASHED = "crashed"
     STALLED = "stalled"
     TIME_LIMIT = "time_limit"
+
+    @classmethod
+    def from_transition(
+        cls, *, terminated: bool, truncated: bool, info: Mapping[str, object]
+    ) -> EpisodeOutcome:
+        """
+        Convert one explicit RacingEnv lifecycle boundary into an outcome.
+        """
+        if terminated and bool(info["lap_completed"]):
+            return cls.COMPLETED
+        if terminated and bool(info["collision"]):
+            return cls.CRASHED
+        if terminated and bool(info["stalled"]):
+            return cls.STALLED
+        if truncated:
+            return cls.TIME_LIMIT
+        raise ValueError("Terminal transition lacks a supported RacingEnv outcome.")
 
 
 @dataclass(frozen=True, slots=True)

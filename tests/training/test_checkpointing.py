@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from training.checkpoints import CheckpointError, load_checkpoint, save_checkpoint
+from training.checkpointing import CheckpointError, load_checkpoint, save_checkpoint
 
 
 def test_checkpoint_atomically_round_trips_versioned_state(tmp_path: Path) -> None:

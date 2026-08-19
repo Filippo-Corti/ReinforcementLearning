@@ -11,7 +11,7 @@ from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry, generate_track
 from models import Policy, RandomPolicy, ScriptedFrenetPolicy
 from recording import EpisodeOutcome, RunCategory
-from training.policy_evaluation import evaluate_policy_episode
+from utils.policy_evaluation import evaluate_policy_episode
 from utils.random import RunSeedStreams, SeedNamespace, SeedStream
 
 

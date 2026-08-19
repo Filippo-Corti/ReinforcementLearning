@@ -20,8 +20,17 @@ from typing import Any
 import numpy as np
 
 from agents.types import AgentUpdateOutput, OnPolicyAgent
-from configs import ExecutionConfig, ObservationRepresentation
-from envs.racing import RacingEnv
+from circuits import (
+    CircuitSplit,
+    EvaluationCircuit,
+    TrainingCircuitSchedule,
+    generated_evaluation_circuits,
+)
+from configs import EnvironmentConfig, ExecutionConfig, ObservationRepresentation
+from envs.racing import RacingEnv, observation_space_for
+from envs.tracks import TrackWithGeometry
+from evaluation import EvaluationScheduler
+from normalization import RunningObservationNormalizer
 from recording.records import (
     DeterministicEvaluationRecord,
     EpisodeRecord,
@@ -30,19 +39,9 @@ from recording.records import (
     TimingRecord,
 )
 
-from ..circuits import (
-    CircuitSplit,
-    EvaluationCircuit,
-    TrainingCircuitSchedule,
-    generated_evaluation_circuits,
-)
-from ..normalization import RunningObservationNormalizer
-from ..vector_environment import PersistentRacingVectorEnv, VectorRacingState
-from .checkpointing import EngineCheckpoint, mapping, typed_list
-from .episode_recording import EpisodeRecorder
-from .evaluation_schedule import EvaluationSchedule, check_evaluation_observations
-from .stepping import StepCollector
-from .timing import TrainingProgress, TrainingTimer
+from ..checkpointing import EngineCheckpoint, mapping, typed_list
+from ..multienvs import MultiEnvironmentManager
+from ..timing import TrainingProgress, TrainingTimer
 
 
 @dataclass(slots=True)
@@ -103,19 +102,18 @@ class TrainingEngine(ABC):
     """
     Hold the machinery every on-policy engine needs, and none of their loops.
 
-    Neural inference is batched in the parent process. Environment dynamics run
-    in separately spawned CPU processes that persist across rollouts, updates,
-    evaluations, checkpoints, and repeated calls to `train`.
+    Neural inference is batched in the parent process, where the TrainingEngine persists.
+    Environment dynamics run in separately spawned CPU processes that persist across
+    rollouts, updates, evaluations, checkpoints, and repeated calls to `train`.
 
     Fields:
         * agent: Owner of policy/value models, optimizers, and sampling streams.
-        * environment: Unstepped prototype fixing configuration and observation width.
-        * environments: Persistent process-based training environment pool.
+        * track_with_geometry: Circuit fixing the run's geometry when not scheduled.
+        * environment_config: Behaviour configuration shared by every environment.
         * normalizer: Training-updated and evaluation-frozen observation normalizer.
-        * collector: Steps the workers and turns each step into transitions.
-        * recorder: Accumulates per-worker episodes and emits their records.
-        * schedule: Evaluates the deterministic policy on a set of circuits.
-        * timer: Non-overlapping component durations.
+        * envs_manager: Owns the worker pool, steps it, and accumulates episodes.
+        * evaluation_scheduler: Evaluates the deterministic policy on a set of circuits.
+        * timer: Tracker of how much time the training spends in each of its phases.
         * progress: Optional bar reporting how far a training call has got.
         * updates: One entry per completed optimizer update.
     """
@@ -123,7 +121,8 @@ class TrainingEngine(ABC):
     def __init__(
         self,
         agent: OnPolicyAgent,
-        environment: RacingEnv,
+        track: TrackWithGeometry,
+        environment_config: EnvironmentConfig,
         normalizer: RunningObservationNormalizer,
         *,
         run_category: RunCategory,
@@ -145,6 +144,11 @@ class TrainingEngine(ABC):
     ) -> None:
         """
         Spawn workers once and open one episode in every process.
+
+        `track` fixes the run's geometry for a fixed-circuit run. A scheduled
+        run replaces its circuit at every worker reset instead, so there
+        `track` only supplies the observation shape and a default identity
+        before the first reset ever happens.
         """
         if agent.collection_size <= 0:
             raise ValueError("An on-policy agent collection size must be positive.")
@@ -175,15 +179,14 @@ class TrainingEngine(ABC):
             "track-selection",
         )
         self.agent = agent
-        self.environment = environment
+        self.track_with_geometry = track
+        self.environment_config = environment_config
         self.normalizer = normalizer
         self.run_category = run_category
         self.evaluation_environment_factory = evaluation_environment_factory
         self.environment_reset_generator = reset_generators[0]
         self.root_identity = root_identity
-        self.circuit_identity = circuit_identity or str(
-            environment.track.generation.seed
-        )
+        self.circuit_identity = circuit_identity or str(track.track.generation.seed)
         self.circuit_split = circuit_split
         self.observation_type = observation_type
         self.training_circuit_schedule = training_circuit_schedule
@@ -191,25 +194,14 @@ class TrainingEngine(ABC):
 
         self.timer = TrainingTimer()
         self.progress = TrainingProgress(enabled=show_progress)
-        self.recorder = EpisodeRecorder(
-            worker_count,
-            run_category=run_category,
-            observation_type=observation_type,
-            root_identity=root_identity,
-            circuit_split=(
-                CircuitSplit.TRAINING.value
-                if training_circuit_schedule is not None
-                else circuit_split
-            ),
-            near_saturated_steering_threshold=near_saturated_steering_threshold,
-        )
-        self.schedule = EvaluationSchedule(
+        self.evaluation_scheduler = EvaluationScheduler(
             resolve_evaluation_circuits(
                 evaluation_circuits,
                 evaluation_environment_factory,
                 identity=self.circuit_identity,
                 split=circuit_split,
             ),
+            expected_observation_space=observation_space_for(track, environment_config),
             interval=evaluation_interval,
             evaluation_seed=evaluation_seed,
             run_category=run_category,
@@ -217,28 +209,27 @@ class TrainingEngine(ABC):
             root_identity=root_identity,
             near_saturated_steering_threshold=near_saturated_steering_threshold,
         )
-        check_evaluation_observations(self.schedule.circuits, environment)
 
         self.training_interactions = 0
         self.optimizer_updates = 0
         self.updates: list[TrainingUpdate] = []
-        self.environments = PersistentRacingVectorEnv(
-            (environment.track_with_geometry,),
-            environment.config,
-            self.execution_config,
-            reset_generators,
-            selection_generators,
-            training_circuit_schedule,
-        )
-        self.collector = StepCollector(
+        self.envs_manager = MultiEnvironmentManager(
             agent,
-            self.environments,
             normalizer,
-            self.recorder,
-            worker_count=worker_count,
+            track=track,
+            environment_config=environment_config,
+            execution_config=self.execution_config,
+            reset_generators=reset_generators,
+            selection_generators=selection_generators,
+            training_circuit_schedule=training_circuit_schedule,
+            run_category=run_category,
+            observation_type=observation_type,
+            root_identity=root_identity,
+            circuit_split=circuit_split,
+            near_saturated_steering_threshold=near_saturated_steering_threshold,
         )
         self.checkpoint = EngineCheckpoint(self._engine_configuration())
-        self.parked = np.zeros(worker_count, dtype=np.bool_)
+        self.parked_mask = np.zeros(worker_count, dtype=np.bool_)
         self._setup()
 
     @abstractmethod
@@ -259,28 +250,28 @@ class TrainingEngine(ABC):
         """
         Return the training interactions between deterministic checkpoints.
         """
-        return self.schedule.interval
+        return self.evaluation_scheduler.interval
 
     @property
     def evaluation_circuits(self) -> tuple[EvaluationCircuit, ...]:
         """
         Return the circuits evaluated at every checkpoint.
         """
-        return self.schedule.circuits
+        return self.evaluation_scheduler.circuits
 
     @property
     def episode_records(self) -> list[EpisodeRecord]:
         """
         Return every finished training episode, in completion order.
         """
-        return self.recorder.records
+        return self.envs_manager.episode_records
 
     @property
     def evaluations(self) -> list[DeterministicEvaluationRecord]:
         """
         Return every deterministic evaluation, in the order it was run.
         """
-        return self.schedule.records
+        return self.evaluation_scheduler.records
 
     @property
     def counters(self) -> TrainingCounters:
@@ -289,11 +280,11 @@ class TrainingEngine(ABC):
         """
         return TrainingCounters(
             training_interactions=self.training_interactions,
-            evaluation_interactions=self.schedule.evaluation_interactions,
-            finished_episodes=len(self.recorder.records),
+            evaluation_interactions=self.evaluation_scheduler.evaluation_interactions,
+            finished_episodes=len(self.envs_manager.episode_records),
             optimizer_updates=self.optimizer_updates,
-            next_episode_identity=self.recorder.next_episode_identity,
-            next_evaluation_identity=self.schedule.next_evaluation_identity,
+            next_episode_identity=self.envs_manager.next_episode_identity,
+            next_evaluation_identity=self.evaluation_scheduler.next_evaluation_identity,
         )
 
     @abstractmethod
@@ -328,11 +319,9 @@ class TrainingEngine(ABC):
                     "normalizer": self.normalizer.state().to_dict(),
                     "training_interactions": self.training_interactions,
                     "optimizer_updates": self.optimizer_updates,
-                    "stepping": self.collector.state(),
-                    "recorder": self.recorder.state(),
-                    "schedule": self.schedule.state(),
-                    "vector_environment": self.environments.state(),
-                    "parked": self.parked.tolist(),
+                    "environments": self.envs_manager.state(),
+                    "schedule": self.evaluation_scheduler.state(),
+                    "parked_mask": self.parked_mask.tolist(),
                     "collector": self.collector_state(),
                     "updates": self.updates,
                     "timing": self.timer.state(),
@@ -358,28 +347,37 @@ class TrainingEngine(ABC):
         )
         self.training_interactions = int(state["training_interactions"])
         self.optimizer_updates = int(state["optimizer_updates"])
-        self.collector.restore(mapping(state, "stepping"))
-        self.recorder.restore(mapping(state, "recorder"))
-        self.schedule.restore(mapping(state, "schedule"))
-        vector_state = state["vector_environment"]
-        if not isinstance(vector_state, VectorRacingState):
-            raise TypeError("checkpoint vector environment state is invalid.")
-        self.environments.restore(vector_state)
-        self.parked = np.asarray(state["parked"], dtype=np.bool_)
+        self.envs_manager.restore(mapping(state, "environments"))
+        self.evaluation_scheduler.restore(mapping(state, "schedule"))
+        self.parked_mask = np.asarray(state["parked_mask"], dtype=np.bool_)
         self.restore_collector(mapping(state, "collector"))
         self.updates = typed_list(state, "updates", TrainingUpdate)
         self.timer.restore(mapping(state, "timing"))
 
     def close(self) -> None:
         """
-        Close the persistent worker processes and prototype environment.
+        Close the persistent worker processes.
         """
-        self.environments.close()
-        self.environment.close()
+        self.envs_manager.close()
 
     def training_reference_circuits(self, count: int) -> tuple[EvaluationCircuit, ...]:
         """
-        Name circuits this run actually trained on, for an in-sample reference.
+        Prepare evaluation circuits out of the ones this run actually trained on.
+
+        Both halves of the name are literal, which is what makes them look
+        contradictory. *Training* says where the circuits come from: the first
+        `count` distinct circuits this run raced. *EvaluationCircuit* says what
+        comes back, because a circuit only becomes measurable once it is paired
+        with a factory that builds a deterministic environment for it, and that
+        pairing is what an `EvaluationCircuit` is. So this hands back circuits
+        of training provenance, packaged to be evaluated.
+
+        The purpose is an in-sample reference. A held-out score means little on
+        its own; it means something against the same deterministic evaluation
+        run on circuits the policy has already seen, and the gap between the two
+        is what this project calls generalization. That is also why they carry
+        `CircuitSplit.TRAINING_REFERENCE` rather than the plain training split:
+        they are trained-on circuits being used as a measurement.
 
         They are taken in per-worker episode order rather than in the order
         episodes happened to finish, so two paired runs name the same circuits
@@ -388,7 +386,7 @@ class TrainingEngine(ABC):
         if self.training_circuit_schedule is None:
             raise ValueError("Only a scheduled run has training circuits to revisit.")
         ordered = sorted(
-            self.recorder.records,
+            self.envs_manager.episode_records,
             key=lambda record: (
                 record.worker_episode_index or 0,
                 record.collection_worker or 0,
@@ -408,23 +406,28 @@ class TrainingEngine(ABC):
         return generated_evaluation_circuits(
             (int(identity) for identity in identities),
             split=CircuitSplit.TRAINING_REFERENCE,
-            environment_config=self.environment.config,
+            environment_config=self.environment_config,
             namespace=self.training_circuit_schedule.namespace,
         )
 
-    def evaluate_circuits(
-        self, circuits: Sequence[EvaluationCircuit]
+    def evaluate(
+        self, circuits: Sequence[EvaluationCircuit] | None = None
     ) -> tuple[DeterministicEvaluationRecord, ...]:
         """
-        Evaluate the current deterministic policy once on each circuit given.
+        Evaluate the deterministic policy, on the schedule or on demand.
 
-        Held-out circuits are evaluated through this method after training ends,
-        which is why it takes its circuits as an argument: the engine never holds
-        a reference to a test circuit while it is still learning.
+        With no circuits given, this evaluates the checkpoint schedule's own
+        circuits, but only when a checkpoint is due here. With circuits given
+        explicitly — the held-out set, run once after training ends — it always
+        evaluates them: passing them in is itself the request, so nothing the
+        engine holds can leak a test result into learning by evaluating it early.
         """
-        check_evaluation_observations(circuits, self.environment)
+        if circuits is None:
+            if not self.evaluation_scheduler.due(self.training_interactions):
+                return ()
+            circuits = self.evaluation_scheduler.circuits
         with self.timer.evaluating():
-            return self.schedule.run(
+            return self.evaluation_scheduler.run(
                 circuits,
                 agent=self.agent,
                 normalizer=self.normalizer,
@@ -432,13 +435,6 @@ class TrainingEngine(ABC):
                 collection_duration=self.timer.collection,
                 optimization_duration=self.timer.optimization,
             )
-
-    def evaluate_if_due(self) -> None:
-        """
-        Evaluate the scheduled circuits when a checkpoint falls exactly here.
-        """
-        if self.schedule.due(self.training_interactions):
-            self.evaluate_circuits(self.schedule.circuits)
 
     def record_update(self, output: AgentUpdateOutput, duration: float) -> None:
         """
@@ -468,15 +464,15 @@ class TrainingEngine(ABC):
 
     def _engine_configuration(self) -> dict[str, Any]:
         # A scheduled run has no single circuit, so identifying it by the
-        # prototype's geometry would reject every legitimate resume. The
+        # fixed track's geometry would reject every legitimate resume. The
         # schedule namespace is what has to match instead.
         circuit_configuration: dict[str, Any] = (
             {"training_circuit_schedule": self.training_circuit_schedule.namespace.name}
             if self.training_circuit_schedule is not None
             else {
-                "track_seed": self.environment.track.generation.seed,
-                "track_length": self.environment.track.track_length,
-                "track_samples": int(self.environment.track.s.size),
+                "track_seed": self.track_with_geometry.track.generation.seed,
+                "track_length": self.track_with_geometry.track.track_length,
+                "track_samples": int(self.track_with_geometry.track.s.size),
             }
         )
         return {
@@ -485,8 +481,8 @@ class TrainingEngine(ABC):
             "collection_mode": self.agent.collection_mode.value,
             "collection_size": self.agent.collection_size,
             "environment_workers": self.execution_config.environment_workers,
-            "evaluation_interval": self.schedule.interval,
-            "evaluation_seed": self.schedule.evaluation_seed,
+            "evaluation_interval": self.evaluation_scheduler.interval,
+            "evaluation_seed": self.evaluation_scheduler.evaluation_seed,
             "root_identity": self.root_identity,
             "circuit_identity": self.circuit_identity,
             "circuit_split": self.circuit_split,
@@ -494,7 +490,7 @@ class TrainingEngine(ABC):
             "near_saturated_steering_threshold": (
                 self.near_saturated_steering_threshold
             ),
-            "environment_config": self.environment.config.to_dict(),
+            "environment_config": self.environment_config.to_dict(),
             "normalizer_dimensions": self.normalizer.observation_dimensions,
         }
 

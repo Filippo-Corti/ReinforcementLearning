@@ -27,7 +27,7 @@ from configs import (
     StartStateConfig,
     TrainingConfig,
 )
-from envs.racing import RacingEnv
+from envs.racing import RacingEnv, observation_space_for
 from envs.tracks import TrackWithGeometry
 from recording import (
     MetricScope,
@@ -477,21 +477,21 @@ def _run_training(
             interop_threads=execution_config.interop_threads,
         ),
     )
-    environment = RacingEnv(track, config=environment_config)
     # Training samples a start pose for coverage, but deterministic evaluation
     # must always launch from the canonical start line: a reported evaluation
     # curve has to answer the same question at every checkpoint.
     evaluation_config = replace(
         environment_config, start=StartStateConfig(randomized=False)
     )
-    observation_shape = environment.observation_space.shape
+    observation_shape = observation_space_for(track, environment_config).shape
     if observation_shape is None or observation_shape[0] is None:
         raise ValueError("RacingEnv must expose a fixed observation dimension.")
     observation_dimensions = observation_shape[0]
     agent = agent_factory(observation_dimensions, streams)
     engine = _ENGINES[algorithm](
         agent,
-        environment,
+        track,
+        environment_config,
         RunningObservationNormalizer(
             observation_dimensions, training_config.normalization
         ),
@@ -533,14 +533,14 @@ def _run_training(
         if training_reference_circuits:
             # An in-sample reference: circuits this run trained on, revisited
             # deterministically so the gap to held-out circuits is measurable.
-            engine.evaluate_circuits(
+            engine.evaluate(
                 engine.training_reference_circuits(training_reference_circuits)
             )
         if final_evaluation_circuits:
             # Held-out circuits are opened here and nowhere else: after the last
             # optimizer step and the saved final policy, so nothing they reveal
             # can reach training, checkpoint selection or the recorded curve.
-            engine.evaluate_circuits(final_evaluation_circuits)
+            engine.evaluate(final_evaluation_circuits)
         persistence_started = perf_counter()
         _write_engine_records(
             run,

@@ -21,7 +21,7 @@ from recording import (
     TimingRecord,
     collect_run_metadata,
 )
-from training import evaluate_policy_episode
+from utils.policy_evaluation import evaluate_policy_episode
 from utils.random import RunSeedStreams, SeedNamespace, SeedStream
 
 

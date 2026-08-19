@@ -14,13 +14,11 @@ import numpy as np
 from gymnasium.vector import AsyncVectorEnv, AutoresetMode
 from numpy.typing import NDArray
 
+from circuits import TrainingCircuitSchedule
 from configs import EnvironmentConfig, ExecutionConfig
 from envs.racing import RacingEnv, RacingEnvState
-from envs.tracks import TrackWithGeometry
+from envs.tracks import TrackWithGeometry, track_geometry_summary
 from utils.random import TorchDeterminismState, configure_torch_determinism
-
-from .circuits import TrainingCircuitSchedule
-from .evaluation import circuit_geometry_summary
 
 _OPTIONAL_INTEGER_INFO_FIELDS = frozenset({"collision_substep"})
 
@@ -297,7 +295,7 @@ class _RacingWorkerEnv(gym.Env[NDArray[np.float32], dict[str, Any]]):
             }
         )
         if include_geometry:
-            enriched["circuit_geometry"] = circuit_geometry_summary(self._environment)
+            enriched["circuit_geometry"] = track_geometry_summary(track)
         return enriched
 
 

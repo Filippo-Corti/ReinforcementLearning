@@ -20,6 +20,7 @@ from training.buffers import (
     compute_gae_targets,
     compute_vector_gae_targets,
 )
+from utils.vectors import to_tensor
 
 from .diagnostics import (
     explained_variance,
@@ -122,7 +123,9 @@ class A2CAgent:
         """
         Sample one detached action and retain the detached current critic value.
         """
-        observation = self._observation_tensor(normalized_observation).unsqueeze(0)
+        observation = to_tensor(
+            normalized_observation, dtype=self.dtype, device=self.device
+        ).unsqueeze(0)
         sample = self.actor.sample(observation, self.sampling_generator)
         with torch.inference_mode():
             current_value = self.critic(observation)[0]
@@ -139,7 +142,9 @@ class A2CAgent:
         """
         Return the actor mean action without advancing the sampling stream.
         """
-        observation = self._observation_tensor(normalized_observation).unsqueeze(0)
+        observation = to_tensor(
+            normalized_observation, dtype=self.dtype, device=self.device
+        ).unsqueeze(0)
         with torch.inference_mode():
             action = self.actor.deterministic_action(observation)[0]
         return action.cpu().numpy().astype(np.float32, copy=False)
@@ -152,8 +157,12 @@ class A2CAgent:
         """
         Sample one action and critic value per independent environment row.
         """
-        observations = self._observation_tensor(normalized_observations)
-        indices = self._environment_indices(observations.shape[0], environment_indices)
+        observations = to_tensor(
+            normalized_observations, dtype=self.dtype, device=self.device
+        )
+        indices = self._resolve_stream_indices(
+            observations.shape[0], environment_indices
+        )
         sample = self.actor.sample_with_generators(
             observations,
             tuple(self.sampling_generators[index] for index in indices),
@@ -171,7 +180,9 @@ class A2CAgent:
         """
         Return a detached critic estimate for a non-terminal bootstrap state.
         """
-        observation = self._observation_tensor(normalized_observation).unsqueeze(0)
+        observation = to_tensor(
+            normalized_observation, dtype=self.dtype, device=self.device
+        ).unsqueeze(0)
         with torch.inference_mode():
             value = self.critic(observation)[0]
         return float(value.item())
@@ -182,7 +193,9 @@ class A2CAgent:
         """
         Return detached critic estimates for batched non-terminal next states.
         """
-        observations = self._observation_tensor(normalized_observations)
+        observations = to_tensor(
+            normalized_observations, dtype=self.dtype, device=self.device
+        )
         with torch.inference_mode():
             values = self.critic(observations)
         return values.cpu().numpy().astype(np.float32, copy=False)
@@ -420,9 +433,6 @@ class A2CAgent:
             .item()
         )
 
-    def _observation_tensor(self, observation: NDArray[np.float32]) -> Tensor:
-        return torch.as_tensor(observation, dtype=self.dtype, device=self.device)
-
     def _rollout_training_tensors(
         self,
         rollout: OnPolicyRollout | VectorOnPolicyRollout,
@@ -483,11 +493,18 @@ class A2CAgent:
             raise ValueError("At least one policy-sampling generator is required.")
         return values
 
-    def _environment_indices(
+    def _resolve_stream_indices(
         self,
         row_count: int,
         environment_indices: Sequence[int] | None,
     ) -> tuple[int, ...]:
+        """
+        Resolve and validate which sampling-generator stream serves each action row.
+
+        Defaults to one stream per row, in order, when no explicit environment
+        indices are given. Always checks that there is exactly one index per row
+        and that every index names an existing sampling stream.
+        """
         indices = (
             tuple(range(row_count))
             if environment_indices is None

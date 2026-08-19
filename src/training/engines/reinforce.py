@@ -44,7 +44,7 @@ class ReinforceTrainingEngine(TrainingEngine):
             [] for _ in range(self.worker_count)
         ]
         self.batch: list[OnPolicyRollout] = []
-        self.parked = ~self._wave_mask()
+        self.parked_mask = ~self._wave_mask()
 
     def train(
         self, interaction_budget: int, *, finalize: bool = True
@@ -55,42 +55,50 @@ class ReinforceTrainingEngine(TrainingEngine):
         if interaction_budget < self.training_interactions:
             raise ValueError("Training budget cannot be below consumed interactions.")
         self.progress.start(self.training_interactions, interaction_budget)
+
+        # As long as we have interaction budget to spend:
         while self.training_interactions < interaction_budget:
+
+            # First, select the workers that are still active (those that have not finished their episode(s) yet).
             rows = interaction_budget - self.training_interactions
-            if self.schedule.interval is not None:
+            if self.evaluation_scheduler.interval is not None:
                 rows = min(
                     rows,
-                    self.schedule.interval
-                    - (self.training_interactions % self.schedule.interval),
+                    self.evaluation_scheduler.interval
+                    - (self.training_interactions % self.evaluation_scheduler.interval),
                 )
-            active_indices = np.flatnonzero(~self.parked)[:rows]
+            active_indices = np.flatnonzero(~self.parked_mask)[:rows]
             if active_indices.size == 0:
                 # Every worker is parked: either the batch is complete and can
-                # be learned from, or the next wave has to be released.
+                # be learned from, or the next wave_mask has to be released.
                 self._update_if_batch_complete(final=False)
-                if self.parked.all():
+                if self.parked_mask.all():
                     self._start_wave()
                 continue
-            active = np.zeros(self.worker_count, dtype=np.bool_)
-            active[active_indices] = True
+            active_mask = np.zeros(self.worker_count, dtype=np.bool_)
+            active_mask[active_indices] = True
 
-            self._collect_step(active)
+            # Collect one step from each active worker, extending their trajectories and parking finishers
+            self._collect_step(active_mask)
             self.progress.advance(self.training_interactions)
+
+            # If the schedule is due for an evaluation, run it now
             self._update_if_batch_complete(final=False)
-            self.evaluate_if_due()
+            self.evaluate()
+
         self._update_if_batch_complete(final=finalize)
         self.progress.close()
         return self.state()
 
-    def _collect_step(self, active: np.ndarray) -> None:
+    def _collect_step(self, active_mask: np.ndarray) -> None:
         """
         Advance one step, extending each worker's trajectory and parking finishers.
         """
         with self.timer.collecting():
-            step = self.collector.step(
-                active,
+            step = self.envs_manager.step(
+                active_mask,
                 training_interactions=self.training_interactions,
-                evaluation_interactions=self.schedule.evaluation_interactions,
+                evaluation_interactions=self.evaluation_scheduler.evaluation_interactions,
             )
             self.training_interactions += step.interactions
             for worker_index, transition in enumerate(step.transitions):
@@ -107,7 +115,7 @@ class ReinforceTrainingEngine(TrainingEngine):
             OnPolicyRollout(tuple(self.active_trajectories[worker_index]))
         )
         self.active_trajectories[worker_index] = []
-        self.parked[worker_index] = True
+        self.parked_mask[worker_index] = True
 
     def _wave_mask(self) -> np.ndarray:
         """
@@ -117,17 +125,17 @@ class ReinforceTrainingEngine(TrainingEngine):
         the batch size belongs to REINFORCE, so the two need not agree.
         """
         wave_size = min(self.agent.collection_size - len(self.batch), self.worker_count)
-        wave = np.zeros(self.worker_count, dtype=np.bool_)
-        wave[:wave_size] = True
-        return wave
+        wave_mask = np.zeros(self.worker_count, dtype=np.bool_)
+        wave_mask[:wave_size] = True
+        return wave_mask
 
     def _start_wave(self) -> None:
         """
         Reset and unpark the workers that collect the next group of trajectories.
         """
-        wave = self._wave_mask()
-        self.parked = ~wave
-        self.collector.reset_workers(wave)
+        wave_mask = self._wave_mask()
+        self.parked_mask = ~wave_mask
+        self.envs_manager.reset_workers(wave_mask)
 
     def _update_if_batch_complete(self, *, final: bool) -> None:
         """

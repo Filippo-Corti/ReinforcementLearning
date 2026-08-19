@@ -54,33 +54,33 @@ class PPOTrainingEngine(TrainingEngine):
             # evaluation. Stopping at the nearest keeps every boundary exact.
             rows = interaction_budget - self.training_interactions
             rows = min(rows, self.rollout_buffer.remaining_capacity)
-            if self.schedule.interval is not None:
+            if self.evaluation_scheduler.interval is not None:
                 rows = min(
                     rows,
-                    self.schedule.interval
-                    - (self.training_interactions % self.schedule.interval),
+                    self.evaluation_scheduler.interval
+                    - (self.training_interactions % self.evaluation_scheduler.interval),
                 )
-            active_indices = np.flatnonzero(~self.parked)[:rows]
-            active = np.zeros(self.worker_count, dtype=np.bool_)
-            active[active_indices] = True
+            active_indices = np.flatnonzero(~self.parked_mask)[:rows]
+            active_mask = np.zeros(self.worker_count, dtype=np.bool_)
+            active_mask[active_indices] = True
 
-            self._collect_step(active)
+            self._collect_step(active_mask)
             self.progress.advance(self.training_interactions)
             self._update_if_rollout_ready(final=False)
-            self.evaluate_if_due()
+            self.evaluate()
         self._update_if_rollout_ready(final=finalize)
         self.progress.close()
         return self.state()
 
-    def _collect_step(self, active: np.ndarray) -> None:
+    def _collect_step(self, active_mask: np.ndarray) -> None:
         """
         Advance one step and append it to the rollout, resetting finished workers.
         """
         with self.timer.collecting():
-            step = self.collector.step(
-                active,
+            step = self.envs_manager.step(
+                active_mask,
                 training_interactions=self.training_interactions,
-                evaluation_interactions=self.schedule.evaluation_interactions,
+                evaluation_interactions=self.evaluation_scheduler.evaluation_interactions,
             )
             self.training_interactions += step.interactions
             self.rollout_buffer.append_step(step.transitions)
@@ -89,7 +89,7 @@ class PPOTrainingEngine(TrainingEngine):
                 # collecting on a fresh episode until the rollout is full.
                 reset_mask = np.zeros(self.worker_count, dtype=np.bool_)
                 reset_mask[list(step.finished)] = True
-                self.collector.reset_workers(reset_mask)
+                self.envs_manager.reset_workers(reset_mask)
 
     def _update_if_rollout_ready(self, *, final: bool) -> None:
         """

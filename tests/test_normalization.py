@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from configs.training import ObservationNormalizationConfig
-from training.normalization import RunningObservationNormalizer
+from normalization import RunningObservationNormalizer
 
 
 def _normalizer() -> RunningObservationNormalizer:
@@ -70,13 +70,27 @@ def test_batch_update_uses_all_active_rows_before_normalizing() -> None:
     normalizer = _normalizer()
     observations = np.asarray(((1.0, 2.0), (3.0, 4.0), (9.0, 9.0)))
 
-    normalized = normalizer.update_and_normalize_batch(
+    normalized = normalizer.normalize_batch(
         observations,
-        active=np.asarray((True, True, False)),
+        np.asarray((True, True, False)),
+        update=True,
     )
 
     assert normalizer.count == 2
     np.testing.assert_allclose(normalized[:2], np.asarray(((-1.0, -1.0), (1.0, 1.0))))
+
+
+def test_batch_normalize_without_update_leaves_state_unchanged() -> None:
+    normalizer = _normalizer()
+    normalizer.update_and_normalize([1.0, 2.0])
+    observations = np.asarray(((5.0, 5.0), (9.0, 9.0)))
+
+    normalized = normalizer.normalize_batch(observations, update=False)
+
+    assert normalizer.count == 1
+    np.testing.assert_allclose(
+        normalized, np.stack([normalizer.normalize(row) for row in observations])
+    )
 
 
 def test_normalizer_rejects_observations_with_wrong_shape() -> None:

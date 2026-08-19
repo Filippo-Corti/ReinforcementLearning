@@ -1,4 +1,9 @@
-"""Live rollout dashboards and aligned plots for the educational notebooks."""
+"""Live rollout dashboards and aligned plots for rollouts and training curves.
+
+Notebook-agnostic: nothing here is specific to any one algorithm or to being
+run inside a notebook, though a live dashboard only makes sense somewhere that
+can display one.
+"""
 
 from __future__ import annotations
 
@@ -20,8 +25,7 @@ from numpy.typing import ArrayLike, NDArray
 from configs import EnvironmentConfig, RenderStyle
 from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry
-
-from .normalization import RunningObservationNormalizer
+from normalization import RunningObservationNormalizer
 
 
 class DeterministicPolicy(Protocol):

@@ -1,10 +1,18 @@
-"""Episode evaluation shared by scripted and random baseline policies."""
+"""Episode evaluation for scripted and random baseline policies.
+
+Not part of the trained-agent evaluation path: baseline policies are a
+reference point computed outside training, only for experiments and tests, so
+this lives beside the other shared utilities rather than inside the
+`evaluation` package that trained runs depend on.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 
 from envs.racing import RacingEnv
+from envs.tracks import track_geometry_summary
+from evaluation import trajectory_state
 from models import Policy
 from recording.records import (
     EpisodeOutcome,
@@ -13,10 +21,9 @@ from recording.records import (
     MetricScope,
     PolicyEvaluationRecord,
     RunCategory,
-    ScalarSummaryRecord,
 )
 
-from .evaluation import circuit_geometry_summary, trajectory_state
+from .statistics import scalar_summary
 
 
 def evaluate_policy_episode(
@@ -82,7 +89,9 @@ def evaluate_policy_episode(
         total_return += float(reward)
         observation = next_observation
         if terminated or truncated:
-            outcome = _episode_outcome(terminated, truncated, info)
+            outcome = EpisodeOutcome.from_transition(
+                terminated=terminated, truncated=truncated, info=info
+            )
             interactions = len(transitions)
             episode = EpisodeRecord(
                 run_category=run_category,
@@ -107,52 +116,14 @@ def evaluate_policy_episode(
                 observation_type="frenet",
                 circuit_seed=environment.track.generation.seed,
                 circuit_split=circuit_split,
-                speed=_scalar_summary(speeds),
-                throttle=_scalar_summary(throttles),
-                absolute_steering=_scalar_summary(absolute_steering),
+                speed=scalar_summary(speeds),
+                throttle=scalar_summary(throttles),
+                absolute_steering=scalar_summary(absolute_steering),
                 positive_throttle_fraction=float(np.mean(np.asarray(throttles) > 0)),
                 braking_fraction=float(np.mean(np.asarray(throttles) < 0)),
-                circuit_geometry=circuit_geometry_summary(environment),
+                circuit_geometry=track_geometry_summary(environment.track),
             )
             return PolicyEvaluationRecord(
                 episode=episode, transitions=tuple(transitions)
             )
     raise RuntimeError("RacingEnv did not end within its configured episode limit.")
-
-
-def _scalar_summary(values: list[float]) -> ScalarSummaryRecord:
-    """
-    Summarize one non-empty episode signal using population dispersion.
-    """
-    array = np.asarray(values, dtype=np.float64)
-    return ScalarSummaryRecord(
-        mean=float(np.mean(array)),
-        standard_deviation=float(np.std(array)),
-        minimum=float(np.min(array)),
-        maximum=float(np.max(array)),
-        quantiles={
-            "q25": float(np.quantile(array, 0.25)),
-            "q50": float(np.quantile(array, 0.50)),
-            "q75": float(np.quantile(array, 0.75)),
-            "q90": float(np.quantile(array, 0.90)),
-        },
-    )
-
-
-def _episode_outcome(
-    terminated: bool,
-    truncated: bool,
-    info: dict[str, object],
-) -> EpisodeOutcome:
-    """
-    Convert the environment's terminal flags into one explicit outcome.
-    """
-    if terminated and bool(info["lap_completed"]):
-        return EpisodeOutcome.COMPLETED
-    if terminated and bool(info["collision"]):
-        return EpisodeOutcome.CRASHED
-    if terminated and bool(info["stalled"]):
-        return EpisodeOutcome.STALLED
-    if truncated:
-        return EpisodeOutcome.TIME_LIMIT
-    raise ValueError("Terminal transition lacks a supported RacingEnv outcome.")

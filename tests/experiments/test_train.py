@@ -222,7 +222,7 @@ def test_reported_evaluation_uses_the_canonical_start(tmp_path) -> None:
         execution_config=_reinforce_execution_config(),
     )
 
-    assert engine.environment.config.start.randomized
+    assert engine.environment_config.start.randomized
     factory = engine.evaluation_environment_factory
     assert factory is not None
     evaluation_environment = factory()

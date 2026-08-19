@@ -12,12 +12,9 @@ from recording.records import MetricScope, RunCategory, TimingRecord
 
 class TrainingTimer:
     """
-    Accumulate how long a run spends in each phase, without double counting.
-
+    Timer that keeps track of how long a training run spends in each phase.
     The categories are mutually exclusive by construction: a phase is timed by
-    the block that performs it, and blocks do not nest. Reporting "training took
-    an hour" is not useful on its own, because the interesting question is
-    whether that hour went into the environment or the optimizer.
+    the block that performs it, and blocks do not nest.
 
     Fields:
         * collection: Seconds spent stepping environments and choosing actions.
@@ -45,7 +42,7 @@ class TrainingTimer:
             self.collection += perf_counter() - started
 
     @contextmanager
-    def optimizing(self) -> Iterator[ElapsedBlock]:
+    def optimizing(self) -> Iterator[ElapsedTimeRecorder]:
         """
         Time one agent update, yielding a handle that reports its own duration.
 
@@ -53,7 +50,7 @@ class TrainingTimer:
         well as accumulated, and measuring it twice would be measuring two
         different things.
         """
-        elapsed = ElapsedBlock(perf_counter())
+        elapsed = ElapsedTimeRecorder(perf_counter())
         try:
             yield elapsed
         finally:
@@ -118,9 +115,9 @@ class TrainingTimer:
 
 class TrainingProgress:
     """
-    Report how far a training call has got, when someone is watching.
-
+    Progress bar that reports progress over the training interactions.
     A two-million-step run gives no sign of life for tens of minutes otherwise.
+
     The bar is opt-in because the same engines run under scripts that capture
     output, where a redrawing bar is noise rather than information.
 
@@ -167,9 +164,10 @@ class TrainingProgress:
             self._bar = None
 
 
-class ElapsedBlock:
+class ElapsedTimeRecorder:
     """
-    Report the time a timed block took, so a caller can record it as well.
+    Utility class for the TrainingTimer.
+    It reports a duration since a given start time, and then holds that value for later reads.
 
     Fields:
         * seconds: Duration of the block, fixed at first read so both uses agree.

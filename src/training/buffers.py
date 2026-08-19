@@ -1,8 +1,5 @@
 """
 Semantic on-policy records, collection buffers, and fixed learning targets.
-
-
-
 """
 
 from __future__ import annotations

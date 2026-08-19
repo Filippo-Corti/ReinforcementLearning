@@ -68,33 +68,40 @@ class RunningObservationNormalizer:
         """
         return self._apply_normalization(self._to_vector(observation))
 
-    def update_and_normalize_batch(
+    def normalize_batch(
         self,
         observations: Sequence[Sequence[float]] | NDArray[np.floating],
-        active: Sequence[bool] | NDArray[np.bool_] | None = None,
+        active_mask: Sequence[bool] | NDArray[np.bool_] | None = None,
+        *,
+        update: bool,
     ) -> NDArray[np.float32]:
         """
-        Update from active synchronous observations, then normalize the batch.
+        Normalize a batch of observations, optionally updating from active rows first.
 
-        All active rows enter the running sums before any row is normalized, so
-        changing worker iteration order cannot change network inputs.
+        When `update` is true, every active row enters the running sums before
+        any row is normalized, so changing worker iteration order cannot change
+        network inputs. When `update` is false, no state changes: this is the
+        batched form of `normalize`, used for bootstrap and evaluation rows.
         """
         vectors = np.asarray(observations, dtype=np.float64)
         if vectors.ndim != 2 or vectors.shape[1] != self.observation_dimensions:
             raise ValueError(
                 "Observation batches must have shape (rows, observation_dimensions)."
             )
-        active_mask = (
-            np.ones(vectors.shape[0], dtype=np.bool_)
-            if active is None
-            else np.asarray(active, dtype=np.bool_)
-        )
-        if active_mask.shape != (vectors.shape[0],):
-            raise ValueError("The active mask must contain one value per batch row.")
-        selected = vectors[active_mask]
-        self.count += int(selected.shape[0])
-        self.sums += np.sum(selected, axis=0)
-        self.squared_sums += np.sum(np.square(selected), axis=0)
+        if update:
+            mask = (
+                np.ones(vectors.shape[0], dtype=np.bool_)
+                if active_mask is None
+                else np.asarray(active_mask, dtype=np.bool_)
+            )
+            if mask.shape != (vectors.shape[0],):
+                raise ValueError(
+                    "The active mask must contain one value per batch row."
+                )
+            selected = vectors[mask]
+            self.count += int(selected.shape[0])
+            self.sums += np.sum(selected, axis=0)
+            self.squared_sums += np.sum(np.square(selected), axis=0)
         return np.stack(
             [self._apply_normalization(vector) for vector in vectors]
         ).astype(np.float32, copy=False)

@@ -59,6 +59,18 @@ def to_vector(
     return vector
 
 
+def to_tensor(
+    value: NDArray[np.float32],
+    *,
+    dtype: torch.dtype,
+    device: torch.device | str,
+) -> Tensor:
+    """
+    Convert a NumPy array to a tensor of the given dtype and device.
+    """
+    return torch.as_tensor(value, dtype=dtype, device=device)
+
+
 def optional_scalar(value: float | Tensor | None) -> float | None:
     """
     Convert an optional scalar tensor or number to a detached Python float.

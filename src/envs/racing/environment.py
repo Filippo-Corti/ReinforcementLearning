@@ -40,6 +40,50 @@ class RacingEnvState:
     numpy_random_state: dict[str, Any]
 
 
+def observation_space_for(
+    track: TrackWithGeometry,
+    config: EnvironmentConfig,
+    *,
+    lidar_observer: LidarObserver | None = None,
+) -> gym.spaces.Box:
+    """
+    Declare the bounds of whichever representation a configuration selects.
+
+    Pure in the track and configuration alone, so the shape a run commits to
+    is known without building or stepping a full environment. Pass an already
+    built `lidar_observer` to avoid constructing a second one where the caller
+    has one already; the ray count is otherwise identical either way.
+    """
+    steering_limit = np.radians(config.vehicle.max_steering_angle)
+    max_speed = config.vehicle.max_speed
+    if config.observation_type is ObservationRepresentation.LIDAR:
+        observer = lidar_observer or LidarObserver(
+            track,
+            observation_config=config.lidar,
+            vehicle_config=config.vehicle,
+        )
+        ray_count = observer.dimensions - 2
+        return gym.spaces.Box(
+            low=np.asarray(
+                [0.0, -steering_limit] + [0.0] * ray_count, dtype=np.float32
+            ),
+            high=np.asarray(
+                [max_speed, steering_limit] + [1.0] * ray_count, dtype=np.float32
+            ),
+            dtype=np.float32,
+        )
+    return gym.spaces.Box(
+        low=np.asarray(
+            [-np.inf, -np.pi, 0.0, -steering_limit, -np.inf], dtype=np.float32
+        ),
+        high=np.asarray(
+            [np.inf, np.pi, max_speed, steering_limit, np.inf],
+            dtype=np.float32,
+        ),
+        dtype=np.float32,
+    )
+
+
 class RacingEnv(gym.Env[ObservationType, ActionType]):
     """
     Expose continuous racing controls and Frenet observations through Gymnasium.
@@ -98,7 +142,9 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
             if self.config.observation_type is ObservationRepresentation.LIDAR
             else None
         )
-        self.observation_space = self._observation_space()
+        self.observation_space = observation_space_for(
+            track, self.config, lidar_observer=self.lidar_observer
+        )
 
     def reset(
         self,
@@ -285,34 +331,6 @@ class RacingEnv(gym.Env[ObservationType, ActionType]):
                     0.0, start.speed_fraction * self.config.vehicle.max_speed
                 )
             ),
-        )
-
-    def _observation_space(self) -> gym.spaces.Box:
-        """
-        Declare the bounds of whichever representation the agent observes.
-        """
-        steering_limit = np.radians(self.config.vehicle.max_steering_angle)
-        max_speed = self.config.vehicle.max_speed
-        if self.lidar_observer is not None:
-            ray_count = self.lidar_observer.dimensions - 2
-            return gym.spaces.Box(
-                low=np.asarray(
-                    [0.0, -steering_limit] + [0.0] * ray_count, dtype=np.float32
-                ),
-                high=np.asarray(
-                    [max_speed, steering_limit] + [1.0] * ray_count, dtype=np.float32
-                ),
-                dtype=np.float32,
-            )
-        return gym.spaces.Box(
-            low=np.asarray(
-                [-np.inf, -np.pi, 0.0, -steering_limit, -np.inf], dtype=np.float32
-            ),
-            high=np.asarray(
-                [np.inf, np.pi, max_speed, steering_limit, np.inf],
-                dtype=np.float32,
-            ),
-            dtype=np.float32,
         )
 
     def _observe(self) -> ObservationType:

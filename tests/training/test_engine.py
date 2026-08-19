@@ -36,7 +36,7 @@ from training import (
     TrainingTransition,
     circuit_track_seed,
 )
-from training.engines import TrainingEngine, episode_outcome
+from training.engines import TrainingEngine
 from utils.random import SeedNamespace
 
 
@@ -117,16 +117,22 @@ class _FixedAgent:
         self.generator.bit_generator.state = state["generator"]
 
 
-def _environment() -> RacingEnv:
+def _track() -> TrackWithGeometry:
     root = Path(__file__).parents[1]
-    track = TrackWithGeometry(
+    return TrackWithGeometry(
         Track.load(root / "fixtures" / "tracks" / "valid_circle.json")
     )
-    config = EnvironmentConfig(
+
+
+def _config() -> EnvironmentConfig:
+    return EnvironmentConfig(
         simulation=SimulationConfig(max_episode_steps=3),
         start=StartStateConfig(randomized=False),
     )
-    return RacingEnv(track, config=config)
+
+
+def _environment() -> RacingEnv:
+    return RacingEnv(_track(), config=_config())
 
 
 def _engine(
@@ -151,7 +157,8 @@ def _engine(
     )
     engine = engine_type(
         agent,
-        _environment(),
+        _track(),
+        _config(),
         normalizer,
         run_category=RunCategory.REDUCED_VALIDATION,
         evaluation_environment_factory=(
@@ -215,7 +222,12 @@ def test_every_environment_lifecycle_boundary_has_a_recorded_outcome(
     """
     flags = {"lap_completed": False, "collision": False, "stalled": False, **info}
 
-    assert episode_outcome(terminated, truncated, flags) is expected
+    assert (
+        EpisodeOutcome.from_transition(
+            terminated=terminated, truncated=truncated, info=flags
+        )
+        is expected
+    )
 
 
 def test_complete_episode_collection_waits_for_complete_batch() -> None:
@@ -298,7 +310,7 @@ def test_held_out_circuits_are_evaluated_only_when_asked() -> None:
         None
     ]
 
-    produced = engine.evaluate_circuits(held_out)
+    produced = engine.evaluate(held_out)
 
     assert len(produced) == 1
     assert produced[0].record.episode.circuit_split == "test"
@@ -464,7 +476,7 @@ def test_checkpoint_rejects_incompatible_engine_state(tmp_path: Path) -> None:
     """
     A checkpoint whose layout this code no longer understands must be refused.
     """
-    from training.checkpoints import load_checkpoint, save_checkpoint
+    from training.checkpointing import load_checkpoint, save_checkpoint
 
     engine, _ = _engine(size=4)
     checkpoint = tmp_path / "training.pt"

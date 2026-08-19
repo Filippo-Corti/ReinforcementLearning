@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
-from agents.types import OnPolicyAgent
 from configs import ObservationRepresentation
-from envs.observations import FrenetObservation
 from envs.racing import RacingEnv
+from envs.tracks import track_geometry_summary
+from normalization import RunningObservationNormalizer
 from recording.records import (
-    CircuitGeometrySummaryRecord,
     DeterministicEvaluationRecord,
     EpisodeOutcome,
     EpisodeRecord,
@@ -21,10 +20,17 @@ from recording.records import (
     LoggedTransitionRecord,
     MetricScope,
     RunCategory,
-    ScalarSummaryRecord,
 )
+from utils.statistics import scalar_summary
 
-from .normalization import RunningObservationNormalizer
+from .utils import trajectory_state
+
+if TYPE_CHECKING:
+    # Deferred: `agents` eagerly imports its concrete classes, which need
+    # `training.buffers`, which needs this package back. Nothing here calls
+    # `agent.*` in a way that requires the runtime Protocol, only the
+    # annotation, so the import can stay type-checking-only.
+    from agents.types import OnPolicyAgent
 
 
 def evaluate_deterministic(
@@ -108,9 +114,6 @@ def _evaluate_episode(
         next_observation, reward, terminated, truncated, info = environment.step(action)
         progress = float(info["episode_progress"]) / environment.track.track_length
         maximum_progress = max(maximum_progress, progress)
-        # Read from the pre-action vehicle state, not from a fixed position in
-        # the observation vector: the two representations order theirs
-        # differently, and only one of them carries speed at index two.
         speeds.append(current_state.speed)
         throttles.append(float(action[0]))
         steering.append(abs(float(action[1])))
@@ -142,7 +145,9 @@ def _evaluate_episode(
         total_return += float(reward)
         observation = next_observation
         if terminated or truncated:
-            outcome = _outcome(terminated, truncated, info)
+            outcome = EpisodeOutcome.from_transition(
+                terminated=terminated, truncated=truncated, info=info
+            )
             count = len(transitions)
             episode = EpisodeRecord(
                 run_category=run_category,
@@ -167,9 +172,9 @@ def _evaluate_episode(
                 observation_type=observation_type.value,
                 circuit_seed=environment.track.generation.seed,
                 circuit_split=circuit_split,
-                speed=_summary(speeds),
-                throttle=_summary(throttles),
-                absolute_steering=_summary(steering),
+                speed=scalar_summary(speeds),
+                throttle=scalar_summary(throttles),
+                absolute_steering=scalar_summary(steering),
                 positive_throttle_fraction=float(np.mean(np.asarray(throttles) > 0)),
                 braking_fraction=float(np.mean(np.asarray(throttles) < 0)),
                 near_saturated_steering_fraction=(
@@ -181,7 +186,7 @@ def _evaluate_episode(
                         )
                     )
                 ),
-                circuit_geometry=circuit_geometry_summary(environment),
+                circuit_geometry=track_geometry_summary(environment.track),
             )
             return DeterministicEvaluationRecord(
                 record=EvaluationRecord(
@@ -198,120 +203,3 @@ def _evaluate_episode(
                 transitions=tuple(transitions),
             )
     raise RuntimeError("RacingEnv did not end within its configured episode limit.")
-
-
-@dataclass(frozen=True, slots=True)
-class TrajectoryState:
-    """
-    Preserve pre-action geometry and vehicle state for one retained trajectory row.
-
-    Fields:
-        * position: Cartesian vehicle position.
-        * heading: Vehicle heading in radians.
-        * current_curvature: Centerline curvature at the closest projection.
-        * preview_curvature: Frenet preview curvature when present.
-        * speed: Vehicle speed.
-        * lateral_acceleration_proxy: Speed squared times absolute curvature.
-    """
-
-    position: tuple[float, float]
-    heading: float
-    current_curvature: float
-    preview_curvature: float | None
-    speed: float
-    lateral_acceleration_proxy: float
-
-
-def circuit_geometry_summary(environment: RacingEnv) -> CircuitGeometrySummaryRecord:
-    """
-    Summarize one frozen sampled circuit for later stratified analysis.
-    """
-    absolute_curvature = np.abs(environment.track.curvature)
-    return CircuitGeometrySummaryRecord(
-        track_length=float(environment.track.track_length),
-        absolute_curvature=ScalarSummaryRecord(
-            mean=float(np.mean(absolute_curvature)),
-            standard_deviation=float(np.std(absolute_curvature)),
-            minimum=float(np.min(absolute_curvature)),
-            maximum=float(np.max(absolute_curvature)),
-            quantiles={
-                "q25": float(np.quantile(absolute_curvature, 0.25)),
-                "q50": float(np.quantile(absolute_curvature, 0.50)),
-                "q75": float(np.quantile(absolute_curvature, 0.75)),
-                "q90": float(np.quantile(absolute_curvature, 0.90)),
-            },
-        ),
-    )
-
-
-def trajectory_state(
-    environment: RacingEnv, observation: np.ndarray
-) -> TrajectoryState:
-    """
-    Read the current vehicle and projected circuit geometry before an action.
-    """
-    if environment.state is None:
-        raise RuntimeError(
-            "RacingEnv must have active vehicle state during evaluation."
-        )
-    state = environment.state
-    projection = environment.track_with_geometry.centerline_projector.project(
-        state.position()
-    )
-    s = float(
-        environment.track.s[projection.segment_index]
-        + projection.fraction
-        * environment.track_with_geometry.centerline_projector.lengths[
-            projection.segment_index
-        ]
-    )
-    current_curvature = environment.track_with_geometry.curvature(s)
-    preview_curvature = (
-        float(observation[-1])
-        if observation.shape == (FrenetObservation.DIMENSIONS,)
-        else None
-    )
-    return TrajectoryState(
-        position=(float(state.x), float(state.y)),
-        heading=float(state.heading),
-        current_curvature=current_curvature,
-        preview_curvature=preview_curvature,
-        speed=float(state.speed),
-        lateral_acceleration_proxy=float(state.speed**2 * abs(current_curvature)),
-    )
-
-
-def _summary(values: list[float]) -> ScalarSummaryRecord:
-    """
-    Return a population scalar summary for one non-empty action-level signal.
-    """
-    array = np.asarray(values, dtype=np.float64)
-    return ScalarSummaryRecord(
-        mean=float(np.mean(array)),
-        standard_deviation=float(np.std(array)),
-        minimum=float(np.min(array)),
-        maximum=float(np.max(array)),
-        quantiles={
-            "q25": float(np.quantile(array, 0.25)),
-            "q50": float(np.quantile(array, 0.50)),
-            "q75": float(np.quantile(array, 0.75)),
-            "q90": float(np.quantile(array, 0.90)),
-        },
-    )
-
-
-def _outcome(
-    terminated: bool, truncated: bool, info: dict[str, object]
-) -> EpisodeOutcome:
-    """
-    Convert one explicit RacingEnv boundary into a metrics outcome.
-    """
-    if terminated and bool(info["lap_completed"]):
-        return EpisodeOutcome.COMPLETED
-    if terminated and bool(info["collision"]):
-        return EpisodeOutcome.CRASHED
-    if terminated and bool(info["stalled"]):
-        return EpisodeOutcome.STALLED
-    if truncated:
-        return EpisodeOutcome.TIME_LIMIT
-    raise ValueError("Terminal transition lacks a supported RacingEnv outcome.")

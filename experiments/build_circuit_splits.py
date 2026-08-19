@@ -21,11 +21,11 @@ from typing import Any
 
 import numpy as np
 
+from circuits import SPLIT_NAMESPACES, circuit_geometry_fingerprint
 from configs import EnvironmentConfig, Experiment2MatrixConfig
 from configs.serialization import to_plain_dict
 from envs.tracks import TrackWithGeometry
 from training import CircuitSplit, circuit_track_seed
-from training.circuits import SPLIT_NAMESPACES, circuit_geometry_fingerprint
 
 DEFAULT_OUTPUT = Path("tracks/experiment_2_splits.json")
 

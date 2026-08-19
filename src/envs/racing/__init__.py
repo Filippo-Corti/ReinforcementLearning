@@ -1,6 +1,12 @@
 """Gymnasium racing environment, lifecycle, and rendering."""
 
-from .environment import ActionType, ObservationType, RacingEnv, RacingEnvState
+from .environment import (
+    ActionType,
+    ObservationType,
+    RacingEnv,
+    RacingEnvState,
+    observation_space_for,
+)
 from .lifecycle import ActionOutcome, EpisodeLifecycle, EpisodeLifecycleState
 from .rendering import (
     BroadcastRacingRenderer,
@@ -21,4 +27,5 @@ __all__ = [
     "RacingEnvState",
     "RacingPygameRenderer",
     "RenderFrame",
+    "observation_space_for",
 ]

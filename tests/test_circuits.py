@@ -8,6 +8,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from circuits import (
+    HELD_OUT_SPLITS,
+    SPLIT_NAMESPACES,
+    load_split_circuits,
+)
 from configs import EnvironmentConfig
 from envs.tracks import TrackWithGeometry
 from training import (
@@ -15,11 +20,6 @@ from training import (
     CircuitSplit,
     TrainingCircuitSchedule,
     circuit_track_seed,
-)
-from training.circuits import (
-    HELD_OUT_SPLITS,
-    SPLIT_NAMESPACES,
-    load_split_circuits,
 )
 from utils.random import SeedNamespace
 
@@ -109,7 +109,7 @@ def test_frozen_geometry_survives_a_last_bit_difference_between_machines() -> No
     to within a picometre, while a real change to the generator moves this
     geometry by metres.
     """
-    from training.circuits import (
+    from circuits import (
         circuit_geometry_fingerprint,
         verify_circuit_geometry,
     )
@@ -143,7 +143,7 @@ def test_the_committed_split_manifest_still_describes_its_circuits() -> None:
     """
     The manifest in the repository must match what the generator produces now.
     """
-    root = Path(__file__).parents[2]
+    root = Path(__file__).parents[1]
     manifest_path = root / "tracks" / "experiment_2_splits.json"
 
     circuits = load_split_circuits(

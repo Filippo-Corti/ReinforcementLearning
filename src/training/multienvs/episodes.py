@@ -1,4 +1,4 @@
-"""Per-worker training-episode accumulation and the records it produces."""
+"""Per-worker accumulation of in-flight episodes into finished episode records."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from recording.records import (
     EpisodeRecord,
     MetricScope,
     RunCategory,
-    ScalarSummaryRecord,
 )
+from utils.statistics import scalar_summary
 
 
 @dataclass(slots=True)
@@ -56,12 +56,16 @@ class ActiveEpisode:
     absolute_steering: list[float] = field(default_factory=list)
 
 
-class EpisodeRecorder:
+class EpisodeCollector:
     """
-    Track what every worker is doing and turn finished episodes into records.
+    Track the episode every worker is racing, and close finished ones into records.
 
-    Engines differ in when they collect and when they update, but not in what a
-    finished episode means, so this is written once and each engine calls it.
+    This accumulates rather than logs. An episode is only summarizable once it
+    ends, so each worker's speeds, actions and progress are held here across
+    steps and turned into one `EpisodeRecord` at the boundary. Algorithms differ
+    in when they collect and when they update, but not in what a finished
+    episode means, so the manager stepping the workers owns exactly one of these
+    and every engine sees the same episode records out of it.
 
     Speed is held here rather than read back out of the observation vector: each
     representation places it at a different index, and the info returned by a
@@ -139,7 +143,7 @@ class EpisodeRecorder:
         self._pending_speeds[worker_index] = float(reset_info["speed"])
         return episode
 
-    def record_step(
+    def add_step(
         self,
         worker_index: int,
         action: np.ndarray,
@@ -174,7 +178,9 @@ class EpisodeRecorder:
         Close a worker's episode and append its record.
         """
         episode = self.active(worker_index)
-        outcome = episode_outcome(terminated, truncated, info)
+        outcome = EpisodeOutcome.from_transition(
+            terminated=terminated, truncated=truncated, info=info
+        )
         record = EpisodeRecord(
             run_category=self.run_category,
             scope=MetricScope.TRAINING,
@@ -250,39 +256,3 @@ class EpisodeRecorder:
         if not all(isinstance(record, EpisodeRecord) for record in records):
             raise TypeError("checkpoint episode records have invalid types.")
         self.records = list(records)
-
-
-def episode_outcome(
-    terminated: bool, truncated: bool, info: dict[str, Any]
-) -> EpisodeOutcome:
-    """
-    Convert an explicit racing lifecycle boundary into a metrics outcome.
-    """
-    if terminated and bool(info["lap_completed"]):
-        return EpisodeOutcome.COMPLETED
-    if terminated and bool(info["collision"]):
-        return EpisodeOutcome.CRASHED
-    if terminated and bool(info["stalled"]):
-        return EpisodeOutcome.STALLED
-    if truncated:
-        return EpisodeOutcome.TIME_LIMIT
-    raise ValueError("Terminal transition lacks a supported RacingEnv outcome.")
-
-
-def scalar_summary(values: list[float]) -> ScalarSummaryRecord:
-    """
-    Summarize one non-empty recorded training signal with population dispersion.
-    """
-    array = np.asarray(values, dtype=np.float64)
-    return ScalarSummaryRecord(
-        mean=float(np.mean(array)),
-        standard_deviation=float(np.std(array)),
-        minimum=float(np.min(array)),
-        maximum=float(np.max(array)),
-        quantiles={
-            "q25": float(np.quantile(array, 0.25)),
-            "q50": float(np.quantile(array, 0.50)),
-            "q75": float(np.quantile(array, 0.75)),
-            "q90": float(np.quantile(array, 0.90)),
-        },
-    )

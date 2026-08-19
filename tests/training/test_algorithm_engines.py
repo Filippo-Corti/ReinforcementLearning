@@ -28,7 +28,6 @@ from configs import (
     StartStateConfig,
 )
 from envs.observations import FrenetObservation
-from envs.racing import RacingEnv
 from envs.tracks import TrackWithGeometry
 from recording import RunCategory
 from training import (
@@ -41,14 +40,15 @@ from training import (
 from training.engines import TrainingEngine
 
 
-def _environment() -> RacingEnv:
+def _track() -> TrackWithGeometry:
     source = Path(__file__).parents[1] / "fixtures" / "tracks" / "valid_circle.json"
-    return RacingEnv(
-        TrackWithGeometry.load(source),
-        config=EnvironmentConfig(
-            simulation=SimulationConfig(max_episode_steps=1),
-            start=StartStateConfig(randomized=False),
-        ),
+    return TrackWithGeometry.load(source)
+
+
+def _config() -> EnvironmentConfig:
+    return EnvironmentConfig(
+        simulation=SimulationConfig(max_episode_steps=1),
+        start=StartStateConfig(randomized=False),
     )
 
 
@@ -59,7 +59,8 @@ def _actor_config() -> ActorConfig:
 def _build(engine_type: type[TrainingEngine], agent, workers: int, **extra):
     return engine_type(
         agent,
-        _environment(),
+        _track(),
+        _config(),
         RunningObservationNormalizer(
             FrenetObservation.DIMENSIONS, ObservationNormalizationConfig()
         ),
