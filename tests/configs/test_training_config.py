@@ -58,6 +58,9 @@ def test_agent_configs_expose_only_documented_learning_rate_candidates() -> None
         (3e-4, 1e-3),
         (3e-4, 3e-3),
         (3e-4, 1e-2),
+        (1e-3, 1e-3),
+        (1e-3, 3e-3),
+        (1e-3, 1e-2),
     )
 
     assert reinforce.actor_learning_rate_candidates == (1e-4, 3e-4, 1e-3)

@@ -83,12 +83,27 @@ class Candidate:
         return f"{self.algorithm}-actor-{self.actor_rate:g}-critic-{critic}"
 
 
+# The actor-critic pairs. The 2026-08-20 amendment added the three at actor
+# 1e-3: the original grid capped both actor-critic algorithms at 3e-4 while
+# offering REINFORCE 1e-3, so A2C was never allowed the rate that turned out to
+# be the one it needed. The grid stays shared between A2C and PPO, as the
+# protocol requires, so neither is offered an option the other is denied.
+ACTOR_CRITIC_PAIRS: tuple[tuple[float, float], ...] = (
+    (1e-4, 3e-4),
+    (3e-4, 1e-3),
+    (3e-4, 3e-3),
+    (3e-4, 1e-2),
+    (1e-3, 1e-3),
+    (1e-3, 3e-3),
+    (1e-3, 1e-2),
+)
+
 CANDIDATES: tuple[Candidate, ...] = (
     *(Candidate("reinforce", rate, None) for rate in (1e-4, 3e-4, 1e-3)),
     *(
         Candidate(algorithm, actor, critic)
         for algorithm in ("a2c", "ppo")
-        for actor, critic in ((1e-4, 3e-4), (3e-4, 1e-3), (3e-4, 3e-3), (3e-4, 1e-2))
+        for actor, critic in ACTOR_CRITIC_PAIRS
     ),
 )
 

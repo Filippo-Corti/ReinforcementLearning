@@ -2076,3 +2076,59 @@ exploration noise sits at one half whatever its scale.
 
 **Commits**: `refactor: move the engine infrastructure into collaborators [ai]`,
 `refactor: give each algorithm its own engine [ai]`.
+
+## 2026-08-20 — The grid never offered A2C the rate it needed
+
+**Task**: A2C finished the recalibrated grid below REINFORCE — no lap in three
+roots at `750,000` interactions, against REINFORCE's two. An algorithm that adds
+a learned baseline to REINFORCE's estimator should not be the weaker of the two,
+so either the claim is wrong or the configuration is. Find out which, fix it if
+it is the configuration, and adapt the protocol to whatever the answer is.
+
+**Result**: it was the configuration, and the defect was in the grid rather than
+in A2C. The grid offered REINFORCE an actor rate of `1e-3` but capped both
+actor-critic algorithms at `3e-4`, so A2C was never allowed to try the rate
+REINFORCE went on to win with. That was not deliberate: the 2026-08-12 widening
+moved only the critic column and left the actor column where it had been.
+
+A diagnostic sweep — `experiments/tune_a2c.py`, seven configurations screened on
+one root and a shortlist confirmed on three — moved the three knobs that are
+A2C's own configuration: actor rate, critic rate, and rollout length, which sets
+how many updates a fixed budget buys. Either of two changes alone takes the
+selected candidate from `0/3` laps to `3/3`: raising the actor rate to `1e-3`,
+or shortening the rollout from `2048` to `512`. Applying both overshoots and
+falls back to `2/3`.
+
+**The diagnosis that motivated the sweep was wrong, and the sweep is what showed
+it.** The reasoning was that A2C's critic had collapsed to a near-constant, that
+the bootstrap therefore cancels, and that the `20`-step GAE trace was all the
+credit assignment left. The recorded explained variance says otherwise: it is
+`+0.07` in the failing configuration and `-0.02`, `-0.08`, `-0.13` in
+configurations that lap every root. Every A2C critic here is useless by that
+measure, including the ones that work, so critic quality is not what separates
+them. What does separate them is `actor rate x updates`, the distance the actor
+is allowed to travel within the allowance: `0.110` in the failure, `0.366` to
+`0.879` in the successes, and `1.464` in the overshoot. A2C was not misled by a
+bad baseline; its actor had not finished moving.
+
+**The amendment**: three pairs at actor `1e-3` were added to the grid, and the
+grid stays shared between A2C and PPO because the protocol says neither may be
+offered an option the other is denied. The whole grid was re-run under the
+current reward — `51` runs, `18` of them new.
+
+**Selected**: REINFORCE `1e-3` (unchanged, `2/3` laps), A2C `(1e-3, 3e-3)`
+(changed from `(3e-4, 1e-2)`, `0/3` laps to `3/3`, mean return `37.23` to
+`222.77`), PPO `(3e-4, 1e-2)` (unchanged). Two things are worth noticing beyond
+the selection. A2C now prefers a *lower* critic rate than before: the hot critic
+was compensating for an actor that could not travel, and the compensation stops
+paying once the actor rate is right. And the grid now brackets the usable region
+instead of ending at its edge — PPO drops to `2/3` laps at the `(1e-3, 1e-2)`
+corner, its worst cell, so the range is wide enough to contain a failure on both
+sides rather than only below.
+
+**Files**: `experiments/tune_a2c.py`, `experiments/calibrate_learning_rates.py`,
+`src/configs/algorithms.py`, `tests/configs/test_training_config.py`,
+`docs/EXPERIMENT.md`, `notebooks/experiment_1.ipynb`, `notebooks/a2c.ipynb`,
+`experiments/notebooks/a2c.py`.
+
+**Commit**: `fix: widen the learning-rate grid so A2C can learn [ai]`.

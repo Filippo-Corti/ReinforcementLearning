@@ -25,12 +25,16 @@ reasoning is dated in [`MDP.md`](MDP.md); the measurement behind it, and the
 errors in its first analysis, are archived in
 [`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md).
 
-> **The configuration check was re-run under that revision** and its outcome is
-> recorded below as *Recorded outcome — 2026-08-20*. Every algorithm selected
-> the same rates it had selected on 2026-08-12, so the settings are unchanged;
-> what changed is that the evidence for them now describes the reward the
-> reported experiments actually use. The 2026-08-12 table is retained as the
-> evidence for the previous contract and is not the source of any setting.
+**Protocol revision:** 2026-08-20 widened learning-rate grid. Three actor/critic
+pairs at an actor rate of $10^{-3}$ were added, and the amendment that adds them
+is recorded in *Learning configuration check* below.
+
+> **The configuration check was re-run under both revisions** and its outcome is
+> recorded below as *Recorded outcome — 2026-08-20*. REINFORCE and PPO selected
+> the rates they had selected on 2026-08-12; **A2C's selection changed** to
+> $(10^{-3},3\cdot10^{-3})$, which took it from completing no lap in three roots
+> to completing all three. The 2026-08-12 table is retained as the evidence for
+> the previous contract and is not the source of any setting.
 
 ## Frozen protocol — 2026-08-20
 
@@ -62,9 +66,9 @@ re-issued, which is what makes this table a constraint rather than a note.
   $R_{\text{crash}}=5$, $c_{\text{step}}=0.04$, $c_{\text{prog}}=100$,
   $T_{\max}=1000$ — the 2026-08-20 revision at the top of this document.
 - Physics: the 2026-08-12 grip-limited contract.
-- Learning rates: REINFORCE $10^{-3}$; A2C $(3\cdot10^{-4},10^{-2})$; PPO
-  $(3\cdot10^{-4},10^{-2})$ — re-selected under the current reward and recorded
-  above.
+- Learning rates: REINFORCE $10^{-3}$; A2C $(10^{-3},3\cdot10^{-3})$; PPO
+  $(3\cdot10^{-4},10^{-2})$ — re-selected under the current reward and the
+  widened grid, and recorded below.
 - Actor sizes $(32,32)$, $(64,64)$, $(256,256)$ with a fixed $(64,64)$ critic;
   actor parameter counts as tabulated in `LEARNING.md`.
 - Budgets and schedules: 2,000,000 training interactions, deterministic
@@ -108,8 +112,9 @@ therefore compare only the following finite candidates with the medium
   $\{10^{-4},3\cdot10^{-4},10^{-3}\}$;
 - A2C actor/critic rates:
   $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3}),
-  (3\cdot10^{-4},3\cdot10^{-3}),(3\cdot10^{-4},10^{-2})\}$;
-- PPO actor/critic rates: the same four pairs as A2C.
+  (3\cdot10^{-4},3\cdot10^{-3}),(3\cdot10^{-4},10^{-2}),
+  (10^{-3},10^{-3}),(10^{-3},3\cdot10^{-3}),(10^{-3},10^{-2})\}$;
+- PPO actor/critic rates: the same seven pairs as A2C.
 
 These candidates are engineering scales around Adam's $10^{-3}$ suggested
 default, reduced where the noisy policy-gradient objective benefits from
@@ -127,6 +132,33 @@ its update count: refitting the same critic architecture on a constant target of
 $200$ reaches $79.7$ after 977 steps and $200.0$ after 5,000. The original grid
 also varied the actor and critic rates together, which cannot separate their
 effects; the added pairs hold the actor rate fixed and move only the critic.
+
+**The three pairs at actor $10^{-3}$ were added on 2026-08-20, and this is that
+amendment.** The grid offered REINFORCE an actor rate of $10^{-3}$ but capped
+both actor-critic algorithms at $3\cdot10^{-4}$, so A2C could never be tried at
+the rate REINFORCE went on to win with. That was not a deliberate asymmetry: the
+critic-rate widening above moved only the critic and left the actor column as it
+had been. It mattered. A diagnostic sweep, reproducible with
+`python experiments/tune_a2c.py`, found A2C's selected candidate going from 0/3
+completed laps to **3/3** on the same three roots and the same 750,000-interaction
+allowance when its actor rate alone was raised to $10^{-3}$, mean progress
+$0.582 \to 1.000$ and mean return $37.23 \to 218.50$.
+
+The diagnosis that first motivated the sweep — that A2C's critic had collapsed
+to a near-constant, leaving the GAE trace as the whole credit horizon — was
+wrong, and is recorded here because it is the sort of explanation that sounds
+sufficient and is not. The critic *is* nearly constant: it explains about $7\%$
+of return variance, and its predictions vary by $1.62$ against targets varying
+by $10.24$. But explained variance stays at or below zero in **every** swept
+configuration that completes a lap, so critic quality does not separate success
+from failure. What separates them is how far the actor travels: both failing
+configurations sit at a learning rate times update count of $0.110$ and every
+succeeding one is at $0.366$ or above. A2C does not need its critic here because
+the progress term makes the reward dense, and a short credit horizon is enough
+to learn to drive forward without crashing.
+
+The grid remains shared with PPO, as the paragraph above requires, so PPO is
+offered the same three pairs and selects among all seven by the same rule.
 
 Each candidate receives 250,000 interactions on each of three dedicated roots.
 This allowance is long enough to reveal immediate divergence and early progress
@@ -229,22 +261,22 @@ scale of its targets within its update count, and $10^{-2}$ already does that;
 a rate chosen at an edge is nevertheless worth remembering when reading the
 reported results.
 
-#### Recorded outcome — 2026-08-20 re-run under the undiscounted objective
+#### Recorded outcome — 2026-08-20
 
-The 2026-08-12 grid above is superseded. It selected rates against
-$\gamma=0.9995$ and $R_{\text{lap}}=100$, and the revision at the top of this
-document replaced both, changing the scale of the returns that critic targets
-and advantage magnitudes are formed from. The whole grid was therefore re-run
-unchanged in every other respect: same candidates, same three roots, same
-allowances including A2C's amended $750{,}000$, same lexicographic rule, same
-`tracks/experiment_1.json` circuit and medium actor.
+The 2026-08-12 grid above is superseded twice over. It selected rates against
+$\gamma=0.9995$ and $R_{\text{lap}}=100$, which the revision at the top of this
+document replaced, and it did so from a grid that capped both actor-critic
+algorithms at an actor rate of $3\cdot10^{-4}$, which the amendment above
+widened. The whole grid was re-run under the current reward: same three roots,
+same allowances including A2C's amended $750{,}000$, same lexicographic rule,
+same `tracks/experiment_1.json` circuit and medium actor.
 
 Reproduce with `python experiments/calibrate_learning_rates.py run`, which
 writes under `results/pre_experiment_configuration/learning_configuration_check/`
 and scores the grid from the raw run records.
 
-**Selected rates: REINFORCE $10^{-3}$; A2C $(3\cdot10^{-4},10^{-2})$; PPO
-$(3\cdot10^{-4},10^{-2})$ — unchanged from 2026-08-12.**
+**Selected rates: REINFORCE $10^{-3}$; A2C $(10^{-3},3\cdot10^{-3})$; PPO
+$(3\cdot10^{-4},10^{-2})$.** A2C's selection changed; the other two did not.
 
 | Algorithm | Actor | Critic | Allowance | Laps | Mean progress | Mean return |
 |---|---:|---:|---:|---:|---:|---:|
@@ -254,51 +286,53 @@ $(3\cdot10^{-4},10^{-2})$ — unchanged from 2026-08-12.**
 | A2C | $10^{-4}$ | $3\cdot10^{-4}$ | 750k | 0/3 | 0.265 | 9.54 |
 | A2C | $3\cdot10^{-4}$ | $10^{-3}$ | 750k | 0/3 | 0.274 | 14.10 |
 | A2C | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 750k | 0/3 | 0.520 | 32.77 |
-| **A2C** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 750k | 0/3 | **0.582** | **37.23** |
+| A2C | $3\cdot10^{-4}$ | $10^{-2}$ | 750k | 0/3 | 0.582 | 37.23 |
+| A2C | $10^{-3}$ | $10^{-3}$ | 750k | 2/3 | 0.835 | 150.51 |
+| **A2C** | $\mathbf{10^{-3}}$ | $\mathbf{3\cdot10^{-3}}$ | 750k | **3/3** | **1.000** | **222.77** |
+| A2C | $10^{-3}$ | $10^{-2}$ | 750k | 3/3 | 1.000 | 218.50 |
 | PPO | $10^{-4}$ | $3\cdot10^{-4}$ | 250k | 3/3 | 1.000 | 225.52 |
 | PPO | $3\cdot10^{-4}$ | $10^{-3}$ | 250k | 3/3 | 1.000 | 223.77 |
 | PPO | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 227.19 |
 | **PPO** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 250k | **3/3** | **1.000** | **231.00** |
+| PPO | $10^{-3}$ | $10^{-3}$ | 250k | 3/3 | 1.000 | 207.57 |
+| PPO | $10^{-3}$ | $3\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 225.83 |
+| PPO | $10^{-3}$ | $10^{-2}$ | 250k | 2/3 | 0.686 | 148.50 |
 
-Five observations, none of which claims a selected candidate is scientifically
+Six observations, none of which claims a selected candidate is scientifically
 superior.
 
-**The reward change moved no selection.** Every algorithm chose the same rates
-it chose on 2026-08-12. That is the outcome this re-run existed to establish,
-and it means the selection evidence and the reported experiments now describe
-the same reward function without any rate having had to move.
+**A2C went from lapping nothing to lapping everything.** Its previous selection
+completed 0 of 3 laps at $0.582$ mean progress; every candidate at the newly
+offered actor rate laps at least twice, and the selected pair laps 3/3 at
+$1.000$ progress and $222.77$ return. The algorithm was never as weak as the
+first grid made it look — it had simply never been offered a rate that let its
+actor move.
 
-**Returns are not comparable across the two grids; progress is.** A completed
-lap is worth $40(1-t/T_{\max})$ more under $R_{\text{lap}}=140$, so PPO's
-$216.77 \to 231.00$ is mostly the constant and not the driving. Normalized
-progress and the lap count carry no such offset and are what the comparison
-below rests on.
+**A2C now prefers a *lower* critic rate than before.** It selected
+$3\cdot10^{-3}$ where it previously took the largest offered $10^{-2}$. That is
+worth noticing: the hot critic was compensating for an actor that could not
+travel, and once the actor rate is right the compensation stops paying. The two
+top candidates are close, $222.77$ against $218.50$ at identical lap counts and
+progress, so criterion 3 separates them and the margin is small.
 
-**A2C is the one algorithm that got worse.** Its selected pair fell from 1/3
-laps and $0.704$ mean progress to 0/3 and $0.582$. The ordering across critic
-rates survives intact and monotone — $0.265 \to 0.274 \to 0.520 \to 0.582$,
-exactly what the critic-update argument above predicts — so the grid still
-separates cleanly; the whole ladder simply sits lower. This is consistent with
-the archived measurement in
-[`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md),
-which found that removing the discount trades speed for caution in every
-algorithm, and A2C had the least margin to give up. It is recorded here rather
-than corrected: a valid run that learns poorly is a scientific outcome.
+**PPO's selection did not move.** It was offered the same three new pairs and
+still takes $(3\cdot10^{-4},10^{-2})$. The widening therefore changed A2C's
+answer and left PPO's alone, which is what a grid that was too narrow for one
+algorithm and wide enough for the other should do.
 
-**The criterion that selects A2C changed, even though its winner did not.** At
-1/3 laps it was chosen by criterion 1; now that every candidate laps zero times,
-criterion 2 decides on mean progress. The rule is lexicographic precisely so
-this degrades gracefully instead of becoming a coin flip.
+**The grid now brackets the usable region instead of ending at its edge.** The
+$(10^{-3},10^{-2})$ corner is where both actor-critic algorithms start to
+suffer: PPO falls to 2/3 laps and $0.686$ progress there, its worst cell, and
+A2C's return dips below its neighbour. Previously both algorithms selected the
+largest critic rate offered and the note below had to concede that the optimum
+might lie outside the grid. A2C now selects an interior critic rate, and the
+failure at the far corner is evidence that the range is wide enough.
 
-**PPO's grid is now saturated.** All four candidates lap 3/3 with progress
-$1.000$, where previously the $3\cdot10^{-3}$ pair managed 2/3. The selection
-therefore falls to criterion 3, mean return, and the margin between the four is
-$7.2$ points on a $231$-point return — small enough that this is a choice among
-candidates that all work, not a demonstration that one is right.
+**PPO remains at the critic-rate edge.** Its selection is still the largest
+critic rate that works for it, so the caveat continues to apply to PPO alone.
 
-**Both actor-critic algorithms again selected the largest critic rate offered,**
-which remains the grid's upper edge, with the same caveat as before: the true
-optimum may lie above it.
+**REINFORCE is unchanged and still weak in absolute terms.** Two roots of three,
+selected on criterion 1 because it is the only candidate that laps at all.
 
 ### Deterministic reference controller
 

@@ -65,6 +65,9 @@ class A2CConfig(SerializableConfig):
         (3e-4, 1e-3),
         (3e-4, 3e-3),
         (3e-4, 1e-2),
+        (1e-3, 1e-3),
+        (1e-3, 3e-3),
+        (1e-3, 1e-2),
     )
     beta_1: float = 0.9
     beta_2: float = 0.999
@@ -122,6 +125,9 @@ class PPOConfig(SerializableConfig):
         (3e-4, 1e-3),
         (3e-4, 3e-3),
         (3e-4, 1e-2),
+        (1e-3, 1e-3),
+        (1e-3, 3e-3),
+        (1e-3, 1e-2),
     )
     beta_1: float = 0.9
     beta_2: float = 0.999

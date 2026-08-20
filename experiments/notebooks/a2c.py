@@ -18,8 +18,8 @@ from training import A2CTrainingEngine
 from utils.random import SeedStream
 
 # Rates selected by the pre-experiment calibration in docs/EXPERIMENT.md.
-ACTOR_CONFIG = replace(MEDIUM_ACTOR_CONFIG, learning_rate=3e-4)
-CRITIC_CONFIG = replace(FIXED_CRITIC_CONFIG, learning_rate=1e-2)
+ACTOR_CONFIG = replace(MEDIUM_ACTOR_CONFIG, learning_rate=1e-3)
+CRITIC_CONFIG = replace(FIXED_CRITIC_CONFIG, learning_rate=3e-3)
 A2C_CONFIG = A2CConfig(
     gae_lambda=0.95,
     transitions_per_rollout=2_048,
