@@ -33,14 +33,24 @@ J(\mathbf\theta)=
 \mathbb E_{\pi_{\mathbf\theta}}
 \left[\sum_{t=0}^{\tau}\gamma^tR_{t+1}\right],
 \qquad 
-\gamma=0.9995.
+\gamma=1.
 $$
 
-The value of $\gamma$ comes from the task-timescale calculation in
-[`MDP.md`](MDP.md): its effective horizon is $2000$ agent steps, or $80$ simulated
-seconds. The undiscounted episode return is still recorded as a task metric;
-$\gamma$ only controls learning targets.
-^ TODO: revisit if we decide to set $\gamma=1$ instead.
+The horizon is finite — every episode ends at a boundary or at $T_{\max}$ — so
+the sum converges without a discount and none is applied. The training objective
+is therefore **the same quantity** that is recorded and reported as the task
+metric, rather than a discounted relative of it.
+
+This was not always so. The contract previously fixed $\gamma=0.9995$, chosen
+from a task-timescale argument, and that value was measured acting as an
+unwritten preference for finishing sooner rather than as a device for
+convergence. It was removed by the 2026-08-20 revision in [`MDP.md`](MDP.md),
+which moved that preference into the lap-time bonus where it can be read and
+calibrated. The measurement and the errors in its first analysis are archived in
+[`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md).
+
+$\gamma$ remains in every equation below because the algorithms are stated for
+general $\gamma$; it is simply one in this project.
 
 ### From the Gaussian Policy to the Control Actions
 
@@ -396,7 +406,7 @@ Input:
     a_critic: critic learning rate
     B: interaction budget (total number of allowed interactions)
     N: rollout capacity (default N = 2048)
-    γ: discount term (default γ = 0.9995)
+    γ: discount term (γ = 1 in this project)
     λ: GAE parameter (default λ = 0.95)
 
 # Initialize variables
@@ -522,7 +532,7 @@ Input:
     N: rollout capacity (default N = 2048)
     M: minibatch size (default M = 64)
     K: number of optimization epochs (default K = 4)
-    γ: discount term (default γ = 0.9995)
+    γ: discount term (γ = 1 in this project)
     λ: GAE parameter (default λ = 0.95)
     ε: PPO clipping parameter (default ε = 0.2)
     KL_target: target KL divergence (default KL_target = 0.02)
@@ -607,7 +617,7 @@ The following distinction is intentional:
 | Choice | Origin |
 |---|---|
 | Policy-gradient, actor-critic, GAE and clipped-PPO equations | Course notes |
-| $\gamma=0.9995$ | Racing timescale derivation in `MDP.md` |
+| $\gamma=1$ | Finite horizon; the time preference is carried by the reward instead (2026-08-20 revision in `MDP.md`) |
 | Actor widths | Scientific factor fixed by the experiment design |
 | Fixed `(64, 64)` critic | Project control that prevents a critic-capacity confound |
 | Adam $\beta_1$, $\beta_2$ and $10^{-8}$ | Defaults recommended in the original Adam paper |

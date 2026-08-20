@@ -13,7 +13,8 @@ class ReinforceConfig(SerializableConfig):
     Configure complete-episode REINFORCE collection and optimization.
 
     Fields:
-        * discount: Reward discount used in return-to-go.
+        * discount: Reward discount used in return-to-go. One, because the
+          horizon is finite and the time preference lives in the reward.
         * completed_episodes_per_update: Complete trajectories per update.
         * actor_learning_rate_candidates: Rates tried during calibration.
         * beta_1: Adam first-moment coefficient.
@@ -24,7 +25,7 @@ class ReinforceConfig(SerializableConfig):
         * learning_rate_scheduler_enabled: Whether a scheduler changes the rate.
     """
 
-    discount: float = 0.9995
+    discount: float = 1.0
     completed_episodes_per_update: int = 8
     actor_learning_rate_candidates: tuple[float, ...] = (1e-4, 3e-4, 1e-3)
     beta_1: float = 0.9
@@ -41,7 +42,9 @@ class A2CConfig(SerializableConfig):
     Configure synchronous advantage actor-critic with GAE.
 
     Fields:
-        * discount: Reward discount used in temporal-difference targets.
+        * discount: Reward discount used in temporal-difference targets. One,
+          because the horizon is finite and the time preference lives in the
+          reward.
         * gae_lambda: GAE trace parameter.
         * transitions_per_rollout: Transitions collected before each update.
         * learning_rate_candidates: Candidate `(actor, critic)` rate pairs.
@@ -54,7 +57,7 @@ class A2CConfig(SerializableConfig):
         * learning_rate_scheduler_enabled: Whether a scheduler changes the rates.
     """
 
-    discount: float = 0.9995
+    discount: float = 1.0
     gae_lambda: float = 0.95
     transitions_per_rollout: int = 2_048
     learning_rate_candidates: tuple[tuple[float, float], ...] = (
@@ -84,7 +87,9 @@ class PPOConfig(SerializableConfig):
     optimizer time than ten unconditional epochs.
 
     Fields:
-        * discount: Reward discount used in temporal-difference targets.
+        * discount: Reward discount used in temporal-difference targets. One,
+          because the horizon is finite and the time preference lives in the
+          reward.
         * gae_lambda: GAE trace parameter.
         * transitions_per_rollout: Transitions collected before optimization.
         * optimization_epochs: Reuses of each rollout.
@@ -103,7 +108,7 @@ class PPOConfig(SerializableConfig):
         * learning_rate_scheduler_enabled: Whether a scheduler changes the rates.
     """
 
-    discount: float = 0.9995
+    discount: float = 1.0
     gae_lambda: float = 0.95
     transitions_per_rollout: int = 2_048
     optimization_epochs: int = 4

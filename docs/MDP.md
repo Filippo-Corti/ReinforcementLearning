@@ -229,7 +229,9 @@ $$
 
 Where:
 * $R_{\text{finish}} = 100$
-* $R_{\text{lap}} = 100$ is the completion reward, scaled by lap time.
+* $R_{\text{lap}} = 140$ is the completion reward, scaled by lap time. Raised
+  from $100$ by the 2026-08-20 revision below, which removed the discount and
+  moved its implicit time pressure into this term.
 * $R_{\text{crash}} = 5$
 * $c_{\text{step}}= \rho \cdot \Delta_{t_{agent}} = 0.04$, with $\rho = 1s^{-1}$ representing the cost over one agent step.
 * $c_{\text{prog}}=100$
@@ -257,35 +259,108 @@ With the values specified above, all 3 conditions are satisfied:
 $$
 r_{\text{fast}}
 = R_{\text{finish}} + R_{\text{lap}}\left(1-\frac{22}{40}\right) - 22
-= 100 + 100(1-0.55)-22
-= 123,\\
+= 100 + 140(1-0.55)-22
+= 141,\\
 r_{\text{slow}}
 = R_{\text{finish}} + R_{\text{lap}}\left(1-\frac{33}{40}\right) - 33
-= 100 + 100(1-0.825)-33
-= 84.5,\\
+= 100 + 140(1-0.825)-33
+= 91.5,\\
 \frac{r_{\text{fast}}-r_{\text{slow}}}{r_{\text{fast}}}
-= \frac{123-84.5}{123}
-\approx 0.313 > 0.2.
+= \frac{141-91.5}{141}
+\approx 0.351 > 0.2.
 $$
 
+At the superseded $R_{\text{lap}}=100$ this margin was $0.313$. It widens
+because the speed preference the discount used to supply implicitly is now
+carried by the term that was always meant to carry it.
 
 
-## TODO Discounted Horizon Parameter
 
-> This needs to be revised. I want to make sure it is really necessary to use $\gamma \ne 1$.
+## Discounted Horizon Parameter
 
-The learning contract fixes $\gamma=0.9995$ for all three algorithms. This value
-is chosen from the task timescale:
+**Protocol revision: 2026-08-20 — undiscounted objective with a calibrated
+lap-time bonus.** This supersedes the earlier $\gamma=0.9995$ contract. The
+measurement that motivated the change, and the errors in its first analysis, are
+archived in [`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md).
 
-* Its effective geometric horizon is $1/(1-\gamma)=2000$ agent steps, or $80s$.
-* A reward received after an $18s$ lap is weighted by
-  $\gamma^{450}\approx0.798$, rather than being effectively discarded.
-* At the $1000$-step time limit, the discount weight is still approximately
-  $0.606$.
+The learning contract fixes
 
-Since the underlying objective is a finite-horizon shortest-time problem,
-$\gamma=1$ would be a meaningful subject for a separate comparison. It is not a
-factor in the approved experiments: changing $\gamma$ by algorithm or actor size
-would confound the intended comparisons. Exact target and boundary semantics are
-specified in [`LEARNING.md`](LEARNING.md).
+$$
+\gamma = 1
+$$
 
+for all three algorithms, and raises the lap-time bonus from $R_{\text{lap}}=100$
+to $R_{\text{lap}}=140$.
+
+### Why the discount was removed
+
+The task is a finite-horizon shortest-time problem, so no discount is needed for
+the return to converge. The previous $\gamma=0.9995$ was therefore never doing
+the textbook job; it was acting as reward shaping, and it was measured doing so:
+across thirty paired runs, removing it made every algorithm and every seed drive
+slower.
+
+That is a real effect, but it is the wrong place to keep it, for three reasons.
+
+1. **It is invisible.** The preference for finishing sooner lived in a learning
+   hyperparameter rather than in the reward, so the objective the agents
+   optimized was not the objective the reward function describes.
+2. **It is misaligned with evaluation.** Runs are judged on undiscounted episode
+   return. With $\gamma<1$ the training target and the reported metric are
+   different quantities.
+3. **It applies unevenly.** The pressure a discount adds decays with lap length:
+   about $+39\%$ of the explicit time pressure for a $400$-step lap, $+27\%$ at
+   the $540$-step median, and $+1\%$ at $870$ steps. It pushes hardest on a car
+   that is already fast and barely at all on a slow one, which is the opposite of
+   what a time incentive should do.
+
+### Why the lap-time bonus absorbs it
+
+The gain from finishing one hundred steps sooner decomposes into three channels.
+Under $\gamma=1$ only two are active, and both are explicit:
+
+| channel | $\gamma=1$ | $\gamma=0.9995$, $540$-step lap |
+|---|---:|---:|
+| lap-time bonus $R_{\text{lap}}\left(1-t/T_{\max}\right)$ | $+10.00$ | $+13.63$ |
+| step costs avoided | $+4.00$ | $+3.11$ |
+| progress delivered earlier | $0.00$ | $+2.09$ |
+| **total** | $+14.00$ | $+17.74$ |
+
+Matching the discounted total at the median lap requires
+
+$$
+R_{\text{lap}} = 10\left(17.74 - 4.00\right) \approx 137 ,
+$$
+
+rounded to $\mathbf{140}$. That yields a flat $18.0$ points per hundred steps at
+**every** lap length, rather than a pressure that fades as the car slows.
+
+The bonus is the correct instrument rather than the step cost, for the reason
+already given in condition 3 above: raising $c_{\text{step}}$ far enough to carry
+the same pressure would need $0.04 \to 0.18$, which is almost exactly the
+progress reward a lapping car earns per step $\left(100/540 = 0.185\right)$. A
+car that stopped making progress would then prefer the $-5$ crash to driving on,
+re-inverting condition 1. The lap bonus is paid **only on completion**, so
+raising it cannot make crashing attractive at any magnitude.
+
+### What this costs
+
+The undiscounted Monte Carlo return has higher variance: REINFORCE's coefficient
+of variation was measured rising from $0.120$ to $0.155$. That cost is accepted,
+falls equally on every arm of both experiments, and is the price of optimizing
+the quantity that is actually reported.
+
+Raising $R_{\text{lap}}$ also changes the return scale, so the learning rates
+selected in [`EXPERIMENT.md`](EXPERIMENT.md) no longer describe this reward and
+are re-run before any reported experiment.
+
+### Conditions re-checked at the new constants
+
+The three learnability conditions above were re-derived at $R_{\text{lap}}=140$
+and all still hold; the worked arithmetic is in *Choosing the coefficients*,
+which carries the current constants rather than a copy of them. Conditions 1 and
+2 do not involve $R_{\text{lap}}$ and are unchanged; condition 3's margin widens
+from $0.313$ to $0.351$.
+
+Exact target and boundary semantics are specified in
+[`LEARNING.md`](LEARNING.md).

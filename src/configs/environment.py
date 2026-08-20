@@ -230,6 +230,14 @@ class RewardConfig:
     slow lap, re-inverting the first ordering. Paying the bonus only on
     completion keeps lap time expensive without ever making crashing attractive.
 
+    That is also why ``lap_time_bonus`` is 140 rather than 100. The learning
+    contract used to discount at 0.9995, which acted as an unwritten preference
+    for finishing sooner. Removing the discount to align training with the
+    undiscounted evaluation return removed that pressure too, and 140 is the
+    value that restores it here, where it can be read: it is worth 14 points per
+    hundred steps saved against the step penalty's 4, matching what the discount
+    supplied at a typical lap. See the 2026-08-20 revision in ``docs/MDP.md``.
+
     Fields:
         * finish_reward: The reward given to the agent for successfully completing the track.
         * lap_time_bonus: The additional completion reward scaled by the unused episode clock.
@@ -239,7 +247,7 @@ class RewardConfig:
     """
 
     finish_reward: float = 100.0
-    lap_time_bonus: float = 100.0
+    lap_time_bonus: float = 140.0
     crash_penalty: float = 5.0
     time_penalty_rate: float = 1.0
     progress_coefficient: float = 100.0

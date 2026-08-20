@@ -1,4 +1,4 @@
-# Project Plan — Phase 2: Experiment-Ready Learning System
+# Archived Project Plan — Phase 2: Experiment-Ready Learning System
 
 ## Goal
 
@@ -1004,6 +1004,114 @@ comparable reported experiment runs.
   converge.
 - No required decision remains only in local shell history, console output or an
   uncommitted file.
+
+## Close-out — 2026-08-20
+
+Phase 2 is finished for its purpose: the repository can launch both experiment
+matrices without adding code or making an undocumented scientific choice. This
+section records what was actually built against what was planned, including the
+parts that were not built and the parts that were built differently. It is
+written at the point of archiving, so the step statuses above are frozen as they
+stood and are **not** all accurate — this section is the accurate one.
+
+### Steps 0–9 — complete as written
+
+Configuration, seeding, recorded schemas, run directories, shared models,
+normalization, rollout records, returns and GAE, the shared engine, all three
+algorithms with their controlled-problem validations, and the reproducible
+analysis path were built as specified.
+
+### Step 10 — complete
+
+`tracks/experiment_1.json` is committed and the learning-rate configuration
+check ran, selecting REINFORCE $10^{-3}$, A2C $(3\cdot10^{-4},10^{-2})$ and PPO
+$(3\cdot10^{-4},10^{-2})$. **These selections were later invalidated** by the
+reward change described below and must be re-run before the reported
+experiments.
+
+### Steps 11–13 — complete, and the conditional work was triggered
+
+The version-0 cornering diagnosis found unrealistic high-speed behaviour, so the
+conditional grip work was carried out rather than skipped. The environment now
+uses the grip-limited contract recorded as protocol revision `2026-08-12` in
+`docs/EXPERIMENT.md`, implemented in `src/envs/vehicle/kernel.py`.
+
+### Steps 14–17 — complete, assembled differently than planned
+
+Experiment 1 and Experiment 2 are assembled end to end, LiDAR is an
+interchangeable observation (`src/envs/observations/lidar.py`), and deterministic
+multi-circuit training with frozen held-out splits is committed in
+`tracks/experiment_2_splits.json`.
+
+The assembly landed as **notebooks plus a small orchestration layer** rather than
+as standalone acceptance scripts:
+
+* `notebooks/experiment_1.ipynb` and `notebooks/experiment_2.ipynb` state each
+  design, run its matrix resumably, and present every required output;
+* `experiments/matrix.py` executes a design matrix and skips runs that already
+  hold a `completion.json`, so an interrupted matrix resumes;
+* `experiments/reporting.py` renders the recorded tables and figures;
+* `experiments/notebooks/` holds script forms of the three per-algorithm
+  development notebooks, so the whole training path can be exercised headlessly
+  with an exit status.
+
+Both matrices were rehearsed at a reduced budget from a clean results tree: 18
+Experiment 1 runs and 4 Experiment 2 runs, no failures, with every table and
+figure regenerated from the raw records.
+
+### Step 18 — partially complete
+
+What the step asked for is satisfied in substance but not in the form it
+specified.
+
+**Done:** dependency, formatting, linting, type, compilation and test checks all
+pass; same-seed training, resume and evaluation were verified for all three
+algorithms, including a save/restore equivalence check proving a resumed run is
+identical to an uninterrupted one; both reduced matrices execute from a fresh
+result directory; all tables and plots regenerate solely from raw records; and
+pre-experiment, reduced-budget and reported results are separated by run
+category, seed namespace and directory.
+
+**Not done:**
+
+* `experiments/phase2_acceptance.py` and its test were never written. The checks
+  it would have wrapped exist and were run, but as the CI command set plus the
+  notebook rehearsals rather than as one script.
+* The experiment protocol is **not** frozen with a dated revision and checksum.
+  It cannot be, because the reward function changed at the very end of the phase
+  and the learning-rate selection it depends on has to be re-run first.
+* `README.md` commands still describe the older single-run entry point and do
+  not mention the two experiment notebooks.
+* `peak_process_memory` is recorded as `null`: `experiments/train.py` never
+  populates it, so the memory column required by the Experiment 1 outputs is
+  empty. `psutil` is already a dependency.
+
+### The reward change, which reopened Step 10
+
+Late in the phase, `docs/old-plans/discount-horizon-study.md` measured what $\gamma=0.9995$
+was doing and concluded it should be kept. External review showed the mechanism
+section of that report was wrong: its arithmetic used the wrong $T_{\max}$, one
+of its three claimed speed incentives actually points the other way, and the
+effect is about $+27\%$ of the explicit time pressure at a typical lap rather
+than the $100\%$ claimed. The empirical results in that report stand; the
+explanation did not.
+
+The corrected analysis moved the project to $\gamma=1$ with the lap-time bonus
+raised from $100$ to $140$, which reproduces the measured time pressure while
+keeping the learning objective identical to the undiscounted evaluation return.
+That is recorded in `docs/MDP.md` and is the reason Step 10 must be re-run.
+
+### What remains before the reported experiments
+
+1. Re-run the learning-rate configuration check under the new reward.
+2. Populate `peak_process_memory`, or state in the report that it is unrecorded.
+3. Update `README.md` for the notebook entry points.
+4. Freeze the protocol with a dated revision and checksum.
+5. Run the 45 Experiment 1 specifications, apply the recorded PPO actor-size
+   rule, then run the 10 paired Experiment 2 specifications.
+
+Steps 1–4 are the remainder of Phase 2. Step 5 is execution, and is what the
+"After Phase 2" section below always described.
 
 ## After Phase 2
 

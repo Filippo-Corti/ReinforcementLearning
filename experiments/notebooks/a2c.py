@@ -21,7 +21,6 @@ from utils.random import SeedStream
 ACTOR_CONFIG = replace(MEDIUM_ACTOR_CONFIG, learning_rate=3e-4)
 CRITIC_CONFIG = replace(FIXED_CRITIC_CONFIG, learning_rate=1e-2)
 A2C_CONFIG = A2CConfig(
-    discount=0.9995,
     gae_lambda=0.95,
     transitions_per_rollout=2_048,
 )

@@ -54,7 +54,7 @@ def test_defaults_match_the_environment_specification() -> None:
     )
     assert config.reward == RewardConfig(
         finish_reward=100.0,
-        lap_time_bonus=100.0,
+        lap_time_bonus=140.0,
         crash_penalty=5.0,
         time_penalty_rate=1.0,
         progress_coefficient=100.0,

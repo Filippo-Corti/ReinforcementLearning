@@ -21,7 +21,6 @@ from utils.random import SeedStream
 ACTOR_CONFIG = replace(MEDIUM_ACTOR_CONFIG, learning_rate=3e-4)
 CRITIC_CONFIG = replace(FIXED_CRITIC_CONFIG, learning_rate=1e-2)
 PPO_CONFIG = PPOConfig(
-    discount=0.9995,
     gae_lambda=0.95,
     transitions_per_rollout=2_048,
     optimization_epochs=4,

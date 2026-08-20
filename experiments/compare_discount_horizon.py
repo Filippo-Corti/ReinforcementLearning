@@ -1,6 +1,13 @@
 """Compare the discounted horizon against no discounting at all.
 
-The learning contract fixes ``gamma = 0.9995`` for all three algorithms, but the
+Superseded, and kept because it is the evidence behind a decision. The contract
+it interrogates -- ``gamma = 0.9995`` with a lap-time bonus of 100 -- was
+replaced on 2026-08-20 by ``gamma = 1`` with a bonus of 140, so re-running this
+now compares two arms of a reward function the project no longer uses. The
+findings and the corrections to their first analysis are archived in
+``docs/old-plans/discount-horizon-study.md``.
+
+The learning contract then fixed ``gamma = 0.9995`` for all three algorithms, but the
 task it describes is finite-horizon: every episode ends by crashing, stalling,
 finishing, or reaching the step cap. A discount is therefore not needed to make
 the return converge, which raises the question of what it is doing and whether

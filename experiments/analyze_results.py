@@ -118,6 +118,13 @@ def analyze_results(
         )
         if geometry_specification is not None:
             specification = _read_json(Path(geometry_specification))
+            # The committed split manifest carries the frozen edges under
+            # `geometry_strata`, alongside the circuits they were derived from.
+            # Accepting it directly means the edges are read from the same file
+            # that froze them, rather than from a copy that could drift.
+            strata = specification.get("geometry_strata")
+            if isinstance(strata, dict):
+                specification = strata
             tables["geometry_strata"] = stratify_circuit_geometry(
                 final_evaluations,
                 length_edges=_number_tuple(specification, "length_edges"),

@@ -17,8 +17,10 @@ from utils.analysis import (
     normalized_curve_area,
     paired_circuit_difference_rows,
     paired_difference_rows,
+    ppo_actor_selection_rows,
     representative_run_ids,
     run_summary_rows,
+    selected_ppo_actor,
     stratify_circuit_geometry,
 )
 
@@ -158,3 +160,84 @@ def test_circuit_pairing_and_geometry_bins_preserve_circuit_identity() -> None:
         ("a", 0),
         ("b", 1),
     }
+
+
+def _ppo_summary(
+    actor: str, parameters: int, root: int, final_return: float, completed: bool
+) -> dict[str, object]:
+    return {
+        "algorithm": "ppo",
+        "actor_name": actor,
+        "actor_parameters": parameters,
+        "root_identity": root,
+        "final_mean_return": final_return,
+        "final_completion_count": 1.0 if completed else 0.0,
+    }
+
+
+# Returns whose per-root differences straddle zero: the large actor has the
+# higher mean, but not consistently enough for the deficit to clear its own
+# standard error. A perfectly consistent deficit, however small, would.
+_SMALL_RETURNS = (100.0, 104.0, 99.0, 103.0, 101.0)
+_LARGE_RETURNS = (102.0, 103.0, 100.0, 104.0, 100.0)
+
+
+def test_actor_selection_prefers_the_smallest_actor_that_is_not_worse() -> None:
+    """
+    A larger actor scoring highest does not win if a smaller one matches it.
+
+    The rule admits on equivalence rather than on being strictly best, so the
+    fewest parameters wins once the deficit is inside the noise. That is the
+    whole reason the rule is a rule and not just `argmax`.
+    """
+    summaries = []
+    for root in range(5):
+        summaries.append(_ppo_summary("small", 1_000, root, _SMALL_RETURNS[root], True))
+        summaries.append(_ppo_summary("large", 9_000, root, _LARGE_RETURNS[root], True))
+
+    rows = ppo_actor_selection_rows(summaries)
+
+    large = next(row for row in rows if row["actor_name"] == "large")
+    small = next(row for row in rows if row["actor_name"] == "small")
+    assert large["is_best_mean_return"] is True
+    assert small["within_one_standard_error"] is True
+    assert selected_ppo_actor(rows) == "small"
+
+
+def test_actor_selection_rejects_a_smaller_actor_that_is_clearly_worse() -> None:
+    """
+    A consistent, large deficit keeps a smaller actor out however cheap it is.
+    """
+    summaries = []
+    for root in range(5):
+        summaries.append(_ppo_summary("small", 1_000, root, 10.0 + root, False))
+        summaries.append(_ppo_summary("large", 9_000, root, 200.0 + root, True))
+
+    rows = ppo_actor_selection_rows(summaries)
+
+    assert selected_ppo_actor(rows) == "large"
+    small = next(row for row in rows if row["actor_name"] == "small")
+    assert small["within_one_standard_error"] is False
+    assert small["completion_within_one_root"] is False
+
+
+def test_actor_selection_rejects_an_actor_that_completes_two_roots_fewer() -> None:
+    """
+    Return equivalence is not enough: the completion count is its own condition.
+
+    Identical returns to the case above, so only the completion counts differ
+    and only they can explain the different answer.
+    """
+    summaries = []
+    for root in range(5):
+        summaries.append(
+            _ppo_summary("small", 1_000, root, _SMALL_RETURNS[root], root > 2)
+        )
+        summaries.append(_ppo_summary("large", 9_000, root, _LARGE_RETURNS[root], True))
+
+    rows = ppo_actor_selection_rows(summaries)
+
+    small = next(row for row in rows if row["actor_name"] == "small")
+    assert small["within_one_standard_error"] is True
+    assert small["completion_within_one_root"] is False
+    assert selected_ppo_actor(rows) == "large"

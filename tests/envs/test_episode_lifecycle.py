@@ -7,7 +7,7 @@ from math import pi
 import numpy as np
 import pytest
 
-from configs import SimulationConfig
+from configs import RewardConfig, SimulationConfig
 from envs import (
     EpisodeLifecycle,
     KinematicTransition,
@@ -158,7 +158,12 @@ def test_forward_full_lap_crossing_terminates(
 
     assert result.lap_completed
     assert result.terminated
-    assert result.reward == pytest.approx(100.0 + 100.0 * (1.0 - 64 / 1_000))
+    # Read from the configuration rather than restated: this asserts the
+    # completion reward's *shape*, and the constants are specified elsewhere.
+    reward = RewardConfig()
+    assert result.reward == pytest.approx(
+        reward.finish_reward + reward.lap_time_bonus * (1.0 - 64 / 1_000)
+    )
 
 
 def test_collision_takes_precedence_over_finish(

@@ -20,7 +20,6 @@ from utils.random import SeedStream
 # Rates selected by the pre-experiment calibration in docs/EXPERIMENT.md.
 ACTOR_CONFIG = replace(MEDIUM_ACTOR_CONFIG, learning_rate=1e-3)
 REINFORCE_CONFIG = ReinforceConfig(
-    discount=0.9995,
     completed_episodes_per_update=8,
 )
 

@@ -19,6 +19,20 @@ results are never pooled with the reported results.
 
 **Protocol revision:** 2026-08-12 grip-limited physics contract.
 
+**Protocol revision:** 2026-08-20 undiscounted objective. $\gamma$ is now $1$ and
+the lap-time bonus $R_{\text{lap}}$ is $140$, replacing $0.9995$ and $100$. The
+reasoning is dated in [`MDP.md`](MDP.md); the measurement behind it, and the
+errors in its first analysis, are archived in
+[`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md).
+
+> **The learning rates recorded below are superseded by that revision.** They
+> were selected against the previous reward, and raising $R_{\text{lap}}$ changes
+> the return scale that critic targets and advantage magnitudes are formed from.
+> The configuration check must be re-run before any reported experiment, and its
+> outcome recorded here as a further dated revision. The tables are retained as
+> the evidence for the *previous* contract, not as settings for the reported
+> runs.
+
 ## Before either experiment
 
 This section contains configuration and validation rules that must be completed

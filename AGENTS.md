@@ -26,7 +26,13 @@ It controls the acceleration and the steering wheel. It should be heavily penali
 Try to learn a policy that can solve multiple circuits, in particular circuits not seen during training. You may want to train it on multiple, diverse circuits.
 
 ## General directions
-- Check out the `PLAN.md` file for the currently approved execution roadmap and follow its steps in order.
+- There is no active build plan. Phase 2 is closed and archived at
+  `docs/old-plans/phase-2-experiment-ready-learning-system.md`, whose close-out
+  section records what was built,
+  what was not, and what remains before the reported experiments.
+- Check out the `docs/EXPERIMENT.md` file for the protocol the remaining work
+  executes, and `notebooks/experiment_1.ipynb` and `notebooks/experiment_2.ipynb`
+  for the runnable form of the two studies.
 - Check out the `docs/MDP.md` file for a formalization of the underlying MDP.
 - Check out the `docs/TRACK.md` file for info on how the racing track should be generated, saved into memory and used.
 - Check out the `docs/DIARY.md` file everytime you need to track the progress you have made on the project.

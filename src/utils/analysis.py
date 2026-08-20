@@ -1103,3 +1103,101 @@ def _float_array(rows: list[TableRow], key: str) -> np.ndarray:
     if any(value is None for value in values):
         raise ValueError(f"table metric {key!r} contains null values.")
     return np.asarray(values, dtype=np.float64)
+
+
+def ppo_actor_selection_rows(summaries: list[TableRow]) -> list[TableRow]:
+    """
+    Apply the recorded rule that picks the Experiment 2 actor from Experiment 1.
+
+    The rule exists so the choice is made by a procedure written down before any
+    Experiment 2 circuit is opened, rather than by looking at the results and
+    deciding afterwards. It reads only PPO rows, and only Experiment 1 ones.
+
+    Its four steps are: take the size with the highest mean final deterministic
+    return; measure every other size against it as a paired per-root deficit;
+    admit a size whose mean deficit is within one standard error of zero and
+    whose completion count is at most one root below the best; and among the
+    admitted, take the smallest actor.
+
+    Pairing matters. Roots are shared across sizes by construction, so the
+    difference within a root removes the root-to-root variation that otherwise
+    swamps a five-sample comparison.
+
+    One row is returned per candidate size, carrying the whole calculation and
+    not only its answer, because the calculation is a required output.
+    """
+    ppo_rows = [row for row in summaries if str(row["algorithm"]) == "ppo"]
+    if not ppo_rows:
+        raise RunRecordingError("the actor selection needs recorded PPO runs.")
+
+    returns_by_actor: dict[str, dict[int, float]] = defaultdict(dict)
+    completions: dict[str, int] = defaultdict(int)
+    parameters: dict[str, int] = {}
+    for row in ppo_rows:
+        actor = str(row["actor_name"])
+        root = int(row["root_identity"])
+        if root in returns_by_actor[actor]:
+            raise RunRecordingError(
+                f"actor {actor} has more than one run for root {root}."
+            )
+        returns_by_actor[actor][root] = float(row["final_mean_return"])
+        completions[actor] += int(float(row["final_completion_count"]) > 0.0)
+        parameters[actor] = int(float(row["actor_parameters"]))
+
+    mean_returns = {
+        actor: sum(values.values()) / len(values)
+        for actor, values in returns_by_actor.items()
+    }
+    best_actor = max(
+        mean_returns,
+        # Highest mean return, and the smaller actor when two are exactly equal.
+        key=lambda actor: (mean_returns[actor], -parameters[actor]),
+    )
+    best_returns = returns_by_actor[best_actor]
+
+    rows: list[TableRow] = []
+    for actor, values in returns_by_actor.items():
+        shared_roots = sorted(set(values) & set(best_returns))
+        deficits = [best_returns[root] - values[root] for root in shared_roots]
+        statistics = descriptive_statistics(deficits)
+        standard_error = (
+            statistics.sample_standard_deviation / len(deficits) ** 0.5
+            if deficits
+            else 0.0
+        )
+        within_one_standard_error = statistics.mean <= standard_error
+        completion_within_one_root = completions[actor] >= completions[best_actor] - 1
+        rows.append(
+            {
+                "actor_name": actor,
+                "actor_parameters": parameters[actor],
+                "root_count": len(values),
+                "paired_root_count": len(shared_roots),
+                "mean_final_return": mean_returns[actor],
+                "completion_count": completions[actor],
+                "is_best_mean_return": actor == best_actor,
+                "mean_paired_deficit": statistics.mean,
+                "paired_deficit_standard_error": standard_error,
+                "within_one_standard_error": within_one_standard_error,
+                "completion_within_one_root": completion_within_one_root,
+                "admitted": within_one_standard_error and completion_within_one_root,
+            }
+        )
+
+    admitted = [row for row in rows if bool(row["admitted"])]
+    if not admitted:
+        raise RunRecordingError("no PPO actor satisfied the selection rule.")
+    selected = min(admitted, key=lambda row: int(float(row["actor_parameters"])))
+    for row in rows:
+        row["selected"] = row["actor_name"] == selected["actor_name"]
+    return sorted(rows, key=lambda row: int(float(row["actor_parameters"])))
+
+
+def selected_ppo_actor(rows: list[TableRow]) -> str:
+    """
+    Return the actor name the selection rows chose.
+    """
+    for row in rows:
+        if bool(row["selected"]):
+            return str(row["actor_name"])
+    raise RunRecordingError("the selection rows name no selected actor.")

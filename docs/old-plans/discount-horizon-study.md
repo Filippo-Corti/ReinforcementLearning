@@ -1,4 +1,4 @@
-# The Discounted Horizon
+# Archived Study — The Discounted Horizon
 
 This file records what $\gamma$ is actually doing in this project, measured
 rather than assumed, and what the reported experiments should use.
@@ -244,3 +244,129 @@ python experiments/compare_discount_horizon.py analyse
 
 Runs land under `results/pre_experiment_configuration/discount_horizon/`;
 the tables and `outputs/discount_horizon.png` come from the analyse step.
+
+## 9. Correction — 2026-08-20
+
+This section supersedes parts of sections 5 and 7. **Nothing above has been
+deleted**: the measurements are unchanged and still stand, but the mechanism
+they were attributed to was mis-derived, and the arithmetic in section 5 is
+wrong. What follows is the corrected account, arrived at after external review.
+
+### The arithmetic in section 5 is wrong
+
+Section 5 claims the explicit lap-time bonus is worth $12.5$ points per hundred
+steps. It is worth exactly $10$:
+
+$$
+R_{\text{lap}}\frac{100}{T_{\max}} = 100\cdot\frac{100}{1000} = 10 .
+$$
+
+The $12.5$ implies $T_{\max}=800$; the configured value is $1000$.
+
+Section 5 also claims that moving a terminal reward of $\approx145$ a hundred
+steps earlier is worth about $9.5$ discounted points. That is not derivable: the
+gain is $R\gamma^{t-100}(1-\gamma^{100})$, which is at most
+$145\times0.0488=7.08$, and only in the limit of a lap that ends immediately.
+
+### There are not three aligned incentives — one of them points the other way
+
+Section 5 lists "less-discounted penalties" as a third speed incentive. The sign
+is backwards. Discounting shrinks *negative* rewards that arrive later too, so
+the hundred step costs avoided by a faster lap are worth **less** under a
+discount, not more:
+
+| | undiscounted | $\gamma=0.9995$ |
+|---|---:|---:|
+| 100 step costs paid between $t=500$ and $t=599$ | $-4.00$ | $-3.04$ |
+
+So the discount *weakens* the time pressure carried by the step cost.
+
+The review also identified a real pro-speed effect this file missed entirely.
+Undiscounted progress rewards approximately **telescope** to the same total for
+any completed lap, so at $\gamma=1$ there is no pull to advance *early* within
+an episode — only to finish. Discounting breaks the telescoping and makes early
+progress worth more than late progress, adding about $+2.1$ points per hundred
+steps.
+
+The corrected picture, per hundred steps saved from a $540$-step lap:
+
+| channel | direction | $\gamma=1$ | $\gamma=0.9995$ |
+|---|---|---:|---:|
+| explicit lap-time bonus, discounted | encourages speed | $+10.00$ | $+13.63$ |
+| step costs avoided | encourages speed | $+4.00$ | $+3.11$ |
+| progress delivered earlier | encourages speed | $0.00$ | $+2.09$ |
+| **total** | | $+14.00$ | $+17.74$ |
+
+The attenuation of later penalties is the second row: it is why that channel is
+*weaker* under the discount rather than stronger.
+
+### "Roughly doubles the time pressure" is not established
+
+Recomputing the total gain from finishing a hundred steps sooner, against the
+lap times these policies actually record (median $21.6\,\mathrm{s}$, that is
+$540$ steps; range $398$–$873$):
+
+| lap | $\gamma=0.9995$ | $\gamma=1$ | ratio |
+|---:|---:|---:|---:|
+| 400 steps | $19.53$ | $14.00$ | $1.39\times$ |
+| 540 steps (median) | $17.74$ | $14.00$ | $1.27\times$ |
+| 700 steps | $15.88$ | $14.00$ | $1.13\times$ |
+| 870 steps | $14.10$ | $14.00$ | $1.01\times$ |
+
+The discount adds about **27%** at a typical lap, not $100\%$.
+
+Note the shape of that column, which this file did not observe and which matters
+more than the size: **the discount's pressure decays with lap length.** It
+pushes hardest on a car that is already fast and does almost nothing for a slow
+one. As a device for making cars go faster, that is close to backwards.
+
+### Two further claims softened
+
+* **"Stop calling it a discount."** Section 7 says this; it is wrong. The value
+  *is* the discount, used literally in return-to-go, in the TD error and in the
+  GAE recursion. The defensible statement is narrower: it is not needed for
+  convergence, because the horizon is finite, and it is retained as a deliberate
+  temporal preference that also acts like reward shaping.
+* **"The variance channel is closed for A2C and PPO by advantage
+  standardization."** Too strong. Standardization removes the overall scale of
+  the advantages, not changes in their *relative* values, and $\gamma$ enters
+  the TD errors and the GAE actor targets directly. The narrower claim — that a
+  pure scale increase cannot survive standardization — is the one the evidence
+  supports.
+
+### What survives
+
+The empirical half of this file is measurement, not arithmetic, and is
+unaffected: fifteen of fifteen pairs slower without the discount, the
+speed-for-reliability trade in section 4, and the critic control in section 6
+all stand. So does the conclusion that *removing* the discount reduces the push
+for speed. Only the account of **why**, and of **how much**, was wrong.
+
+### What was decided
+
+The corrected analysis argues for putting the speed preference where it can be
+read and calibrated — in the reward function — rather than leaving it implicit
+in $\gamma$. Matching the measured pressure at the median lap requires
+
+$$
+R_{\text{lap}} = 10\left(17.74 - 4\right) \approx 137 ,
+$$
+
+rounded to $140$, which yields a flat $18.0$ points per hundred steps at *every*
+lap length instead of a pressure that fades as the car slows.
+
+The project therefore moved to $\gamma=1$ with $R_{\text{lap}}=140$. The
+lap-time bonus is the right knob rather than the step cost because it is paid
+only on completion, so raising it cannot make crashing attractive — the ordering
+argument already recorded in `RewardConfig`. Reaching the same pressure through
+$c_{\text{step}}$ would need $0.04\to0.18$, which is almost exactly the progress
+reward a lapping car earns per step ($100/540=0.185$), so a car that stopped
+making progress would prefer the $-5$ crash to driving on.
+
+That change is dated in [`docs/MDP.md`](../MDP.md), and it invalidates the
+learning-rate selection recorded in [`docs/EXPERIMENT.md`](../EXPERIMENT.md),
+which was calibrated against the old reward and had to be re-run.
+
+**This document is therefore archived.** It describes the reward function and
+the discount the project used *before* that change, and its numbers should not
+be read as describing the reported experiments.
