@@ -12,22 +12,62 @@ from configs import (
     CarConfig,
 )
 
+# The two observation widths the project actually trains on.
+FRENET_DIMENSIONS = 5
+LIDAR_DIMENSIONS = 18
 
-def _actor(config=SMALL_ACTOR_CONFIG, seed: int = 10) -> ActorNetwork:
+
+def _actor(
+    config=SMALL_ACTOR_CONFIG, seed: int = 10, dimensions: int = 4
+) -> ActorNetwork:
     return ActorNetwork(
-        observation_dimensions=4,
+        observation_dimensions=dimensions,
         config=config,
         initialization_generator=torch.Generator().manual_seed(seed),
     )
 
 
 def test_actor_sizes_match_documented_parameter_formula() -> None:
-    for config in (SMALL_ACTOR_CONFIG, MEDIUM_ACTOR_CONFIG, LARGE_ACTOR_CONFIG):
-        first_hidden, second_hidden = config.hidden_sizes
-        expected = (4 + 1) * first_hidden + (first_hidden + 1) * second_hidden
-        expected += (second_hidden + 1) * 2 + 2
+    """
+    The formula in LEARNING.md holds at both observation widths.
 
-        assert _actor(config).parameter_count == expected
+    Both are checked rather than one convenient number, because the parameter
+    count is what the Experiment 1 capacity hypothesis is *about* and the
+    documented table carries a column for each. A test at some other width
+    would confirm the formula while leaving that table free to drift, which is
+    what happened to it.
+    """
+    for dimensions in (FRENET_DIMENSIONS, LIDAR_DIMENSIONS):
+        for config in (SMALL_ACTOR_CONFIG, MEDIUM_ACTOR_CONFIG, LARGE_ACTOR_CONFIG):
+            first_hidden, second_hidden = config.hidden_sizes
+            expected = (dimensions + 1) * first_hidden
+            expected += (first_hidden + 1) * second_hidden
+            expected += (second_hidden + 1) * 2 + 2
+
+            assert _actor(config, dimensions=dimensions).parameter_count == expected
+
+
+def test_documented_actor_parameter_table_is_exact() -> None:
+    """
+    Pin the published table itself, not only the formula it should follow.
+    """
+    documented = {
+        ("small", FRENET_DIMENSIONS): 1_316,
+        ("medium", FRENET_DIMENSIONS): 4_676,
+        ("large", FRENET_DIMENSIONS): 67_844,
+        ("small", LIDAR_DIMENSIONS): 1_732,
+        ("medium", LIDAR_DIMENSIONS): 5_508,
+        ("large", LIDAR_DIMENSIONS): 71_172,
+    }
+    actors = {
+        "small": SMALL_ACTOR_CONFIG,
+        "medium": MEDIUM_ACTOR_CONFIG,
+        "large": LARGE_ACTOR_CONFIG,
+    }
+    for (name, dimensions), expected in documented.items():
+        actor = _actor(actors[name], dimensions=dimensions)
+
+        assert actor.parameter_count == expected, f"{name} at {dimensions} inputs"
 
 
 def test_sample_and_recomputed_probability_support_single_and_batched_inputs() -> None:

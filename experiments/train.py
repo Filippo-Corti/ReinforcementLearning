@@ -55,6 +55,7 @@ from utils.random import (
     SeedStream,
     configure_torch_determinism,
 )
+from utils.resources import peak_process_memory
 
 _ACTORS: dict[str, ActorConfig] = {
     "small": SMALL_ACTOR_CONFIG,
@@ -564,7 +565,7 @@ def _run_training(
             optimizer_updates=state.counters.optimizer_updates,
             actor_parameters=agent.actor_parameter_count,
             critic_parameters=agent.critic_parameter_count,
-            peak_process_memory=None,
+            peak_process_memory=peak_process_memory(),
         )
         run.complete(
             {

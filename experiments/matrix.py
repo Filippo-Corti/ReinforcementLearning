@@ -13,12 +13,14 @@ only knows how to execute a list of specifications and report what happened.
 
 from __future__ import annotations
 
+import json
 import shutil
 import traceback
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +68,75 @@ def is_complete(path: Path) -> bool:
     return (Path(path) / "completion.json").is_file()
 
 
+def learning_contract(
+    environment_config: Any, *algorithm_configs: Any
+) -> dict[str, Any]:
+    """
+    Name the recorded fields whose change invalidates an existing run.
+
+    A results tree is the record of what has been done, and a matrix skips
+    whatever it finds finished there. That is what makes an interrupted run
+    resumable, and it is also how a run produced under different constants gets
+    silently reused after a contract change. This is the list that makes the
+    difference visible: the reward function, the physics, the circuit geometry
+    and every algorithm's discount.
+
+    The dotted paths address `config.json`, which every run writes before it
+    trains. Every run records all three algorithm configurations regardless of
+    which one it used, so one contract describes any matrix.
+    """
+    environment = environment_config.to_dict()
+    contract: dict[str, Any] = {
+        f"environment.{name}": environment[name]
+        for name in ("reward", "simulation", "vehicle", "track")
+    }
+    for config in algorithm_configs:
+        name = type(config).__name__.removesuffix("Config").lower()
+        contract[f"training.{name}.discount"] = config.discount
+    return contract
+
+
+def contract_mismatch(path: Path, contract: Mapping[str, Any]) -> str | None:
+    """
+    Return why a finished run disagrees with the contract, or `None` if it does not.
+    """
+    document = Path(path) / "config.json"
+    if not document.is_file():
+        return "the run has no recorded configuration"
+    recorded = json.loads(document.read_text(encoding="utf-8"))
+    for dotted, expected in contract.items():
+        value: Any = recorded
+        for key in dotted.split("."):
+            if not isinstance(value, dict) or key not in value:
+                return f"{dotted} is not recorded"
+            value = value[key]
+        if value != expected:
+            return f"{dotted}{_first_difference(value, expected)}"
+    return None
+
+
+def _first_difference(recorded: Any, expected: Any) -> str:
+    """
+    Describe the first differing field, rather than printing both documents.
+
+    A reward or physics document has a dozen fields and one of them changed;
+    naming it is the whole of what a reader needs to decide what to do.
+    """
+    if isinstance(recorded, dict) and isinstance(expected, dict):
+        for key in sorted(set(recorded) | set(expected)):
+            if recorded.get(key) != expected.get(key):
+                return (
+                    f".{key} was {recorded.get(key)!r} "
+                    f"and is now {expected.get(key)!r}"
+                )
+    return f" was {recorded!r} and is now {expected!r}"
+
+
 def execute(
     specifications: Sequence[RunSpecification],
     *,
     skip_complete: bool = True,
+    contract: Mapping[str, Any] | None = None,
     report: Callable[[str], None] = print,
 ) -> list[RunOutcome]:
     """
@@ -84,15 +151,27 @@ def execute(
     An incomplete directory is deleted before its run restarts. The recorder
     refuses to write into a non-empty directory, and that debris is by
     definition a run that produced no result.
+
+    A `contract` from `learning_contract` turns the skip into a *checked* skip:
+    a finished run whose recorded configuration no longer matches is re-run
+    rather than reused. Without it, changing a constant leaves a results tree
+    that mixes two contracts and looks complete.
     """
     outcomes: list[RunOutcome] = []
     total = len(specifications)
     for index, specification in enumerate(specifications, start=1):
         prefix = f"[{index}/{total}] {specification.run_id}"
         if skip_complete and is_complete(specification.path):
-            report(f"{prefix}: already complete, skipped")
-            outcomes.append(RunOutcome(specification.run_id, "skipped", 0.0))
-            continue
+            mismatch = (
+                None
+                if contract is None
+                else contract_mismatch(specification.path, contract)
+            )
+            if mismatch is None:
+                report(f"{prefix}: already complete, skipped")
+                outcomes.append(RunOutcome(specification.run_id, "skipped", 0.0))
+                continue
+            report(f"{prefix}: recorded under a different contract ({mismatch})")
         if specification.path.exists():
             report(f"{prefix}: clearing an incomplete directory")
             shutil.rmtree(specification.path)

@@ -25,13 +25,70 @@ reasoning is dated in [`MDP.md`](MDP.md); the measurement behind it, and the
 errors in its first analysis, are archived in
 [`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md).
 
-> **The learning rates recorded below are superseded by that revision.** They
-> were selected against the previous reward, and raising $R_{\text{lap}}$ changes
-> the return scale that critic targets and advantage magnitudes are formed from.
-> The configuration check must be re-run before any reported experiment, and its
-> outcome recorded here as a further dated revision. The tables are retained as
-> the evidence for the *previous* contract, not as settings for the reported
-> runs.
+> **The configuration check was re-run under that revision** and its outcome is
+> recorded below as *Recorded outcome — 2026-08-20*. Every algorithm selected
+> the same rates it had selected on 2026-08-12, so the settings are unchanged;
+> what changed is that the evidence for them now describes the reward the
+> reported experiments actually use. The 2026-08-12 table is retained as the
+> evidence for the previous contract and is not the source of any setting.
+
+## Frozen protocol — 2026-08-20
+
+Everything the reported experiments depend on is settled. The matrices below may
+now be executed; changing anything in this section afterwards requires a dated
+amendment that states its evidence and says which runs it invalidates.
+
+**What is frozen**
+
+| Document | Defines | SHA-256 |
+|---|---|---|
+| [`MDP.md`](MDP.md) | states, actions, transitions, reward constants, $\gamma$ | `ba545aea83ea6c7ab1b50c1d69854bc6d038915f99c99b6a97f218bfd452c63f` |
+| [`LEARNING.md`](LEARNING.md) | policy, targets, losses, architectures, optimizer | `2a6b4de54f429f51ce3c790e5f013ba4bcaf586d567bfe8700902192a999593f` |
+| [`TRACK.md`](TRACK.md) | circuit generation and geometry | `d979c6272d96e928df7419108b767bfe9cc08c63c883eaeed46689b45b73294c` |
+| `tracks/experiment_1.json` | the Experiment 1 circuit | `e9acdba442a30a520139379cd237a9716a39b66bf5f3cdf1178b694372068420` |
+| `tracks/experiment_2_splits.json` | the Experiment 2 split commitment | `bced9e20fff54733a9abadf767c0209735a6628941df60423a43ffaf7b7da60d` |
+
+Checksums are taken over newline-normalized bytes, so a checkout on another
+platform agrees with this table. This document is not in its own table: it is
+the thing doing the recording, and git identifies it.
+
+`tests/docs/test_protocol_freeze.py` recomputes every row. Editing a frozen
+document therefore fails the test suite until the freeze is deliberately
+re-issued, which is what makes this table a constraint rather than a note.
+
+**The settled decisions**
+
+- Reward and horizon: $\gamma=1$, $R_{\text{finish}}=100$, $R_{\text{lap}}=140$,
+  $R_{\text{crash}}=5$, $c_{\text{step}}=0.04$, $c_{\text{prog}}=100$,
+  $T_{\max}=1000$ — the 2026-08-20 revision at the top of this document.
+- Physics: the 2026-08-12 grip-limited contract.
+- Learning rates: REINFORCE $10^{-3}$; A2C $(3\cdot10^{-4},10^{-2})$; PPO
+  $(3\cdot10^{-4},10^{-2})$ — re-selected under the current reward and recorded
+  above.
+- Actor sizes $(32,32)$, $(64,64)$, $(256,256)$ with a fixed $(64,64)$ critic;
+  actor parameter counts as tabulated in `LEARNING.md`.
+- Budgets and schedules: 2,000,000 training interactions, deterministic
+  evaluation every 50,000, checkpoints every 250,000 and at the budget.
+- Roots `0..4` for both reported experiments.
+
+**What is not frozen by this section**
+
+The analysis code and the reporting notebooks are not part of the contract.
+Every table and figure is regenerated from raw run records, so improving how a
+result is *presented* does not invalidate the runs. What may not change is what
+the runs *are*.
+
+**Known gaps at the time of freezing**
+
+Recorded so a reader is not left to infer them from silence:
+
+- `README.md` still documents the single-run entry point rather than the two
+  experiment notebooks.
+- No `experiments/phase2_acceptance.py` exists. The checks it would have
+  wrapped — dependency, formatting, lint, type, compile and test checks;
+  same-seed resume equivalence; both reduced matrices from a clean tree — are
+  run, but as the CI command set and the notebook rehearsals rather than as one
+  script.
 
 ## Before either experiment
 
@@ -103,7 +160,13 @@ scale. It does not support claims that one candidate is scientifically superior.
 The chosen rate for an algorithm is then used for all three actor sizes. If this
 rule changes, the change must be documented before any reported experiment run.
 
-#### Recorded outcome
+#### Recorded outcome — 2026-08-12 (superseded)
+
+> Superseded by the 2026-08-20 re-run below, which repeated this grid under the
+> undiscounted objective. It is kept because the reasoning in it — why the
+> critic grid was widened, and what each algorithm's selection rested on — still
+> explains the grid the re-run used. Its numbers describe the previous reward
+> and are not the source of any current setting.
 
 Executed 2026-08-12 on a development circuit from the current generator, since
 `tracks/experiment_1.json` is chosen by inspection and not yet fixed. Neural
@@ -165,6 +228,77 @@ further because the argument for raising it is about the critic covering the
 scale of its targets within its update count, and $10^{-2}$ already does that;
 a rate chosen at an edge is nevertheless worth remembering when reading the
 reported results.
+
+#### Recorded outcome — 2026-08-20 re-run under the undiscounted objective
+
+The 2026-08-12 grid above is superseded. It selected rates against
+$\gamma=0.9995$ and $R_{\text{lap}}=100$, and the revision at the top of this
+document replaced both, changing the scale of the returns that critic targets
+and advantage magnitudes are formed from. The whole grid was therefore re-run
+unchanged in every other respect: same candidates, same three roots, same
+allowances including A2C's amended $750{,}000$, same lexicographic rule, same
+`tracks/experiment_1.json` circuit and medium actor.
+
+Reproduce with `python experiments/calibrate_learning_rates.py run`, which
+writes under `results/pre_experiment_configuration/learning_configuration_check/`
+and scores the grid from the raw run records.
+
+**Selected rates: REINFORCE $10^{-3}$; A2C $(3\cdot10^{-4},10^{-2})$; PPO
+$(3\cdot10^{-4},10^{-2})$ — unchanged from 2026-08-12.**
+
+| Algorithm | Actor | Critic | Allowance | Laps | Mean progress | Mean return |
+|---|---:|---:|---:|---:|---:|---:|
+| REINFORCE | $10^{-4}$ | — | 250k | 0/3 | 0.070 | −4.28 |
+| REINFORCE | $3\cdot10^{-4}$ | — | 250k | 0/3 | 0.169 | 4.77 |
+| **REINFORCE** | $\mathbf{10^{-3}}$ | — | 250k | **2/3** | **0.894** | **152.67** |
+| A2C | $10^{-4}$ | $3\cdot10^{-4}$ | 750k | 0/3 | 0.265 | 9.54 |
+| A2C | $3\cdot10^{-4}$ | $10^{-3}$ | 750k | 0/3 | 0.274 | 14.10 |
+| A2C | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 750k | 0/3 | 0.520 | 32.77 |
+| **A2C** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 750k | 0/3 | **0.582** | **37.23** |
+| PPO | $10^{-4}$ | $3\cdot10^{-4}$ | 250k | 3/3 | 1.000 | 225.52 |
+| PPO | $3\cdot10^{-4}$ | $10^{-3}$ | 250k | 3/3 | 1.000 | 223.77 |
+| PPO | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 227.19 |
+| **PPO** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 250k | **3/3** | **1.000** | **231.00** |
+
+Five observations, none of which claims a selected candidate is scientifically
+superior.
+
+**The reward change moved no selection.** Every algorithm chose the same rates
+it chose on 2026-08-12. That is the outcome this re-run existed to establish,
+and it means the selection evidence and the reported experiments now describe
+the same reward function without any rate having had to move.
+
+**Returns are not comparable across the two grids; progress is.** A completed
+lap is worth $40(1-t/T_{\max})$ more under $R_{\text{lap}}=140$, so PPO's
+$216.77 \to 231.00$ is mostly the constant and not the driving. Normalized
+progress and the lap count carry no such offset and are what the comparison
+below rests on.
+
+**A2C is the one algorithm that got worse.** Its selected pair fell from 1/3
+laps and $0.704$ mean progress to 0/3 and $0.582$. The ordering across critic
+rates survives intact and monotone — $0.265 \to 0.274 \to 0.520 \to 0.582$,
+exactly what the critic-update argument above predicts — so the grid still
+separates cleanly; the whole ladder simply sits lower. This is consistent with
+the archived measurement in
+[`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md),
+which found that removing the discount trades speed for caution in every
+algorithm, and A2C had the least margin to give up. It is recorded here rather
+than corrected: a valid run that learns poorly is a scientific outcome.
+
+**The criterion that selects A2C changed, even though its winner did not.** At
+1/3 laps it was chosen by criterion 1; now that every candidate laps zero times,
+criterion 2 decides on mean progress. The rule is lexicographic precisely so
+this degrades gracefully instead of becoming a coin flip.
+
+**PPO's grid is now saturated.** All four candidates lap 3/3 with progress
+$1.000$, where previously the $3\cdot10^{-3}$ pair managed 2/3. The selection
+therefore falls to criterion 3, mean return, and the margin between the four is
+$7.2$ points on a $231$-point return — small enough that this is a choice among
+candidates that all work, not a demonstration that one is right.
+
+**Both actor-critic algorithms again selected the largest critic rate offered,**
+which remains the grid's upper edge, with the same caveat as before: the true
+optimum may lie above it.
 
 ### Deterministic reference controller
 
@@ -428,7 +562,7 @@ actor sizes and algorithms.
 Every run uses:
 
 - the saved `tracks/experiment_1.json` circuit and canonical start;
-- Frenet observation $(d_t,\phi_{e,t},v_t,\bar\kappa_t)$;
+- Frenet observation $(d_t,\phi_{e,t},v_t,\delta_t,\bar\kappa_t)$;
 - the same action mapping, reward, episode limit and frozen physics version;
 - the bounded Gaussian policy and optimizer contract in `LEARNING.md`;
 - one fixed `(64, 64)` critic for A2C and PPO;

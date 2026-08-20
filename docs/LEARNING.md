@@ -8,10 +8,15 @@ At agent timestep $t$, the policy $\pi_\theta$ receives an observation $O_t$.
 Depending on the experiment, the observation can be:
 
 $$
-O_t^{\mathrm{Frenet}}=(d_t,\phi_{e,t},v_t,\bar\kappa_t) \quad \text{or} 
+O_t^{\mathrm{Frenet}}=(d_t,\phi_{e,t},v_t,\delta_t,\bar\kappa_t) \quad \text{or} 
 \quad 
-O_t^{\mathrm{LiDAR}}=(v_t,\widetilde r_t^{(1)},\ldots, \widetilde r_t^{(16)})
+O_t^{\mathrm{LiDAR}}=(v_t,\delta_t,\widetilde r_t^{(1)},\ldots, \widetilde r_t^{(16)})
 $$
+
+Both carry the speed $v_t$ and the front-wheel angle $\delta_t$, which are
+vehicle state rather than perception, so $d_{O_{\mathrm{Frenet}}}=5$ and
+$d_{O_{\mathrm{LiDAR}}}=18$. Only the track representation differs, which is the
+comparison Experiment 2 is about.
 
 The agent then chooses the bounded action:
 
@@ -150,10 +155,14 @@ $$ (d_O+1)\cdot64+(64+1)\cdot64+(64+1). $$
 
 | Model          | Hidden widths | Parameters ($d_{O_{\text{Frenet}}} = 5$) | Parameters ($d_{O_{\text{LiDAR}}} = 18$) |
 | -------------- | ------------: | ---------------------: | ----------------------: |
-| Actor — Small  |      (32, 32) |                  1,314 |                   1,730 |
-| Actor — Medium |      (64, 64) |                  4,738 |                   5,570 |
-| Actor — Large  |    (256, 256) |                 67,586 |                  70,914 |
+| Actor — Small  |      (32, 32) |                  1,316 |                   1,732 |
+| Actor — Medium |      (64, 64) |                  4,676 |                   5,508 |
+| Actor — Large  |    (256, 256) |                 67,844 |                  71,172 |
 | Critic         |      (64, 64) |                  4,609 |                   5,441 |
+
+The actor rows were corrected on 2026-08-20 against the constructed networks;
+the previous values disagreed with the formula directly above them. The critic
+rows were already right.
 
 Hidden network weights are initialized using *orthogonal initialization*, with a gain (multiplier) equal to $\sqrt2$ and bias equal to $0$.
 The learned log standard deviations start at $-0.5$, corresponding to
