@@ -3,38 +3,55 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
 import torch
-from numpy.typing import NDArray
 from torch import Tensor
 
 from configs import ActorConfig, CriticConfig, PPOConfig
-from utils.vectors import optional_tensor, to_tensor
+from utils.vectors import optional_tensor
 
 from ..diagnostics import (
     explained_variance,
-    gradient_dispersion,
     parameter_norm,
     parameter_update_norm,
     standardize,
 )
-from ..models import ActorNetwork, CriticNetwork, agent_parameter_counts
 from ..targets import compute_vector_gae_targets
 from ..types import (
     AgentUpdateInput,
     AgentUpdateOutput,
-    CollectedAction,
-    CollectedActionBatch,
     CollectionMode,
     FixedRolloutInput,
 )
-from .base import OnPolicyAgent
+from .base import ActorCriticAgent
 
 
-class PPOAgent(OnPolicyAgent):
+@dataclass(frozen=True, slots=True)
+class ClippedActorLoss:
+    """
+    Hold the clipped objective together with the importance ratios that produced it.
+
+    The importance ratios come back with the loss because they are computed on the way to
+    it and are needed afterwards: six of the recorded diagnostics are functions
+    of them, and one of those, the approximate KL, is what decides whether the
+    remaining epochs run at all. Recomputing them outside would mean a second
+    forward pass through the actor on every minibatch.
+
+    Fields:
+        * loss: Negated clipped surrogate, the quantity actually minimized.
+        * importance_ratios: Probability of each action now over its probability when chosen.
+        * log_ratios: The same comparison in log space, kept for a stabler KL.
+    """
+
+    loss: Tensor
+    importance_ratios: Tensor
+    log_ratios: Tensor
+
+
+class PPOAgent(ActorCriticAgent):
     """
     Optimize a bounded Gaussian actor with clipped multi-epoch sample reuse.
 
@@ -49,11 +66,11 @@ class PPOAgent(OnPolicyAgent):
         * critic: Trainable state-value estimator.
         * actor_optimizer: Adam optimizer over actor parameters only.
         * critic_optimizer: Adam optimizer over critic parameters only.
-        * sampling_generator: Isolated generator used only for policy sampling.
+        * sampling_generators: One isolated policy-sampling stream per worker.
         * optimization_generator: Isolated generator used only for minibatch order.
     """
 
-    STATE_VERSION = 3
+    STATE_VERSION = 4
     collection_mode = CollectionMode.FIXED_ROLLOUT
 
     def __init__(
@@ -62,7 +79,6 @@ class PPOAgent(OnPolicyAgent):
         actor_config: ActorConfig,
         critic_config: CriticConfig,
         config: PPOConfig,
-        critic_learning_rate: float,
         actor_initialization_generator: torch.Generator,
         critic_initialization_generator: torch.Generator,
         sampling_generator: torch.Generator | Sequence[torch.Generator],
@@ -76,130 +92,25 @@ class PPOAgent(OnPolicyAgent):
         Construct the PPO models, optimizers, and isolated random generators.
         """
         self._validate_config(config)
-        self.gradient_dispersion_subbatch = gradient_dispersion_subbatch
         self.config = config
-        self.actor_config = actor_config
-        self.critic_config = critic_config
-        self.collection_size = config.transitions_per_rollout
-        self.device = torch.device(device)
-        self.dtype = dtype
-        if actor_config.learning_rate is None:
-            raise ValueError("ActorConfig requires an explicit learning rate.")
-        self.actor_learning_rate = float(actor_config.learning_rate)
-        self.critic_learning_rate = float(critic_learning_rate)
-        self.actor = ActorNetwork(
+        super().__init__(
             observation_dimensions,
             actor_config,
-            actor_initialization_generator,
-            device=self.device,
-            dtype=dtype,
-        )
-        self.critic = CriticNetwork(
-            observation_dimensions,
             critic_config,
-            critic_initialization_generator,
-            device=self.device,
+            # An actor-critic bootstraps rather than waiting for an episode to
+            # end, so it counts its collection in transitions.
+            collection_size=config.transitions_per_rollout,
+            adam_betas=(config.beta_1, config.beta_2),
+            optimizer_epsilon=config.optimizer_epsilon,
+            actor_initialization_generator=actor_initialization_generator,
+            critic_initialization_generator=critic_initialization_generator,
+            sampling_generator=sampling_generator,
+            device=device,
             dtype=dtype,
+            gradient_dispersion_subbatch=gradient_dispersion_subbatch,
         )
-        optimizer_arguments = {
-            "betas": (config.beta_1, config.beta_2),
-            "eps": config.optimizer_epsilon,
-        }
-        self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.actor_learning_rate, **optimizer_arguments
-        )
-        self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(),
-            lr=self.critic_learning_rate,
-            **optimizer_arguments,
-        )
-        self.sampling_generators = self._sampling_generators(sampling_generator)
-        self.sampling_generator = self.sampling_generators[0]
         self.optimization_generator = optimization_generator
         self._last_minibatch_indices: tuple[tuple[tuple[int, ...], ...], ...] = ()
-
-    def collect_action(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> CollectedAction:
-        """
-        Sample one action and retain fixed behaviour-policy quantities.
-        """
-        observation = to_tensor(
-            normalized_observation, dtype=self.dtype, device=self.device
-        ).unsqueeze(0)
-        sample = self.actor.sample(observation, self.sampling_generator)
-        with torch.inference_mode():
-            current_value = self.critic(observation)[0]
-        return CollectedAction(
-            raw_action=sample.raw_action[0].cpu().numpy(),
-            env_action=sample.env_action[0].cpu().numpy(),
-            behaviour_log_probability=float(sample.log_probability[0].item()),
-            current_value=float(current_value.item()),
-        )
-
-    def deterministic_action(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> NDArray[np.float32]:
-        """
-        Return the actor mean action without advancing a training stream.
-        """
-        observation = to_tensor(
-            normalized_observation, dtype=self.dtype, device=self.device
-        ).unsqueeze(0)
-        with torch.inference_mode():
-            action = self.actor.deterministic_action(observation)[0]
-        return action.cpu().numpy().astype(np.float32, copy=False)
-
-    def collect_actions(
-        self,
-        normalized_observations: NDArray[np.float32],
-        environment_indices: Sequence[int] | None = None,
-    ) -> CollectedActionBatch:
-        """
-        Sample one action and critic value per independent environment row.
-        """
-        observations = to_tensor(
-            normalized_observations, dtype=self.dtype, device=self.device
-        )
-        indices = self._resolve_stream_indices(
-            observations.shape[0], environment_indices
-        )
-        sample = self.actor.sample_with_generators(
-            observations,
-            tuple(self.sampling_generators[index] for index in indices),
-        )
-        with torch.inference_mode():
-            current_values = self.critic(observations)
-        return CollectedActionBatch(
-            raw_actions=sample.raw_action.cpu().numpy(),
-            env_actions=sample.env_action.cpu().numpy(),
-            behaviour_log_probabilities=sample.log_probability.cpu().numpy(),
-            current_values=current_values.cpu().numpy(),
-        )
-
-    def bootstrap_value(self, normalized_observation: NDArray[np.float32]) -> float:
-        """
-        Return a detached critic estimate for a non-terminal bootstrap state.
-        """
-        observation = to_tensor(
-            normalized_observation, dtype=self.dtype, device=self.device
-        ).unsqueeze(0)
-        with torch.inference_mode():
-            value = self.critic(observation)[0]
-        return float(value.item())
-
-    def bootstrap_values(
-        self, normalized_observations: NDArray[np.float32]
-    ) -> NDArray[np.float32]:
-        """
-        Return detached critic estimates for batched non-terminal next states.
-        """
-        observations = to_tensor(
-            normalized_observations, dtype=self.dtype, device=self.device
-        )
-        with torch.inference_mode():
-            values = self.critic(observations)
-        return values.cpu().numpy().astype(np.float32, copy=False)
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
         """
@@ -211,14 +122,16 @@ class PPOAgent(OnPolicyAgent):
         if rollout.transition_count > self.collection_size:
             raise ValueError("PPO rollout exceeds its configured collection size.")
 
+        # 1. Compute the GAE advantages A and the critic targets, then
+        # standardize the advantages to reduce variance in the actor step.
         transitions = rollout.transitions
-        observations, raw_actions = self._policy_inputs(transitions)
+        observations, raw_actions = self._extract_policy_inputs(transitions)
         targets = compute_vector_gae_targets(
             rollout, self.config.discount, self.config.gae_lambda, device=self.device
         )
-        # Every later epoch scores these same actions under a policy that has
-        # already moved, so the ratio is only meaningful against what the
-        # collecting policy actually assigned them.
+
+        # 1.5 Unlike A2C, in PPO we immediately compute the log probabilities
+        # of the collected actions under the policy that produced them.
         stored_log_probabilities = optional_tensor(
             [transition.behaviour_log_probability for transition in transitions],
             device=self.device,
@@ -227,8 +140,10 @@ class PPOAgent(OnPolicyAgent):
             raise ValueError("PPO requires collection log probabilities.")
         old_log_probabilities = stored_log_probabilities.detach().clone()
         advantages = self._standardize_advantages(targets.raw_advantages)
-        dispersion = self._gradient_dispersion(observations, raw_actions, advantages)
         value_targets = targets.value_targets.detach().clone()
+
+        # [Compute diagnostics for recording training progress.]
+        dispersion = self._gradient_dispersion(observations, raw_actions, advantages)
         actor_weight_norm = parameter_norm(self.actor.parameters())
         critic_weight_norm = parameter_norm(self.critic.parameters())
         actor_parameters_before = tuple(
@@ -252,8 +167,12 @@ class PPOAgent(OnPolicyAgent):
         minibatch_sizes: list[int] = []
         minibatch_orders: list[tuple[tuple[int, ...], ...]] = []
 
+        # 2. Reuse the rollout for several epochs of shuffled minibatches:
         completed_epochs = 0
         for _ in range(self.config.optimization_epochs):
+
+            # Extract minibatches by shuffling the rollout indices and slicing them into
+            # contiguous chunks. This way, each epoch has a different random order.
             permutation = torch.randperm(
                 len(rollout.transitions),
                 generator=self.optimization_generator,
@@ -261,9 +180,13 @@ class PPOAgent(OnPolicyAgent):
             )
             epoch_batches: list[tuple[int, ...]] = []
             epoch_kl: list[float] = []
+
+            # For each of the minibatches:
             for start in range(0, len(rollout.transitions), self.config.minibatch_size):
                 indices = permutation[start : start + self.config.minibatch_size]
                 epoch_batches.append(tuple(int(index) for index in indices.tolist()))
+
+                # 3-4. Update actor and critic, just like A2C but with PPO's clipped surrogate loss.
                 minibatch_metrics = self._update_minibatch(
                     observations[indices],
                     raw_actions[indices],
@@ -271,18 +194,24 @@ class PPOAgent(OnPolicyAgent):
                     advantages[indices],
                     value_targets[indices],
                 )
+
+                # [Record metrics for this minibatch.]
                 for name, value in minibatch_metrics.items():
                     metrics[name].append(value)
                 epoch_kl.append(minibatch_metrics["approximate_kl"])
                 minibatch_sizes.append(len(indices))
             minibatch_orders.append(tuple(epoch_batches))
             completed_epochs += 1
+
+            # 5. Stop early if the policy has already moved too far from the
+            # one that collected this rollout.
             if (
                 self.config.kl_early_stop_enabled
                 and float(np.mean(epoch_kl)) > self.config.target_kl
             ):
                 break
 
+        # [Compute final diagnostics, after all epochs are done.]
         self._last_minibatch_indices = tuple(minibatch_orders)
         with torch.inference_mode():
             final_predictions = self.critic(observations)
@@ -353,6 +282,16 @@ class PPOAgent(OnPolicyAgent):
             }
         )
 
+    def _standardize_advantages(self, advantages: Tensor) -> Tensor:
+        """
+        Rescale advantages to zero mean and unit variance for the actor only.
+
+        The critic keeps the unstandardized targets: the shift and scale are a
+        step-size convenience for the policy gradient, not a change to what the
+        value function is supposed to predict.
+        """
+        return standardize(advantages, self.config.optimizer_epsilon)
+
     def state_dict(self) -> dict[str, Any]:
         """
         Return models, optimizers, and generator states for exact resume.
@@ -404,52 +343,11 @@ class PPOAgent(OnPolicyAgent):
         self.optimization_generator.set_state(state["optimization_generator"])
 
     @property
-    def actor_parameter_count(self) -> int:
-        """
-        Return the number of trainable actor parameters, including dispersion.
-        """
-        return agent_parameter_counts(self.actor, self.critic).actor
-
-    @property
-    def critic_parameter_count(self) -> int:
-        """
-        Return the number of trainable fixed-architecture critic parameters.
-        """
-        count = agent_parameter_counts(self.actor, self.critic).critic
-        if count is None:
-            raise RuntimeError("PPO must own a critic.")
-        return count
-
-    @property
     def last_minibatch_indices(self) -> tuple[tuple[tuple[int, ...], ...], ...]:
         """
         Return the immutable row batches used by the most recent PPO update.
         """
         return self._last_minibatch_indices
-
-    def _gradient_dispersion(
-        self,
-        observations: Tensor,
-        raw_actions: Tensor,
-        advantages: Tensor,
-    ) -> dict[str, float | int | None]:
-        """
-        Measure the spread of the advantage-weighted estimator over equal samples.
-        """
-        weights = advantages.detach()
-
-        def subbatch_loss(selected: Tensor) -> Tensor:
-            log_probabilities = self.actor.log_probability(
-                observations[selected], raw_actions[selected]
-            )
-            return -(log_probabilities * weights[selected]).mean()
-
-        return gradient_dispersion(
-            tuple(self.actor.parameters()),
-            subbatch_loss,
-            observations.shape[0],
-            self.gradient_dispersion_subbatch,
-        )
 
     def _update_minibatch(
         self,
@@ -459,12 +357,13 @@ class PPOAgent(OnPolicyAgent):
         advantages: Tensor,
         value_targets: Tensor,
     ) -> dict[str, float]:
-        actor_loss, ratios, log_ratios = self._actor_loss(
+        actor = self._actor_loss(
             observations,
             raw_actions,
             old_log_probabilities,
             advantages,
         )
+        actor_loss, ratios, log_ratios = actor.loss, actor.importance_ratios, actor.log_ratios
         self.actor_optimizer.zero_grad(set_to_none=True)
         self.critic_optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
@@ -514,7 +413,17 @@ class PPOAgent(OnPolicyAgent):
         raw_actions: Tensor,
         old_log_probabilities: Tensor,
         advantages: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
+    ) -> ClippedActorLoss:
+        """
+        Bound how far one step may move the policy from the one that collected.
+
+        Clipping is the whole of PPO: an action whose probability has already
+        grown past the trust region stops contributing gradient, so reusing a
+        rollout for several epochs cannot run away from the behaviour policy.
+        
+        The extra parameters (ratio and log_ratio) are returned to compute
+        the KL indicator, used to detect early stopping.
+        """
         current_log_probabilities = self.actor.log_probability(
             observations, raw_actions
         )
@@ -525,20 +434,11 @@ class PPOAgent(OnPolicyAgent):
             ratios.clamp(1.0 - self.config.clip_epsilon, 1.0 + self.config.clip_epsilon)
             * advantages.detach()
         )
-        return (
-            -torch.minimum(unclipped_surrogate, clipped_surrogate).mean(),
-            ratios,
-            log_ratios,
+        return ClippedActorLoss(
+            loss=-torch.minimum(unclipped_surrogate, clipped_surrogate).mean(),
+            importance_ratios=ratios,
+            log_ratios=log_ratios,
         )
-
-    def _critic_loss(
-        self, observations: Tensor, value_targets: Tensor
-    ) -> tuple[Tensor, Tensor]:
-        predictions = self.critic(observations)
-        return 0.5 * (predictions - value_targets.detach()).square().mean(), predictions
-
-    def _standardize_advantages(self, advantages: Tensor) -> Tensor:
-        return standardize(advantages, self.config.optimizer_epsilon)
 
     @staticmethod
     def _validate_config(config: PPOConfig) -> None:

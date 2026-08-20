@@ -25,13 +25,12 @@ def _agent(
         actor_config=ActorConfig(
             name="small", hidden_sizes=(4, 4), learning_rate=learning_rate
         ),
-        critic_config=CriticConfig(hidden_sizes=(4, 4)),
+        critic_config=CriticConfig(hidden_sizes=(4, 4), learning_rate=learning_rate),
         config=A2CConfig(
             discount=0.9,
             gae_lambda=gae_lambda,
             transitions_per_rollout=8,
         ),
-        critic_learning_rate=learning_rate,
         actor_initialization_generator=torch.Generator().manual_seed(seed),
         critic_initialization_generator=torch.Generator().manual_seed(seed + 50),
         sampling_generator=torch.Generator().manual_seed(seed + 100),
@@ -144,7 +143,7 @@ def test_a2c_losses_match_the_documented_mean_reductions() -> None:
     )
     targets = compute_vector_gae_targets(rollout, discount=0.9, gae_lambda=0.95)
     advantages = agent._standardize_advantages(targets.raw_advantages)
-    observations, raw_actions = agent._policy_inputs(rollout.transitions)
+    observations, raw_actions = agent._extract_policy_inputs(rollout.transitions)
     log_probabilities = agent.actor.log_probability(observations, raw_actions)
     expected_actor_loss = -(log_probabilities * advantages).mean()
     predictions = agent.critic(observations)
@@ -199,11 +198,11 @@ def test_a2c_actor_and_critic_gradients_are_isolated() -> None:
     rollout = _rollout(agent)
     targets = compute_vector_gae_targets(rollout, discount=0.9, gae_lambda=0.95)
     advantages = agent._standardize_advantages(targets.raw_advantages)
-    observations, raw_actions = agent._policy_inputs(rollout.transitions)
+    observations, raw_actions = agent._extract_policy_inputs(rollout.transitions)
 
     agent.actor_optimizer.zero_grad(set_to_none=True)
     agent.critic_optimizer.zero_grad(set_to_none=True)
-    agent._actor_loss_tensors(observations, raw_actions, advantages).backward()
+    agent._actor_loss(observations, raw_actions, advantages).backward()
 
     assert all(parameter.grad is not None for parameter in agent.actor.parameters())
     assert all(parameter.grad is None for parameter in agent.critic.parameters())

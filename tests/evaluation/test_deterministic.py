@@ -30,6 +30,11 @@ class _EvaluationAgent(OnPolicyAgent):
     collection_mode = CollectionMode.FIXED_ROLLOUT
     collection_size = 1
 
+    def __init__(self) -> None:
+        """
+        Skip the real construction, since this stand-in owns no models.
+        """
+
     def collect_action(self, normalized_observation: np.ndarray) -> CollectedAction:
         action = self.deterministic_action(normalized_observation)
         return CollectedAction(action, action, 0.0, 0.0)

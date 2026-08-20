@@ -4,7 +4,7 @@ from math import exp, log
 
 import torch
 
-from agents.models import ActorNetwork, agent_parameter_counts
+from agents.models import ActorNetwork
 from configs import (
     LARGE_ACTOR_CONFIG,
     MEDIUM_ACTOR_CONFIG,
@@ -27,7 +27,7 @@ def test_actor_sizes_match_documented_parameter_formula() -> None:
         expected = (4 + 1) * first_hidden + (first_hidden + 1) * second_hidden
         expected += (second_hidden + 1) * 2 + 2
 
-        assert agent_parameter_counts(_actor(config)).actor == expected
+        assert _actor(config).parameter_count == expected
 
 
 def test_sample_and_recomputed_probability_support_single_and_batched_inputs() -> None:

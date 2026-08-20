@@ -200,8 +200,9 @@ def run_a2c_training(
     execution_config = execution_config or ExecutionConfig()
     configure_torch_determinism(execution_config)
     resolved_actor_config = replace(actor_config, learning_rate=actor_learning_rate)
+    resolved_critic_config = replace(critic_config, learning_rate=critic_learning_rate)
     base_training_config = TrainingConfig(
-        actor=resolved_actor_config, critic=critic_config
+        actor=resolved_actor_config, critic=resolved_critic_config
     )
     resolved_evaluation_interval = (
         base_training_config.evaluation.evaluation_interval
@@ -247,9 +248,8 @@ def run_a2c_training(
         agent_factory=lambda observation_dimensions, streams: A2CAgent(
             observation_dimensions=observation_dimensions,
             actor_config=resolved_actor_config,
-            critic_config=critic_config,
+            critic_config=resolved_critic_config,
             config=a2c_config,
-            critic_learning_rate=critic_learning_rate,
             actor_initialization_generator=streams.get_torch_generator(
                 SeedStream.ACTOR_INITIALIZATION,
                 device=execution_config.device,
@@ -308,8 +308,9 @@ def run_ppo_training(
     execution_config = execution_config or ExecutionConfig()
     configure_torch_determinism(execution_config)
     resolved_actor_config = replace(actor_config, learning_rate=actor_learning_rate)
+    resolved_critic_config = replace(critic_config, learning_rate=critic_learning_rate)
     base_training_config = TrainingConfig(
-        actor=resolved_actor_config, critic=critic_config
+        actor=resolved_actor_config, critic=resolved_critic_config
     )
     resolved_evaluation_interval = (
         base_training_config.evaluation.evaluation_interval
@@ -355,9 +356,8 @@ def run_ppo_training(
         agent_factory=lambda observation_dimensions, streams: PPOAgent(
             observation_dimensions=observation_dimensions,
             actor_config=resolved_actor_config,
-            critic_config=critic_config,
+            critic_config=resolved_critic_config,
             config=ppo_config,
-            critic_learning_rate=critic_learning_rate,
             actor_initialization_generator=streams.get_torch_generator(
                 SeedStream.ACTOR_INITIALIZATION,
                 device=execution_config.device,

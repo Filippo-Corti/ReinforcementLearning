@@ -6,38 +6,32 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
-from numpy.typing import NDArray
 from torch import Tensor
 
 from configs import A2CConfig, ActorConfig, CriticConfig
-from utils.vectors import optional_tensor, to_tensor
+from utils.vectors import optional_tensor
 
 from ..diagnostics import (
     explained_variance,
-    gradient_dispersion,
     parameter_norm,
     parameter_update_norm,
     standardize,
 )
-from ..models import ActorNetwork, CriticNetwork, agent_parameter_counts
 from ..targets import compute_vector_gae_targets
 from ..types import (
     AgentUpdateInput,
     AgentUpdateOutput,
-    CollectedAction,
-    CollectedActionBatch,
     CollectionMode,
     FixedRolloutInput,
 )
-from .base import OnPolicyAgent
+from .base import ActorCriticAgent
 
 if TYPE_CHECKING:
     from training.buffers import TrainingTransition
 
 
-class A2CAgent(OnPolicyAgent):
+class A2CAgent(ActorCriticAgent):
     """
     Optimize a bounded Gaussian actor and a fixed-capacity value critic.
 
@@ -52,10 +46,10 @@ class A2CAgent(OnPolicyAgent):
         * critic: Trainable state-value estimator.
         * actor_optimizer: Adam optimizer over actor parameters only.
         * critic_optimizer: Adam optimizer over critic parameters only.
-        * sampling_generator: Isolated generator used only for policy sampling.
+        * sampling_generators: One isolated policy-sampling stream per worker.
     """
 
-    STATE_VERSION = 3
+    STATE_VERSION = 4
     collection_mode = CollectionMode.FIXED_ROLLOUT
 
     def __init__(
@@ -64,7 +58,6 @@ class A2CAgent(OnPolicyAgent):
         actor_config: ActorConfig,
         critic_config: CriticConfig,
         config: A2CConfig,
-        critic_learning_rate: float,
         actor_initialization_generator: torch.Generator,
         critic_initialization_generator: torch.Generator,
         sampling_generator: torch.Generator | Sequence[torch.Generator],
@@ -76,128 +69,23 @@ class A2CAgent(OnPolicyAgent):
         """
         Construct the actor, critic, and their separate documented optimizers.
         """
-        self.gradient_dispersion_subbatch = gradient_dispersion_subbatch
         self.config = config
-        self.actor_config = actor_config
-        self.critic_config = critic_config
-        self.collection_size = config.transitions_per_rollout
-        self.device = torch.device(device)
-        self.dtype = dtype
-        if actor_config.learning_rate is None:
-            raise ValueError("ActorConfig requires an explicit learning rate.")
-        self.actor_learning_rate = float(actor_config.learning_rate)
-        self.critic_learning_rate = float(critic_learning_rate)
-        self.actor = ActorNetwork(
+        super().__init__(
             observation_dimensions,
             actor_config,
-            actor_initialization_generator,
-            device=self.device,
-            dtype=dtype,
-        )
-        self.critic = CriticNetwork(
-            observation_dimensions,
             critic_config,
-            critic_initialization_generator,
-            device=self.device,
+            # An actor-critic bootstraps rather than waiting for an episode to
+            # end, so it counts its collection in transitions.
+            collection_size=config.transitions_per_rollout,
+            adam_betas=(config.beta_1, config.beta_2),
+            optimizer_epsilon=config.optimizer_epsilon,
+            actor_initialization_generator=actor_initialization_generator,
+            critic_initialization_generator=critic_initialization_generator,
+            sampling_generator=sampling_generator,
+            device=device,
             dtype=dtype,
+            gradient_dispersion_subbatch=gradient_dispersion_subbatch,
         )
-        optimizer_arguments = {
-            "betas": (config.beta_1, config.beta_2),
-            "eps": config.optimizer_epsilon,
-        }
-        self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.actor_learning_rate, **optimizer_arguments
-        )
-        self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(),
-            lr=self.critic_learning_rate,
-            **optimizer_arguments,
-        )
-        self.sampling_generators = self._sampling_generators(sampling_generator)
-        self.sampling_generator = self.sampling_generators[0]
-
-    def collect_action(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> CollectedAction:
-        """
-        Sample one detached action and retain the detached current critic value.
-        """
-        observation = to_tensor(
-            normalized_observation, dtype=self.dtype, device=self.device
-        ).unsqueeze(0)
-        sample = self.actor.sample(observation, self.sampling_generator)
-        with torch.inference_mode():
-            current_value = self.critic(observation)[0]
-        return CollectedAction(
-            raw_action=sample.raw_action[0].cpu().numpy(),
-            env_action=sample.env_action[0].cpu().numpy(),
-            behaviour_log_probability=float(sample.log_probability[0].item()),
-            current_value=float(current_value.item()),
-        )
-
-    def deterministic_action(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> NDArray[np.float32]:
-        """
-        Return the actor mean action without advancing the sampling stream.
-        """
-        observation = to_tensor(
-            normalized_observation, dtype=self.dtype, device=self.device
-        ).unsqueeze(0)
-        with torch.inference_mode():
-            action = self.actor.deterministic_action(observation)[0]
-        return action.cpu().numpy().astype(np.float32, copy=False)
-
-    def collect_actions(
-        self,
-        normalized_observations: NDArray[np.float32],
-        environment_indices: Sequence[int] | None = None,
-    ) -> CollectedActionBatch:
-        """
-        Sample one action and critic value per independent environment row.
-        """
-        observations = to_tensor(
-            normalized_observations, dtype=self.dtype, device=self.device
-        )
-        indices = self._resolve_stream_indices(
-            observations.shape[0], environment_indices
-        )
-        sample = self.actor.sample_with_generators(
-            observations,
-            tuple(self.sampling_generators[index] for index in indices),
-        )
-        with torch.inference_mode():
-            current_values = self.critic(observations)
-        return CollectedActionBatch(
-            raw_actions=sample.raw_action.cpu().numpy(),
-            env_actions=sample.env_action.cpu().numpy(),
-            behaviour_log_probabilities=sample.log_probability.cpu().numpy(),
-            current_values=current_values.cpu().numpy(),
-        )
-
-    def bootstrap_value(self, normalized_observation: NDArray[np.float32]) -> float:
-        """
-        Return a detached critic estimate for a non-terminal bootstrap state.
-        """
-        observation = to_tensor(
-            normalized_observation, dtype=self.dtype, device=self.device
-        ).unsqueeze(0)
-        with torch.inference_mode():
-            value = self.critic(observation)[0]
-        return float(value.item())
-
-    def bootstrap_values(
-        self, normalized_observations: NDArray[np.float32]
-    ) -> NDArray[np.float32]:
-        """
-        Return detached critic estimates for batched non-terminal next states.
-        """
-        observations = to_tensor(
-            normalized_observations, dtype=self.dtype, device=self.device
-        )
-        with torch.inference_mode():
-            values = self.critic(observations)
-        return values.cpu().numpy().astype(np.float32, copy=False)
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
         """
@@ -209,20 +97,28 @@ class A2CAgent(OnPolicyAgent):
         if rollout.transition_count > self.collection_size:
             raise ValueError("A2C rollout exceeds its configured collection size.")
 
+        # 1. Compute the GAE advantages A and the critic targets, then
+        # standardize the advantages to reduce variance in the actor step.
         transitions = rollout.transitions
-        observations, raw_actions = self._policy_inputs(transitions)
+        observations, raw_actions = self._extract_policy_inputs(transitions)
         targets = compute_vector_gae_targets(
             rollout, self.config.discount, self.config.gae_lambda, device=self.device
         )
-        behaviour_log_probabilities = self._behaviour_log_probabilities(
-            transitions, observations, raw_actions
-        )
         advantages = self._standardize_advantages(targets.raw_advantages)
-        dispersion = self._gradient_dispersion(observations, raw_actions, advantages)
-        actor_loss = self._actor_loss_tensors(observations, raw_actions, advantages)
+
+        # 2. Compute both losses:
+        # * The actor's loss is log probs * A_standardized.
+        # * The critic's loss is MSE between predictions and targets.
+        actor_loss = self._actor_loss(observations, raw_actions, advantages)
         critic_loss, predictions = self._critic_loss(
             observations, targets.value_targets
         )
+
+        # [Compute diagnostics for recording training progress.]
+        behaviour_log_probabilities = self._behaviour_log_probabilities(
+            transitions, observations, raw_actions
+        )
+        dispersion = self._gradient_dispersion(observations, raw_actions, advantages)
         actor_weight_norm = parameter_norm(self.actor.parameters())
         critic_weight_norm = parameter_norm(self.critic.parameters())
         actor_parameters_before = tuple(
@@ -232,6 +128,10 @@ class A2CAgent(OnPolicyAgent):
             parameter.detach().clone() for parameter in self.critic.parameters()
         )
 
+        # 3. Perform the actor step, clipping gradients to avoid exploding
+        # updates.
+        # Both optimizers are cleared each time so that neither loss
+        # can leave a gradient behind in the other network.
         self.actor_optimizer.zero_grad(set_to_none=True)
         self.critic_optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
@@ -243,6 +143,8 @@ class A2CAgent(OnPolicyAgent):
         self.actor_optimizer.step()
         self.actor.project_parameters()
 
+        # 4. Perform the critic step, separately, for the same reason.
+        # Again, gradients are clipped to avoid exploding updates.
         self.actor_optimizer.zero_grad(set_to_none=True)
         self.critic_optimizer.zero_grad(set_to_none=True)
         critic_loss.backward()
@@ -303,6 +205,16 @@ class A2CAgent(OnPolicyAgent):
             }
         )
 
+    def _standardize_advantages(self, advantages: Tensor) -> Tensor:
+        """
+        Rescale advantages to zero mean and unit variance for the actor only.
+
+        The critic keeps the unstandardized targets: the shift and scale are a
+        step-size convenience for the policy gradient, not a change to what the
+        value function is supposed to predict.
+        """
+        return standardize(advantages, self.config.optimizer_epsilon)
+
     def state_dict(self) -> dict[str, Any]:
         """
         Return models, optimizers, and sampling state for exact resume.
@@ -351,64 +263,23 @@ class A2CAgent(OnPolicyAgent):
         ):
             generator.set_state(generator_state)
 
-    @property
-    def actor_parameter_count(self) -> int:
-        """
-        Return the number of trainable actor parameters, including dispersion.
-        """
-        return agent_parameter_counts(self.actor, self.critic).actor
-
-    @property
-    def critic_parameter_count(self) -> int:
-        """
-        Return the number of trainable fixed-architecture critic parameters.
-        """
-        count = agent_parameter_counts(self.actor, self.critic).critic
-        if count is None:
-            raise RuntimeError("A2C must own a critic.")
-        return count
-
-    def _gradient_dispersion(
-        self,
-        observations: Tensor,
-        raw_actions: Tensor,
-        advantages: Tensor,
-    ) -> dict[str, float | int | None]:
-        """
-        Measure the spread of the advantage-weighted estimator over equal samples.
-        """
-        weights = advantages.detach()
-
-        def subbatch_loss(selected: Tensor) -> Tensor:
-            log_probabilities = self.actor.log_probability(
-                observations[selected], raw_actions[selected]
-            )
-            return -(log_probabilities * weights[selected]).mean()
-
-        return gradient_dispersion(
-            tuple(self.actor.parameters()),
-            subbatch_loss,
-            observations.shape[0],
-            self.gradient_dispersion_subbatch,
-        )
-
-    def _actor_loss_tensors(
+    def _actor_loss(
         self,
         observations: Tensor,
         raw_actions: Tensor,
         advantages: Tensor,
     ) -> Tensor:
+        """
+        Score the actions taken by how much better than average they turned out.
+
+        A2C reads every transition once, under the policy that chose it, so
+        there is no correction to make and nothing to report beyond the loss
+        itself. PPO returns more from the same-named method because its
+        objective genuinely produces more: an importance ratio that only exists
+        once a rollout is reused.
+        """
         log_probabilities = self.actor.log_probability(observations, raw_actions)
         return -(log_probabilities * advantages.detach()).mean()
-
-    def _critic_loss(
-        self, observations: Tensor, value_targets: Tensor
-    ) -> tuple[Tensor, Tensor]:
-        predictions = self.critic(observations)
-        return 0.5 * (predictions - value_targets.detach()).square().mean(), predictions
-
-    def _standardize_advantages(self, advantages: Tensor) -> Tensor:
-        return standardize(advantages, self.config.optimizer_epsilon)
 
     def _behaviour_log_probabilities(
         self,

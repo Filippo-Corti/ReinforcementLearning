@@ -8,25 +8,19 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
-from numpy.typing import NDArray
 from torch import Tensor
 
 from configs import ActorConfig, ReinforceConfig
-from utils.vectors import to_tensor
 
 from ..diagnostics import (
-    gradient_dispersion,
     parameter_norm,
     parameter_update_norm,
     standardize,
 )
-from ..models import ActorNetwork, agent_parameter_counts
 from ..targets import monte_carlo_return_to_go
 from ..types import (
     AgentUpdateInput,
     AgentUpdateOutput,
-    CollectedAction,
-    CollectedActionBatch,
     CollectionMode,
     CompleteEpisodesInput,
 )
@@ -49,10 +43,10 @@ class ReinforceAgent(OnPolicyAgent):
         * collection_size: Number of complete trajectories per optimizer update.
         * actor: Trainable bounded Gaussian actor.
         * optimizer: Adam optimizer with explicit MLP-weight regularization.
-        * sampling_generator: Isolated generator used only for policy sampling.
+        * sampling_generators: One isolated policy-sampling stream per worker.
     """
 
-    STATE_VERSION = 4
+    STATE_VERSION = 5
     collection_mode = CollectionMode.COMPLETE_EPISODES
 
     def __init__(
@@ -70,97 +64,21 @@ class ReinforceAgent(OnPolicyAgent):
         """
         Construct the actor and its documented Adam optimizer.
         """
-        self.gradient_dispersion_subbatch = gradient_dispersion_subbatch
         self.config = config
-        self.actor_config = actor_config
-        self.collection_size = config.completed_episodes_per_update
-        self.device = torch.device(device)
-        self.dtype = dtype
-        if actor_config.learning_rate is None:
-            raise ValueError("ActorConfig requires an explicit learning rate.")
-        self.actor_learning_rate = float(actor_config.learning_rate)
-        self.actor = ActorNetwork(
+        super().__init__(
             observation_dimensions,
             actor_config,
-            initialization_generator,
-            device=self.device,
+            # REINFORCE counts its collection in finished episodes, because a
+            # Monte Carlo return does not exist until an episode ends.
+            collection_size=config.completed_episodes_per_update,
+            adam_betas=(config.beta_1, config.beta_2),
+            optimizer_epsilon=config.optimizer_epsilon,
+            actor_initialization_generator=initialization_generator,
+            sampling_generator=sampling_generator,
+            device=device,
             dtype=dtype,
+            gradient_dispersion_subbatch=gradient_dispersion_subbatch,
         )
-        self.optimizer = torch.optim.Adam(
-            self.actor.parameters(),
-            lr=self.actor_learning_rate,
-            betas=(config.beta_1, config.beta_2),
-            eps=config.optimizer_epsilon,
-        )
-        self.sampling_generators = self._sampling_generators(sampling_generator)
-        self.sampling_generator = self.sampling_generators[0]
-
-    def collect_action(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> CollectedAction:
-        """
-        Sample one detached bounded action using the isolated policy stream.
-        """
-        observation = to_tensor(
-            normalized_observation, dtype=self.dtype, device=self.device
-        ).unsqueeze(0)
-        sample = self.actor.sample(observation, self.sampling_generator)
-        return CollectedAction(
-            raw_action=sample.raw_action[0].cpu().numpy(),
-            env_action=sample.env_action[0].cpu().numpy(),
-            behaviour_log_probability=float(sample.log_probability[0].item()),
-            current_value=None,
-        )
-
-    def deterministic_action(
-        self, normalized_observation: NDArray[np.float32]
-    ) -> NDArray[np.float32]:
-        """
-        Return the actor mean action without advancing the sampling stream.
-        """
-        observation = to_tensor(
-            normalized_observation, dtype=self.dtype, device=self.device
-        ).unsqueeze(0)
-        with torch.inference_mode():
-            action = self.actor.deterministic_action(observation)[0]
-        return action.cpu().numpy().astype(np.float32, copy=False)
-
-    def collect_actions(
-        self,
-        normalized_observations: NDArray[np.float32],
-        environment_indices: Sequence[int] | None = None,
-    ) -> CollectedActionBatch:
-        """
-        Sample a policy batch using one independent stream of RNG for each environment row.
-        """
-        observations = to_tensor(
-            normalized_observations, dtype=self.dtype, device=self.device
-        )
-        indices = self._resolve_stream_indices(
-            observations.shape[0], environment_indices
-        )
-        sample = self.actor.sample_with_generators(
-            observations,
-            tuple(self.sampling_generators[index] for index in indices),
-        )
-        return CollectedActionBatch(
-            raw_actions=sample.raw_action.cpu().numpy(),
-            env_actions=sample.env_action.cpu().numpy(),
-            behaviour_log_probabilities=sample.log_probability.cpu().numpy(),
-            current_values=None,
-        )
-
-    def bootstrap_value(self, normalized_observation: NDArray[np.float32]) -> None:
-        """
-        Report that actor-only REINFORCE has no bootstrap value.
-        """
-        del normalized_observation
-
-    def bootstrap_values(self, normalized_observations: NDArray[np.float32]) -> None:
-        """
-        Report that actor-only REINFORCE has no batched bootstrap values.
-        """
-        del normalized_observations
 
     def update(self, update_input: AgentUpdateInput) -> AgentUpdateOutput:
         """
@@ -175,7 +93,7 @@ class ReinforceAgent(OnPolicyAgent):
             )
 
         # 1. Compute the returns-to-go G for each trajectory in the batch, then
-        # apply a standardization to reduce variance.
+        # apply standardization to reduce variance.
         returns = tuple(
             monte_carlo_return_to_go(
                 episode.transitions, self.config.discount, device=self.device
@@ -195,24 +113,22 @@ class ReinforceAgent(OnPolicyAgent):
         actor_loss = torch.stack(trajectory_losses).mean()
 
         # [Compute diagnostics for recording training progress.]
-        dispersion = self._gradient_dispersion(
-            update_input.episodes, standardized_returns
-        )
+        dispersion = self._batch_dispersion(update_input.episodes, standardized_returns)
         entropy_proxy = self._entropy_proxy(update_input.episodes)
         actor_weight_norm = parameter_norm(self.actor.parameters())
         parameters_before = tuple(
             parameter.detach().clone() for parameter in self.actor.parameters()
         )
 
-        # 3. Perform the optimizer step, making sure to clip gradients to avoid exploding updates.
-        self.optimizer.zero_grad(set_to_none=True)
+        # 3. Perform the optimizer step, clipping gradients to avoid exploding updates.
+        self.actor_optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
         actor_gradient_norm = float(
             torch.nn.utils.clip_grad_norm_(
                 self.actor.parameters(), self.config.gradient_norm_limit
             ).item()
         )
-        self.optimizer.step()
+        self.actor_optimizer.step()
         self.actor.project_parameters()
 
         flattened_returns = torch.cat(returns)
@@ -252,7 +168,7 @@ class ReinforceAgent(OnPolicyAgent):
             "reinforce_config": asdict(self.config),
             "actor_learning_rate": self.actor_learning_rate,
             "actor": self.actor.state_dict(),
-            "optimizer": self.optimizer.state_dict(),
+            "actor_optimizer": self.actor_optimizer.state_dict(),
             "sampling_generators": [
                 generator.get_state() for generator in self.sampling_generators
             ],
@@ -271,7 +187,7 @@ class ReinforceAgent(OnPolicyAgent):
         if state.get("actor_learning_rate") != self.actor_learning_rate:
             raise ValueError("checkpoint actor learning rate does not match REINFORCE.")
         self.actor.load_state_dict(state["actor"])
-        self.optimizer.load_state_dict(state["optimizer"])
+        self.actor_optimizer.load_state_dict(state["actor_optimizer"])
         generator_states = state["sampling_generators"]
         if len(generator_states) != len(self.sampling_generators):
             raise ValueError("checkpoint sampling-worker count does not match.")
@@ -280,50 +196,30 @@ class ReinforceAgent(OnPolicyAgent):
         ):
             generator.set_state(generator_state)
 
-    @property
-    def actor_parameter_count(self) -> int:
-        """
-        Return the number of trainable actor parameters, including dispersion.
-        """
-        return agent_parameter_counts(self.actor).actor
-
-    @property
-    def critic_parameter_count(self) -> None:
-        """
-        Report that actor-only REINFORCE has no critic parameters.
-        """
-        return None
-
-    def _gradient_dispersion(
+    def _batch_dispersion(
         self,
         episodes: tuple[Trajectory, ...],
         standardized_returns: tuple[Tensor, ...],
     ) -> dict[str, float | int | None]:
         """
-        Measure the spread of the return-weighted estimator over equal samples.
+        Flatten the batch, then measure estimator spread the shared way.
 
-        The batch is flattened across trajectories first. REINFORCE's loss sums
-        per-transition terms and divides by a trajectory count, so a sample of
-        transitions estimates the same direction up to that constant, which the
-        scale-free summaries remove.
+        This exists only to record a diagnostic, and all it contributes is the
+        weight: the standardized return each transition carries. The measuring
+        itself is the same for every algorithm and belongs to the base class.
+
+        Flattening across trajectories is what makes that possible, and it is
+        legitimate here because REINFORCE's loss sums per-transition terms and
+        divides by a trajectory count, so a sample of transitions estimates the
+        same direction up to that constant, which the scale-free summaries
+        remove.
         """
         transitions = tuple(
             transition for episode in episodes for transition in episode
         )
-        observations, raw_actions = self._policy_inputs(transitions)
-        weights = torch.cat(standardized_returns).detach()
-
-        def subbatch_loss(selected: Tensor) -> Tensor:
-            log_probabilities = self.actor.log_probability(
-                observations[selected], raw_actions[selected]
-            )
-            return -(log_probabilities * weights[selected]).mean()
-
-        return gradient_dispersion(
-            tuple(self.actor.parameters()),
-            subbatch_loss,
-            observations.shape[0],
-            self.gradient_dispersion_subbatch,
+        observations, raw_actions = self._extract_policy_inputs(transitions)
+        return self._gradient_dispersion(
+            observations, raw_actions, torch.cat(standardized_returns)
         )
 
     def _trajectory_loss(
@@ -333,7 +229,7 @@ class ReinforceAgent(OnPolicyAgent):
         return -(log_probabilities * standardized_returns.detach()).sum()
 
     def _log_probabilities(self, episode: Trajectory) -> Tensor:
-        observations, raw_actions = self._policy_inputs(episode.transitions)
+        observations, raw_actions = self._extract_policy_inputs(episode.transitions)
         return self.actor.log_probability(observations, raw_actions)
 
     def _standardize_returns(self, returns: tuple[Tensor, ...]) -> tuple[Tensor, ...]:

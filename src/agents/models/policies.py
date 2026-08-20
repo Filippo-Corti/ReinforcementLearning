@@ -302,7 +302,8 @@ class GaussianPolicy(nn.Module, Policy):
 
     def log_probability(self, observations: Tensor, raw_actions: Tensor) -> Tensor:
         """
-        Recompute the corrected log probability of stored raw Gaussian actions.
+        Computes the log-probability of observing raw_actions when the environment
+        is observed as observations, under the current Gaussian policy.
         """
         return self._log_probability_from_pre_squash_action(observations, raw_actions)
 
@@ -347,13 +348,23 @@ class GaussianPolicy(nn.Module, Policy):
         self, observations: Tensor, raw_actions: Tensor
     ) -> Tensor:
         """
-        Evaluate the bounded vector action density from its raw Gaussian value.
+        Computes the log-probability of observing raw_actions when the environment
+        is observed as observations, under the current Gaussian policy.
 
-        For every component, this subtracts the `tanh` change-of-variables term
-        log(1 - tanh(u_i)^2) from the diagonal Gaussian log density of u_i.
-        The stable equivalent below avoids evaluating log(1 - a^2) near
-        the action bounds. Components are summed because one environment action
-        is a vector-valued joint event.
+        The policy acts in two steps:
+            u~N(mean, stddev^2) -> a = tanh(u)
+
+        We first compute the log-probability of u, using the known formula:
+        log p(u) = -0.5 * ((u - mean)^2 / stddev^2 + 2*log(stddev) + log(2*pi))
+
+        Then we apply the change of variables formula to account for the tanh transformation:
+        log p(a) = log p(u) - sum(log(1 - tanh(u)^2))
+
+        However, to avoid numerical instability when tanh(u) is close to 1 or -1, we use the equivalent stable form:
+        log(1 - tanh(u)^2) = 2 * (log(2) - u - softplus(-2*u))
+
+        The final .sum(dim=-1) aggregates the log-probabilities across the action dimensions
+        (we assume independence, which for log-probabilities means summing).
         """
         mean = self.mean(observations)
         log_standard_deviation = self.log_standard_deviation
@@ -361,7 +372,7 @@ class GaussianPolicy(nn.Module, Policy):
         gaussian_log_density = -0.5 * (
             standardized.square() + 2.0 * log_standard_deviation + _LOG_TWO_PI
         )
-        log_jacobian = 2.0 * (
+        log_jacobian = 2.0 * (  # Uses softplus for numerical stability over tanh
             log(2.0) - raw_actions - functional.softplus(-2.0 * raw_actions)
         )
         return (gaussian_log_density - log_jacobian).sum(dim=-1)

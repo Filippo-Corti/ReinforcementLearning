@@ -133,9 +133,8 @@ def test_a2c_updates_on_a_full_rollout_and_on_a_final_short_one() -> None:
     agent = A2CAgent(
         observation_dimensions=FrenetObservation.DIMENSIONS,
         actor_config=_actor_config(),
-        critic_config=CriticConfig(hidden_sizes=(4, 4)),
+        critic_config=CriticConfig(hidden_sizes=(4, 4), learning_rate=0.01),
         config=A2CConfig(transitions_per_rollout=2),
-        critic_learning_rate=0.01,
         actor_initialization_generator=torch.Generator().manual_seed(1),
         critic_initialization_generator=torch.Generator().manual_seed(2),
         sampling_generator=(
@@ -159,11 +158,10 @@ def test_ppo_updates_on_a_full_rollout_and_on_a_final_short_one() -> None:
     agent = PPOAgent(
         observation_dimensions=FrenetObservation.DIMENSIONS,
         actor_config=_actor_config(),
-        critic_config=CriticConfig(hidden_sizes=(4, 4)),
+        critic_config=CriticConfig(hidden_sizes=(4, 4), learning_rate=0.01),
         config=PPOConfig(
             transitions_per_rollout=2, optimization_epochs=1, minibatch_size=2
         ),
-        critic_learning_rate=0.01,
         actor_initialization_generator=torch.Generator().manual_seed(1),
         critic_initialization_generator=torch.Generator().manual_seed(2),
         sampling_generator=(
@@ -208,9 +206,8 @@ def test_every_engine_records_the_circuits_a_schedule_gives_it() -> None:
             A2CAgent(
                 observation_dimensions=FrenetObservation.DIMENSIONS,
                 actor_config=_actor_config(),
-                critic_config=CriticConfig(hidden_sizes=(4, 4)),
+                critic_config=CriticConfig(hidden_sizes=(4, 4), learning_rate=0.01),
                 config=A2CConfig(transitions_per_rollout=2),
-                critic_learning_rate=0.01,
                 actor_initialization_generator=torch.Generator().manual_seed(1),
                 critic_initialization_generator=torch.Generator().manual_seed(2),
                 sampling_generator=(
@@ -224,11 +221,10 @@ def test_every_engine_records_the_circuits_a_schedule_gives_it() -> None:
             PPOAgent(
                 observation_dimensions=FrenetObservation.DIMENSIONS,
                 actor_config=_actor_config(),
-                critic_config=CriticConfig(hidden_sizes=(4, 4)),
+                critic_config=CriticConfig(hidden_sizes=(4, 4), learning_rate=0.01),
                 config=PPOConfig(
                     transitions_per_rollout=2, optimization_epochs=1, minibatch_size=2
                 ),
-                critic_learning_rate=0.01,
                 actor_initialization_generator=torch.Generator().manual_seed(1),
                 critic_initialization_generator=torch.Generator().manual_seed(2),
                 sampling_generator=(

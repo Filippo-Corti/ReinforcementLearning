@@ -125,12 +125,14 @@ class CriticConfig(SerializableConfig):
 
     Fields:
         * hidden_sizes: Width of each hidden layer.
+        * learning_rate: Step size for the critic's own optimizer.
         * activation: Hidden-layer activation.
         * hidden_initialization_gain: Orthogonal gain for hidden layers.
         * output_initialization_gain: Orthogonal gain for the scalar output.
     """
 
     hidden_sizes: tuple[int, int] = (64, 64)
+    learning_rate: float | None = None
     activation: Literal["tanh"] = "tanh"
     hidden_initialization_gain: float = 2**0.5
     output_initialization_gain: float = 1.0

@@ -52,3 +52,14 @@ class CriticNetwork(nn.Module):
         Return one value per observation without a trailing singleton dimension.
         """
         return self.network(observations).squeeze(dim=-1)
+
+    @property
+    def parameter_count(self) -> int:
+        """
+        Return how many parameters this network trains.
+
+        Every parameter here is trained: nothing is frozen and nothing is
+        registered as a buffer, so there is no distinction to draw between
+        trainable and total.
+        """
+        return sum(parameter.numel() for parameter in self.parameters())

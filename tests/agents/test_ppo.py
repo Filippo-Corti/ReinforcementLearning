@@ -29,7 +29,9 @@ def _agent(
         actor_config=ActorConfig(
             name="small", hidden_sizes=(4, 4), learning_rate=actor_learning_rate
         ),
-        critic_config=CriticConfig(hidden_sizes=(4, 4)),
+        critic_config=CriticConfig(
+            hidden_sizes=(4, 4), learning_rate=critic_learning_rate
+        ),
         config=PPOConfig(
             discount=0.9,
             gae_lambda=0.95,
@@ -39,7 +41,6 @@ def _agent(
             kl_early_stop_enabled=kl_early_stop_enabled,
             target_kl=target_kl,
         ),
-        critic_learning_rate=critic_learning_rate,
         actor_initialization_generator=torch.Generator().manual_seed(seed),
         critic_initialization_generator=torch.Generator().manual_seed(seed + 50),
         sampling_generator=torch.Generator().manual_seed(seed + 100),
@@ -138,7 +139,7 @@ def test_ppo_clipped_surrogate_matches_positive_and_negative_advantages() -> Non
     old_log_probabilities = current_log_probabilities - ratios.log()
     advantages = torch.tensor((2.0, -3.0))
 
-    loss, actual_ratios, _ = agent._actor_loss(
+    actor = agent._actor_loss(
         observations,
         pre_squash_actions,
         old_log_probabilities,
@@ -149,8 +150,8 @@ def test_ppo_clipped_surrogate_matches_positive_and_negative_advantages() -> Non
         ratios * advantages,
         ratios.clamp(0.8, 1.2) * advantages,
     ).mean()
-    torch.testing.assert_close(actual_ratios, ratios)
-    torch.testing.assert_close(loss, expected_loss)
+    torch.testing.assert_close(actor.importance_ratios, ratios)
+    torch.testing.assert_close(actor.loss, expected_loss)
 
 
 def test_ppo_unchanged_policy_has_unit_ratios_and_zero_approximate_kl() -> None:
@@ -162,15 +163,17 @@ def test_ppo_unchanged_policy_has_unit_ratios_and_zero_approximate_kl() -> None:
             observations, pre_squash_actions
         )
 
-    _, ratios, log_ratios = agent._actor_loss(
+    actor = agent._actor_loss(
         observations,
         pre_squash_actions,
         old_log_probabilities,
         torch.tensor((1.0, -1.0, 0.5)),
     )
 
-    torch.testing.assert_close(ratios, torch.ones_like(ratios))
-    assert float(((ratios - 1.0) - log_ratios).mean().item()) == pytest.approx(0.0)
+    torch.testing.assert_close(actor.importance_ratios, torch.ones_like(actor.importance_ratios))
+    assert float(
+        ((actor.importance_ratios - 1.0) - actor.log_ratios).mean().item()
+    ) == pytest.approx(0.0)
 
 
 def test_ppo_minibatches_cover_every_rollout_row_once_per_epoch() -> None:
@@ -285,9 +288,8 @@ def test_ppo_rejects_disabled_optional_objectives() -> None:
             actor_config=ActorConfig(
                 name="small", hidden_sizes=(4, 4), learning_rate=0.01
             ),
-            critic_config=CriticConfig(hidden_sizes=(4, 4)),
+            critic_config=CriticConfig(hidden_sizes=(4, 4), learning_rate=0.01),
             config=PPOConfig(value_clipping_enabled=True),
-            critic_learning_rate=0.01,
             actor_initialization_generator=torch.Generator().manual_seed(1),
             critic_initialization_generator=torch.Generator().manual_seed(2),
             sampling_generator=torch.Generator().manual_seed(3),

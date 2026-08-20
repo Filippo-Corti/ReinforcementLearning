@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from agents.models import ActorNetwork, CriticNetwork, agent_parameter_counts
+from agents.models import ActorNetwork, CriticNetwork
 from configs import FIXED_CRITIC_CONFIG, SMALL_ACTOR_CONFIG
 
 
@@ -31,9 +31,8 @@ def test_critic_count_matches_documented_formula_and_gradients_reach_every_param
         initialization_generator=torch.Generator().manual_seed(22),
     )
 
-    counts = agent_parameter_counts(actor, critic)
-    assert counts.critic == (4 + 1) * 64 + (64 + 1) * 64 + (64 + 1)
-    assert counts.total == counts.actor + counts.critic
+    assert critic.parameter_count == (4 + 1) * 64 + (64 + 1) * 64 + (64 + 1)
+    assert actor.parameter_count > 0
 
     critic(torch.randn(5, 4)).square().mean().backward()
     assert all(
