@@ -110,6 +110,26 @@ class TrainingTransition:
         object.__setattr__(self, "next_normalized_observation", next_observation)
 
     @property
+    def continuity_key(self) -> tuple[int, int, int, str, bool, bool]:
+        """
+        Return the fields that decide whether two transitions form one run.
+
+        Whole transitions cannot be compared with `==`: they carry observation
+        and action arrays, and NumPy answers that elementwise rather than with
+        a single truth value. Continuity does not depend on those arrays at
+        all, only on which worker and episode a step belongs to, where in the
+        episode it sits, and whether it ended one.
+        """
+        return (
+            self.environment_index,
+            self.episode_identity,
+            self.episode_step_index,
+            self.circuit_identity,
+            self.terminated,
+            self.truncated,
+        )
+
+    @property
     def ends_episode(self) -> bool:
         """
         Return whether this transition reaches an environment boundary.

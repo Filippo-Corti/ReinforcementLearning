@@ -147,7 +147,12 @@ class VectorRollout:
         restored_previous = tuple(previous_transitions)
         for environment_index, previous in enumerate(restored_previous):
             current = self._previous[environment_index]
-            if current is not None and previous != current:
+            if current is None:
+                continue
+            # Compared by continuity key rather than by whole transition: the
+            # records hold NumPy arrays, and `==` on those is elementwise.
+            restored_key = None if previous is None else previous.continuity_key
+            if restored_key != current.continuity_key:
                 raise ValueError("Vector checkpoint continuity state is inconsistent.")
         self._previous = list(restored_previous)
 

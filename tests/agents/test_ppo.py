@@ -170,7 +170,9 @@ def test_ppo_unchanged_policy_has_unit_ratios_and_zero_approximate_kl() -> None:
         torch.tensor((1.0, -1.0, 0.5)),
     )
 
-    torch.testing.assert_close(actor.importance_ratios, torch.ones_like(actor.importance_ratios))
+    torch.testing.assert_close(
+        actor.importance_ratios, torch.ones_like(actor.importance_ratios)
+    )
     assert float(
         ((actor.importance_ratios - 1.0) - actor.log_ratios).mean().item()
     ) == pytest.approx(0.0)

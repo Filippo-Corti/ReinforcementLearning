@@ -363,7 +363,11 @@ class PPOAgent(ActorCriticAgent):
             old_log_probabilities,
             advantages,
         )
-        actor_loss, ratios, log_ratios = actor.loss, actor.importance_ratios, actor.log_ratios
+        actor_loss, ratios, log_ratios = (
+            actor.loss,
+            actor.importance_ratios,
+            actor.log_ratios,
+        )
         self.actor_optimizer.zero_grad(set_to_none=True)
         self.critic_optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
@@ -420,7 +424,7 @@ class PPOAgent(ActorCriticAgent):
         Clipping is the whole of PPO: an action whose probability has already
         grown past the trust region stops contributing gradient, so reusing a
         rollout for several epochs cannot run away from the behaviour policy.
-        
+
         The extra parameters (ratio and log_ratio) are returned to compute
         the KL indicator, used to detect early stopping.
         """

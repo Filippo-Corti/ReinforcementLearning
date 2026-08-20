@@ -526,3 +526,31 @@ def test_environment_snapshot_restores_the_next_transition_exactly() -> None:
 
     np.testing.assert_array_equal(actual[0], expected[0])
     assert actual[1:] == expected[1:]
+
+
+def test_checkpoint_mid_rollout_matches_uninterrupted_collection(
+    tmp_path: Path,
+) -> None:
+    """
+    A fixed-rollout run is resumable from a checkpoint taken before it fills.
+
+    The other checkpoint test saves at a boundary where the rollout has just
+    been emptied by an update, so it never restores collected transitions. A
+    real run is interrupted wherever the budget lands, which is usually
+    mid-rollout, and that is the state this pins down.
+    """
+    uninterrupted, uninterrupted_agent = _engine(size=4)
+    uninterrupted.train(8)
+
+    interrupted, _ = _engine(size=4)
+    interrupted.train(3, finalize=False)
+    checkpoint = tmp_path / "training.pt"
+    interrupted.save(str(checkpoint))
+
+    resumed, resumed_agent = _engine(size=4)
+    resumed.restore(str(checkpoint))
+    resumed.train(8)
+
+    assert resumed_agent.updates == uninterrupted_agent.updates
+    assert resumed.state().counters == uninterrupted.state().counters
+    assert resumed.episode_records == uninterrupted.episode_records

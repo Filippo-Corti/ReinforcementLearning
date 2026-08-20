@@ -288,3 +288,29 @@ def test_vector_gae_recurses_independently_down_environment_columns() -> None:
         targets.raw_advantages,
         torch.tensor([1.15, 15.0, 1.4, 20.0]),
     )
+
+
+def test_vector_rollout_restores_a_partly_filled_checkpoint() -> None:
+    rollout = VectorRollout(capacity=4, environment_count=2)
+    first = _transition(0, environment=0)
+    second = _transition(0, episode=1, environment=1)
+    rollout.append_step((first, second))
+
+    resumed = VectorRollout(capacity=4, environment_count=2)
+    resumed.restore(rollout.transition_steps, rollout.previous_transitions)
+
+    # Restoring compares each column's continuity context against what
+    # replaying the steps produced. Transitions carry NumPy arrays, so that
+    # comparison has to avoid `==` on the records themselves.
+    assert resumed.transitions == rollout.transitions
+    assert resumed.transition_count == 2
+    assert resumed.previous_transitions == rollout.previous_transitions
+
+
+def test_vector_rollout_rejects_a_checkpoint_whose_context_disagrees() -> None:
+    rollout = VectorRollout(capacity=4, environment_count=1)
+    rollout.append_step((_transition(0, environment=0),))
+
+    resumed = VectorRollout(capacity=4, environment_count=1)
+    with pytest.raises(ValueError, match="continuity state is inconsistent"):
+        resumed.restore(rollout.transition_steps, (_transition(7, environment=0),))

@@ -40,6 +40,9 @@ checkpoints/
 logs/
 outputs/
 runs/
+
+# Figures written by the notebook verification scripts.
+experiments/notebooks/output/
 videos/
 wandb/
 tensorboard/
