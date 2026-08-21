@@ -13,13 +13,7 @@ O_t^{\mathrm{Frenet}}=(d_t,\phi_{e,t},v_t,\delta_t,\bar\kappa_t) \quad \text{or}
 O_t^{\mathrm{LiDAR}}=(v_t,\delta_t,\widetilde r_t^{(1)},\ldots, \widetilde r_t^{(16)})
 $$
 
-Both carry the speed $v_t$ and the front-wheel angle $\delta_t$, which are
-vehicle state rather than perception, so $d_{O_{\mathrm{Frenet}}}=5$ and
-$d_{O_{\mathrm{LiDAR}}}=18$. Only the track representation differs, which is the
-comparison Experiment 2 is about.
-
 The agent then chooses the bounded action:
-
 $$
 A_t=(A_t^{\mathrm{throttle}},A_t^{\mathrm{steer}}) \sim \pi_\theta(\cdot \mid O_t)
 $$
@@ -36,26 +30,12 @@ The training objective is the **performance function** for the policy:
 $$
 J(\mathbf\theta)=
 \mathbb E_{\pi_{\mathbf\theta}}
-\left[\sum_{t=0}^{\tau}\gamma^tR_{t+1}\right],
-\qquad 
-\gamma=1.
+\left[\sum_{t=0}^{T-1}r(S_t, A_t)\right].
 $$
 
 The horizon is finite — every episode ends at a boundary or at $T_{\max}$ — so
-the sum converges without a discount and none is applied. The training objective
-is therefore **the same quantity** that is recorded and reported as the task
-metric, rather than a discounted relative of it.
-
-This was not always so. The contract previously fixed $\gamma=0.9995$, chosen
-from a task-timescale argument, and that value was measured acting as an
-unwritten preference for finishing sooner rather than as a device for
-convergence. It was removed by the 2026-08-20 revision in [`MDP.md`](MDP.md),
-which moved that preference into the lap-time bonus where it can be read and
-calibrated. The measurement and the errors in its first analysis are archived in
-[`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md).
-
-$\gamma$ remains in every equation below because the algorithms are stated for
-general $\gamma$; it is simply one in this project.
+the sum converges on its own and every reward enters it at full weight, as
+[`MDP.md`](MDP.md) specifies. 
 
 ### From the Gaussian Policy to the Control Actions
 
@@ -160,10 +140,6 @@ $$ (d_O+1)\cdot64+(64+1)\cdot64+(64+1). $$
 | Actor — Large  |    (256, 256) |                 67,844 |                  71,172 |
 | Critic         |      (64, 64) |                  4,609 |                   5,441 |
 
-The actor rows were corrected on 2026-08-20 against the constructed networks;
-the previous values disagreed with the formula directly above them. The critic
-rows were already right.
-
 Hidden network weights are initialized using *orthogonal initialization*, with a gain (multiplier) equal to $\sqrt2$ and bias equal to $0$.
 The learned log standard deviations start at $-0.5$, corresponding to
 $\sigma\approx0.61$, and is bounded to $[-5, 0]$. 
@@ -215,7 +191,7 @@ A time-limit ending is not an MDP terminal state, so it still uses the critic's 
 error is:
 $$
 \delta_t^{\mathbf w}=
-R_{t+1}+\gamma B_t-v_{\mathbf w}(O_t).
+r_{t+1}+B_t-v_{\mathbf w}(O_t).
 $$
 
 The GAE Advantage is computed as:
@@ -227,7 +203,7 @@ $$
   &\text{if `terminated` or `truncated` is true, or}\\
   &\text{if this is the final transition stored in the rollout},
   \end{aligned}\\[6pt]
-\delta_t^{\mathbf w}+\gamma\lambda\widehat{\mathbb A}_{t+1},
+\delta_t^{\mathbf w}+\lambda\widehat{\mathbb A}_{t+1},
 & \text{otherwise}.
 \end{cases}
 $$
@@ -250,7 +226,7 @@ optimization epochs.
 # Learning Algorithms
 
 All algorithms share the goal of maximizing the **performance function**:
-$$ J(\theta) = \mathbb{E} \left[ \sum_{t=0}^{\tau}\gamma^t r(S_t, A_t) \right] $$
+$$ J(\theta) = \mathbb{E} \left[ \sum_{t=0}^{\tau} r(S_t, A_t) \right] $$
 
 The performance function corresponds to the expected return from a full **episode** in which we apply the policy $\pi_\theta$.
 The objective of the training is to find the parameters $\theta$ that describe the policy $\pi_\theta$ that has the maximum expected return over random episodes. 
@@ -285,7 +261,7 @@ G_t^i=
 \begin{cases}
 r_{t+1}^i,
 & \text{if `terminated` or `truncated` is true},\\
-r_{t+1}^i+\gamma G_{t+1}^i,
+r_{t+1}^i+G_{t+1}^i,
 & \text{otherwise}.
 \end{cases}
 $$
@@ -312,7 +288,6 @@ Input:
     a: learning rate
     B: interaction budget (total number of allowed interactions)
     N: batch size (default N = 8)
-    γ: discount term 
 
 # Initialize variables
 Adam <- torch.optim.Adam(a, ...)
@@ -339,7 +314,7 @@ while interactions < B:
     for each τ ∈ batch:
         G <- 0
         for t <- T-1,...,0:
-            G_t <- R_t+1 + γG
+            G_t <- R_t+1 + G
     G <- standardize(G)
 
     # Compute REINFORCE loss (use stored data for the log-probs)
@@ -375,7 +350,7 @@ Of course, different episodes are handled separately.
 For any transition happened at timestep $t$ of an episode, we:
 * First, compute the one-step TD errors:
 $$
-\delta_t^{\mathbf w} = r_{t+1} + \gamma B_t - v_{\mathbf w}(O_t) \\
+\delta_t^{\mathbf w} = r_{t+1} + B_t - v_{\mathbf w}(O_t) \\
 \text{where} \quad 
 B_t = \begin{cases} 
 0, & \text{if episode ends here} \\
@@ -384,7 +359,7 @@ v_{\mathbf w}(O_{t+1}) & \text{otherwise}
 $$
 * Then, compute the GAE advantage estimator as a weighted sum of the TD errors until the end of the episode:
 $$
-\hat{\mathbb{A}}_t^{\text{GAE}} = \sum_{k=0}^{K_t-1} (\gamma \lambda)^k \delta_{t+k}^{\mathbf w}
+\hat{\mathbb{A}}_t^{\text{GAE}} = \sum_{k=0}^{K_t-1} \lambda^k \delta_{t+k}^{\mathbf w}
 $$
 * Finally, compute the return-to-go equivalent (using $\hat{\mathbb{A}}_t^{\text{GAE}}$ as a shortcut):
 $$ G_t = v_{\mathbf w}(O_t) + \hat{\mathbb{A}}_t^{\text{GAE}} $$
@@ -415,7 +390,6 @@ Input:
     a_critic: critic learning rate
     B: interaction budget (total number of allowed interactions)
     N: rollout capacity (default N = 2048)
-    γ: discount term (γ = 1 in this project)
     λ: GAE parameter (default λ = 0.95)
 
 # Initialize variables
@@ -445,11 +419,11 @@ while interactions < B:
     # Compute TD errors, GAE advantages and critic targets
     for each environment:
         for t <- last,...,0:
-            δ_t <- R_t+1 + γB_t - v_w(O_t)
+            δ_t <- R_t+1 + B_t - v_w(O_t)
             if terminated or truncated or t is the final rollout transition:
                 Ahat_t <- δ_t
             else:
-                Ahat_t <- δ_t + γλAhat_t+1
+                Ahat_t <- δ_t + λAhat_t+1
             G_t <- Ahat_t + v_w(O_t)
 
     # Standardize advantages for the actor only
@@ -503,7 +477,7 @@ Just like A2C, PPO starts by collecting $N=2048$ transitions.
 Then, for each of these transitions it computes:
 * The GAE advantage estimator, just like A2C+GAE:
     $$
-    \hat{\mathbb{A}}_t^{\text{GAE}} = \sum_{k=0}^{K_t-1} (\gamma \lambda)^k \delta_{t+k}^{\mathbf w}
+    \hat{\mathbb{A}}_t^{\text{GAE}} = \sum_{k=0}^{K_t-1} \lambda^k \delta_{t+k}^{\mathbf w}
     $$
 * The critic target, just like A2C+GAE:
     $$ G_t = v_{\mathbf w}(O_t) + \hat{\mathbb{A}}_t^{\text{GAE}} $$
@@ -541,7 +515,6 @@ Input:
     N: rollout capacity (default N = 2048)
     M: minibatch size (default M = 64)
     K: number of optimization epochs (default K = 4)
-    γ: discount term (γ = 1 in this project)
     λ: GAE parameter (default λ = 0.95)
     ε: PPO clipping parameter (default ε = 0.2)
     KL_target: target KL divergence (default KL_target = 0.02)
@@ -576,11 +549,11 @@ while interactions < B:
     # Compute TD errors, GAE advantages and critic targets
     for each environment:
         for t <- last,...,0:
-            δ_t <- R_t+1 + γB_t - v_w(O_t)
+            δ_t <- R_t+1 + B_t - v_w(O_t)
             if terminated or truncated or t is the final rollout transition:
                 Ahat_t <- δ_t
             else:
-                Ahat_t <- δ_t + γλAhat_t+1
+                Ahat_t <- δ_t + λAhat_t+1
             G_t <- Ahat_t + v_w(O_t)
 
     # Standardize advantages once and keep all targets fixed
@@ -626,7 +599,7 @@ The following distinction is intentional:
 | Choice | Origin |
 |---|---|
 | Policy-gradient, actor-critic, GAE and clipped-PPO equations | Course notes |
-| $\gamma=1$ | Finite horizon; the time preference is carried by the reward instead (2026-08-20 revision in `MDP.md`) |
+| No discounting | Finite horizon; the time preference is carried by the reward instead (`MDP.md`) |
 | Actor widths | Scientific factor fixed by the experiment design |
 | Fixed `(64, 64)` critic | Project control that prevents a critic-capacity confound |
 | Adam $\beta_1$, $\beta_2$ and $10^{-8}$ | Defaults recommended in the original Adam paper |
