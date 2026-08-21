@@ -357,14 +357,29 @@ whose absolute accuracy is nearly irrelevant, not as an accurate value function.
 Anyone reading these runs should not treat low explained variance as a fault to
 be fixed.
 
-**PPO never reduces its exploration noise.** Its log σ sits at −0.002 — that is
-σ ≈ 1.0, the initial value, unchanged after two million interactions — while
-A2C and REINFORCE both shrink to about −0.55, or σ ≈ 0.58. PPO's clipped
-objective and KL early-stop bound how far the policy may move per update, and
-the dispersion parameter simply never travels. It still evaluates well because
-evaluation is deterministic and uses only the mean, but it means **PPO's training
-distribution at 2M interactions is as noisy as at initialization**, which is a
-plausible mechanism for why its curve flattens so early and stays flat.
+**PPO drives its exploration noise up until the configuration stops it.** The
+policy starts at log σ = −0.5 and the learned scale is clamped to
+$[-5.0, 0.0]$. A2C and REINFORCE barely move from the initial value, finishing
+between −0.50 and −0.70. PPO goes the other way and **ends pinned at exactly
+0.000 — the upper bound — in 13 of its 15 runs**, the remaining two at −0.007
+and −0.010. In σ terms it raises its exploration scale from 0.607 to 1.0, a 65%
+increase, and would evidently have gone further.
+
+This is a **binding constraint, not a converged value**, and it is the single
+most important caveat on every PPO number in this document. The reported PPO
+policies sit on the edge of their policy class rather than in its interior, and
+nothing here says what PPO would do with a higher ceiling. It still evaluates
+well because evaluation is deterministic and uses only the mean, but its
+training distribution at 2M interactions is *noisier* than at initialization,
+which is a plausible mechanism both for why its learning curve flattens early
+and stays flat and for the late bimodality of `ppo-small-frenet-seed-1`.
+
+Why it rises rather than falls is not established by these runs. Entropy
+bonuses are disabled, so the dispersion gradient arrives only through the
+likelihood-ratio term; A2C shares that property and does not do this, so the
+difference plausibly lies in PPO's repeated reuse of one rollout under a clipped
+ratio. Establishing it would need a dedicated run, and is not something this
+experiment was designed to answer.
 
 The supporting numbers are consistent: PPO's approximate KL of 0.004–0.008 stays
 well under the 0.02 early-stop target, so that guard almost never fires, and its
@@ -530,7 +545,13 @@ Stated by the protocol, and unchanged by any result above:
 - Algorithm differences cannot be attributed to abstract complexity alone,
   because the three differ in estimator *and* update schedule at once.
 
-Two further limitations are added by what was observed rather than by the design:
+Three further limitations are added by what was observed rather than by the design:
+
+- **PPO's exploration scale is at its configured ceiling, not at an optimum.**
+  Thirteen of fifteen PPO runs end with the learned log dispersion pinned at the
+  upper clamp of 0.0. Every PPO number in this document therefore describes a
+  policy whose exploration was capped by configuration, and the comparison
+  between PPO and the other two algorithms is confounded with that cap.
 
 - **The convergence metric is saturated for PPO.** All fifteen PPO roots converge
   at the first or second evaluation checkpoint, so the 50,000-interaction grid

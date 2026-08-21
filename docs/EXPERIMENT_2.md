@@ -337,12 +337,17 @@ Means over the final tenth of each run's updates.
 diagnostic matches to within a few percent. Whatever separates Frenet from LiDAR
 in this experiment, it is not visible in the optimizer's behaviour.
 
-Two carry-overs from Experiment 1 are confirmed here. **PPO again never reduces
-its exploration noise** — log σ of −0.003 is σ ≈ 0.997, unchanged from
-initialization after two million interactions, exactly as in Experiment 1. This
-is now observed under a completely different training distribution, which
-strengthens the reading that it is a property of the clipped objective rather
-than of one task.
+Two carry-overs from Experiment 1 are confirmed here. **PPO again drives its
+exploration noise up to the configured ceiling** — log σ of −0.003 against an
+initial −0.5 and an upper clamp of 0.0, so the scale rose from σ ≈ 0.607 to
+σ ≈ 1.0 and stopped only because the configuration stopped it. This is now
+observed under a completely different training distribution, which strengthens
+the reading that it is a property of the algorithm rather than of one task — and
+it carries the same caveat as in Experiment 1: **both conditions here are
+reported at the edge of their policy class, not at an interior optimum.** Since
+the ceiling binds equally on Frenet and LiDAR, it does not threaten the
+observation comparison, which is a within-root paired contrast; it limits what
+can be said about PPO's absolute performance.
 
 **Explained variance is higher here than in Experiment 1** — 0.19–0.21 against
 0.09–0.13 for the same algorithm and actor — despite the task being harder. The
@@ -402,3 +407,7 @@ from 0.438 to 1.000.
   slightly unlucky sample.
 - Both conditions plateau within roughly 10% of the budget, so this experiment
   measures where PPO lands, not how it gets there.
+- Both conditions end with PPO's learned exploration scale at its configured
+  upper clamp, so the absolute performance reported here is that of a capped
+  policy class. The cap binds equally on Frenet and LiDAR and so does not affect
+  the paired observation contrast.
