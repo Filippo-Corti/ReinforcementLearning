@@ -1,517 +1,135 @@
 # Experimental Protocol
 
-## Purpose and status
+This document specifies the two reported experiments:
 
-This document specifies two reported experiments:
+* **Experiment 1**. Measuring the effect of the actor-network size on the task of learning to race in one fixed circuit. 
+* **Experiment 2**. Measuring the ability of PPO to generalize to multiple circuits, under different observations (Frenet vs LiDAR).
 
-1. the effect of actor-network size on one fixed circuit; and
-2. PPO generalization across circuits with Frenet versus LiDAR observations.
+The exact policy, model, target and loss definitions for the training are reported in [`LEARNING.md`](LEARNING.md). 
 
-Each experiment is presented in full, including its conditions, random roots,
-training procedure, recorded data, outcomes and analysis. Repeated details are
-intentional: understanding one experiment should not require jumping between
-several common-protocol sections.
+For all comparisons, all algorithms are given a **fixed budget of interactions**, instead of episodes or number of updates.
+This stresses how much each algorithm is capable of making treasure of each transition observed with the environment.
 
-Work performed before these experiments may select usable learning rates,
-validate the software path and choose the fixed circuit. Those runs are
-development evidence, not observations in either reported experiment, and their
-results are never pooled with the reported results.
+## Preliminary Steps
 
-**Protocol revision:** 2026-08-12 grip-limited physics contract.
+### 1. Reproducible Randomness Setup
 
-**Protocol revision:** 2026-08-20 undiscounted objective. $\gamma$ is now $1$ and
-the lap-time bonus $R_{\text{lap}}$ is $140$, replacing $0.9995$ and $100$. The
-reasoning is dated in [`MDP.md`](MDP.md); the measurement behind it, and the
-errors in its first analysis, are archived in
-[`old-plans/discount-horizon-study.md`](old-plans/discount-horizon-study.md).
-
-**Protocol revision:** 2026-08-20 widened learning-rate grid. Three actor/critic
-pairs at an actor rate of $10^{-3}$ were added, and the amendment that adds them
-is recorded in *Learning configuration check* below.
-
-> **The configuration check was re-run under both revisions** and its outcome is
-> recorded below as *Recorded outcome — 2026-08-20*. REINFORCE and PPO selected
-> the rates they had selected on 2026-08-12; **A2C's selection changed** to
-> $(10^{-3},3\cdot10^{-3})$, which took it from completing no lap in three roots
-> to completing all three. The 2026-08-12 table is retained as the evidence for
-> the previous contract and is not the source of any setting.
-
-## Frozen protocol — 2026-08-20
-
-Everything the reported experiments depend on is settled. The matrices below may
-now be executed; changing anything in this section afterwards requires a dated
-amendment that states its evidence and says which runs it invalidates.
-
-**What is frozen**
-
-| Document | Defines | SHA-256 |
-|---|---|---|
-| [`MDP.md`](MDP.md) | states, actions, transitions, reward constants, $\gamma$ | `ba545aea83ea6c7ab1b50c1d69854bc6d038915f99c99b6a97f218bfd452c63f` |
-| [`LEARNING.md`](LEARNING.md) | policy, targets, losses, architectures, optimizer | `2a6b4de54f429f51ce3c790e5f013ba4bcaf586d567bfe8700902192a999593f` |
-| [`TRACK.md`](TRACK.md) | circuit generation and geometry | `d979c6272d96e928df7419108b767bfe9cc08c63c883eaeed46689b45b73294c` |
-| `tracks/experiment_1.json` | the Experiment 1 circuit | `e9acdba442a30a520139379cd237a9716a39b66bf5f3cdf1178b694372068420` |
-| `tracks/experiment_2_splits.json` | the Experiment 2 split commitment | `bced9e20fff54733a9abadf767c0209735a6628941df60423a43ffaf7b7da60d` |
-
-Checksums are taken over newline-normalized bytes, so a checkout on another
-platform agrees with this table. This document is not in its own table: it is
-the thing doing the recording, and git identifies it.
-
-`tests/docs/test_protocol_freeze.py` recomputes every row. Editing a frozen
-document therefore fails the test suite until the freeze is deliberately
-re-issued, which is what makes this table a constraint rather than a note.
-
-**The settled decisions**
-
-- Reward and horizon: $\gamma=1$, $R_{\text{finish}}=100$, $R_{\text{lap}}=140$,
-  $R_{\text{crash}}=5$, $c_{\text{step}}=0.04$, $c_{\text{prog}}=100$,
-  $T_{\max}=1000$ — the 2026-08-20 revision at the top of this document.
-- Physics: the 2026-08-12 grip-limited contract.
-- Learning rates: REINFORCE $10^{-3}$; A2C $(10^{-3},3\cdot10^{-3})$; PPO
-  $(3\cdot10^{-4},10^{-2})$ — re-selected under the current reward and the
-  widened grid, and recorded below.
-- Actor sizes $(32,32)$, $(64,64)$, $(256,256)$ with a fixed $(64,64)$ critic;
-  actor parameter counts as tabulated in `LEARNING.md`.
-- Budgets and schedules: 2,000,000 training interactions, deterministic
-  evaluation every 50,000, checkpoints every 250,000 and at the budget.
-- Roots `0..4` for both reported experiments.
-
-**What is not frozen by this section**
-
-The analysis code and the reporting notebooks are not part of the contract.
-Every table and figure is regenerated from raw run records, so improving how a
-result is *presented* does not invalidate the runs. What may not change is what
-the runs *are*.
-
-**Known gaps at the time of freezing**
-
-Recorded so a reader is not left to infer them from silence:
-
-- `README.md` still documents the single-run entry point rather than the two
-  experiment notebooks.
-- No `experiments/phase2_acceptance.py` exists. The checks it would have
-  wrapped — dependency, formatting, lint, type, compile and test checks;
-  same-seed resume equivalence; both reduced matrices from a clean tree — are
-  run, but as the CI command set and the notebook rehearsals rather than as one
-  script.
-
-## Before either experiment
-
-This section contains configuration and validation rules that must be completed
-before the reported experiment manifests are frozen. They are guardrails for
-obtaining executable settings, not a third scientific experiment.
-
-### Learning configuration check
-
-The exact policy, model, target and loss definitions are in
-[`LEARNING.md`](LEARNING.md). The actor-size factor is already fixed, but the
-course equations do not determine learning rates. Short pre-experiment runs
-therefore compare only the following finite candidates with the medium
-`(64, 64)` actor:
-
-- REINFORCE actor rate:
-  $\{10^{-4},3\cdot10^{-4},10^{-3}\}$;
-- A2C actor/critic rates:
-  $\{(10^{-4},3\cdot10^{-4}),(3\cdot10^{-4},10^{-3}),
-  (3\cdot10^{-4},3\cdot10^{-3}),(3\cdot10^{-4},10^{-2}),
-  (10^{-3},10^{-3}),(10^{-3},3\cdot10^{-3}),(10^{-3},10^{-2})\}$;
-- PPO actor/critic rates: the same seven pairs as A2C.
-
-These candidates are engineering scales around Adam's $10^{-3}$ suggested
-default, reduced where the noisy policy-gradient objective benefits from
-smaller steps. They do not come from the policy-gradient theorem.
-
-The two highest critic rates were added on 2026-08-12, and the grid is shared by
-A2C and PPO so that neither algorithm is offered an option the other is denied;
-each still selects its own pair. The reason is that the original grid could not
-express the range the two algorithms need. A2C applies **one** critic step per
-2048-transition rollout, which is 977 Adam steps across a 2,000,000-interaction
-run, while PPO applies $128$ of them, four epochs over thirty-two minibatches. Adam's
-per-parameter displacement is bounded by its learning rate, so an A2C critic at
-$10^{-3}$ cannot traverse the distance to a value target of order $200$ within
-its update count: refitting the same critic architecture on a constant target of
-$200$ reaches $79.7$ after 977 steps and $200.0$ after 5,000. The original grid
-also varied the actor and critic rates together, which cannot separate their
-effects; the added pairs hold the actor rate fixed and move only the critic.
-
-**The three pairs at actor $10^{-3}$ were added on 2026-08-20, and this is that
-amendment.** The grid offered REINFORCE an actor rate of $10^{-3}$ but capped
-both actor-critic algorithms at $3\cdot10^{-4}$, so A2C could never be tried at
-the rate REINFORCE went on to win with. That was not a deliberate asymmetry: the
-critic-rate widening above moved only the critic and left the actor column as it
-had been. It mattered. A diagnostic sweep, reproducible with
-`python experiments/tune_a2c.py`, found A2C's selected candidate going from 0/3
-completed laps to **3/3** on the same three roots and the same 750,000-interaction
-allowance when its actor rate alone was raised to $10^{-3}$, mean progress
-$0.582 \to 1.000$ and mean return $37.23 \to 218.50$.
-
-The diagnosis that first motivated the sweep — that A2C's critic had collapsed
-to a near-constant, leaving the GAE trace as the whole credit horizon — was
-wrong, and is recorded here because it is the sort of explanation that sounds
-sufficient and is not. The critic *is* nearly constant: it explains about $7\%$
-of return variance, and its predictions vary by $1.62$ against targets varying
-by $10.24$. But explained variance stays at or below zero in **every** swept
-configuration that completes a lap, so critic quality does not separate success
-from failure. What separates them is how far the actor travels: both failing
-configurations sit at a learning rate times update count of $0.110$ and every
-succeeding one is at $0.366$ or above. A2C does not need its critic here because
-the progress term makes the reward dense, and a short credit horizon is enough
-to learn to drive forward without crashing.
-
-The grid remains shared with PPO, as the paragraph above requires, so PPO is
-offered the same three pairs and selects among all seven by the same rule.
-
-Each candidate receives 250,000 interactions on each of three dedicated roots.
-This allowance is long enough to reveal immediate divergence and early progress
-without pretending to establish final performance. Every candidate for one
-algorithm consumes the same allowance and none stops early.
-
-The allowance is raised for an algorithm whose candidates are *all* still
-indistinguishable at 250,000 interactions, because a selection made between
-indistinguishable candidates is a coin flip rather than a choice. Raising it is
-a documented amendment that must state the evidence, as the A2C entry below
-does. It is per algorithm because each algorithm selects its own rate and no
-comparison is drawn across them here; the reported experiments give every
-algorithm the same budget.
-
-Select lexicographically by:
-
-1. number of final deterministic policies that complete the lap;
-2. mean final maximum normalized progress, each run clamped to $1$;
-3. mean final deterministic return; and
-4. smaller actor rate, then smaller critic rate.
-
-Criterion 2 clamps at $1$ because a completed lap overshoots that value by
-wherever its final step happened to land. Without the clamp, two candidates that
-both complete every lap would be separated by that overshoot, which measures the
-last step rather than the driving. The clamp keeps criterion 2 discriminating
-among policies that did not finish, which is what it is for, and leaves the
-return to separate those that did.
-
-This is a pragmatic rule of thumb for avoiding a clearly unusable optimizer
-scale. It does not support claims that one candidate is scientifically superior.
-The chosen rate for an algorithm is then used for all three actor sizes. If this
-rule changes, the change must be documented before any reported experiment run.
-
-#### Recorded outcome — 2026-08-12 (superseded)
-
-> Superseded by the 2026-08-20 re-run below, which repeated this grid under the
-> undiscounted objective. It is kept because the reasoning in it — why the
-> critic grid was widened, and what each algorithm's selection rested on — still
-> explains the grid the re-run used. Its numbers describe the previous reward
-> and are not the source of any current setting.
-
-Executed 2026-08-12 on a development circuit from the current generator, since
-`tracks/experiment_1.json` is chosen by inspection and not yet fixed. Neural
-execution was CPU, as it now is everywhere. An earlier pass on the previous
-generator's circuits is superseded: those circuits curved almost everywhere,
-and the ones here contain straights and corners that must be braked for, which
-changes what a learning rate has to cope with.
-
-**Selected rates: REINFORCE $10^{-3}$; A2C $(3\cdot10^{-4},10^{-2})$; PPO
-$(3\cdot10^{-4},10^{-2})$.**
-
-| Algorithm | Actor | Critic | Allowance | Laps | Mean progress | Mean return |
-|---|---:|---:|---:|---:|---:|---:|
-| REINFORCE | $10^{-4}$ | — | 250k | 0/3 | 0.073 | −4.04 |
-| REINFORCE | $3\cdot10^{-4}$ | — | 250k | 0/3 | 0.127 | 0.92 |
-| **REINFORCE** | $\mathbf{10^{-3}}$ | — | 250k | **2/3** | **0.852** | **142.40** |
-| A2C | $10^{-4}$ | $3\cdot10^{-4}$ | 750k | 0/3 | 0.239 | 7.37 |
-| A2C | $3\cdot10^{-4}$ | $10^{-3}$ | 750k | 0/3 | 0.401 | 24.44 |
-| A2C | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 750k | 0/3 | 0.520 | 32.52 |
-| **A2C** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 750k | **1/3** | **0.704** | **92.25** |
-| PPO | $10^{-4}$ | $3\cdot10^{-4}$ | 250k | 3/3 | 1.000 | 213.62 |
-| PPO | $3\cdot10^{-4}$ | $10^{-3}$ | 250k | 3/3 | 1.000 | 215.57 |
-| PPO | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 250k | 2/3 | 0.899 | 160.62 |
-| **PPO** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 250k | **3/3** | **1.000** | **216.77** |
-
-Four observations qualify these numbers, and none of them is a claim that a
-selected candidate is scientifically superior.
-
-**REINFORCE's selection is unambiguous in rank but weak in absolute terms.** Its
-two smaller rates barely leave the start, and $10^{-3}$ is the only candidate
-that laps at all, so the first criterion decides. It laps two roots of three, in
-$27.0\,\mathrm s$ and $31.8\,\mathrm s$ against the reference controller's
-$22.4\,\mathrm s$, so the rate is usable rather than good. It is more than three
-times the $3\cdot10^{-4}$ the development notebooks used.
-
-**PPO's selection is between three candidates that all work.** Three of its four
-lap every root, within $3$ points of mean return of each other and already at
-$23.6$ to $24.7\,\mathrm s$. The $3\cdot10^{-3}$ pair loses one root outright
-while its other two produce the two fastest individual returns in the grid, so
-one bad root out of three is the whole of the evidence against it. $10^{-2}$ was
-the only pair to lap every root in both this pass and the superseded one, which
-is why it is selected.
-
-**A2C needed a longer allowance, and this is the amendment.** At 250,000
-interactions all four of its candidates sat between $0.067$ and $0.097$ mean
-progress with negative returns, indistinguishable from each other and barely
-above an untrained policy; the rule would have selected on a $0.087$-versus-
-$0.075$ gap, which is noise. A full-budget development run had already shown A2C
-taking 600,000 interactions to complete its first lap on the *easier* previous
-circuits and 1,350,000 to hold one, so 250,000 cannot expose a difference here.
-At 750,000 the candidates separate cleanly and monotonically in the critic rate,
-$0.239 \to 0.401 \to 0.520 \to 0.704$ mean progress, which is the ordering the
-critic-update argument above predicts. The A2C rows use that allowance; no other
-change was made to the rule.
-
-**Both actor-critic algorithms selected the largest critic rate offered.** That is the
-grid's upper edge, so the true optimum may lie above it. It was not extended
-further because the argument for raising it is about the critic covering the
-scale of its targets within its update count, and $10^{-2}$ already does that;
-a rate chosen at an edge is nevertheless worth remembering when reading the
-reported results.
-
-#### Recorded outcome — 2026-08-20
-
-The 2026-08-12 grid above is superseded twice over. It selected rates against
-$\gamma=0.9995$ and $R_{\text{lap}}=100$, which the revision at the top of this
-document replaced, and it did so from a grid that capped both actor-critic
-algorithms at an actor rate of $3\cdot10^{-4}$, which the amendment above
-widened. The whole grid was re-run under the current reward: same three roots,
-same allowances including A2C's amended $750{,}000$, same lexicographic rule,
-same `tracks/experiment_1.json` circuit and medium actor.
-
-Reproduce with `python experiments/calibrate_learning_rates.py run`, which
-writes under `results/pre_experiment_configuration/learning_configuration_check/`
-and scores the grid from the raw run records.
-
-**Selected rates: REINFORCE $10^{-3}$; A2C $(10^{-3},3\cdot10^{-3})$; PPO
-$(3\cdot10^{-4},10^{-2})$.** A2C's selection changed; the other two did not.
-
-| Algorithm | Actor | Critic | Allowance | Laps | Mean progress | Mean return |
-|---|---:|---:|---:|---:|---:|---:|
-| REINFORCE | $10^{-4}$ | — | 250k | 0/3 | 0.070 | −4.28 |
-| REINFORCE | $3\cdot10^{-4}$ | — | 250k | 0/3 | 0.169 | 4.77 |
-| **REINFORCE** | $\mathbf{10^{-3}}$ | — | 250k | **2/3** | **0.894** | **152.67** |
-| A2C | $10^{-4}$ | $3\cdot10^{-4}$ | 750k | 0/3 | 0.265 | 9.54 |
-| A2C | $3\cdot10^{-4}$ | $10^{-3}$ | 750k | 0/3 | 0.274 | 14.10 |
-| A2C | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 750k | 0/3 | 0.520 | 32.77 |
-| A2C | $3\cdot10^{-4}$ | $10^{-2}$ | 750k | 0/3 | 0.582 | 37.23 |
-| A2C | $10^{-3}$ | $10^{-3}$ | 750k | 2/3 | 0.835 | 150.51 |
-| **A2C** | $\mathbf{10^{-3}}$ | $\mathbf{3\cdot10^{-3}}$ | 750k | **3/3** | **1.000** | **222.77** |
-| A2C | $10^{-3}$ | $10^{-2}$ | 750k | 3/3 | 1.000 | 218.50 |
-| PPO | $10^{-4}$ | $3\cdot10^{-4}$ | 250k | 3/3 | 1.000 | 225.52 |
-| PPO | $3\cdot10^{-4}$ | $10^{-3}$ | 250k | 3/3 | 1.000 | 223.77 |
-| PPO | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 227.19 |
-| **PPO** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 250k | **3/3** | **1.000** | **231.00** |
-| PPO | $10^{-3}$ | $10^{-3}$ | 250k | 3/3 | 1.000 | 207.57 |
-| PPO | $10^{-3}$ | $3\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 225.83 |
-| PPO | $10^{-3}$ | $10^{-2}$ | 250k | 2/3 | 0.686 | 148.50 |
-
-Six observations, none of which claims a selected candidate is scientifically
-superior.
-
-**A2C went from lapping nothing to lapping everything.** Its previous selection
-completed 0 of 3 laps at $0.582$ mean progress; every candidate at the newly
-offered actor rate laps at least twice, and the selected pair laps 3/3 at
-$1.000$ progress and $222.77$ return. The algorithm was never as weak as the
-first grid made it look — it had simply never been offered a rate that let its
-actor move.
-
-**A2C now prefers a *lower* critic rate than before.** It selected
-$3\cdot10^{-3}$ where it previously took the largest offered $10^{-2}$. That is
-worth noticing: the hot critic was compensating for an actor that could not
-travel, and once the actor rate is right the compensation stops paying. The two
-top candidates are close, $222.77$ against $218.50$ at identical lap counts and
-progress, so criterion 3 separates them and the margin is small.
-
-**PPO's selection did not move.** It was offered the same three new pairs and
-still takes $(3\cdot10^{-4},10^{-2})$. The widening therefore changed A2C's
-answer and left PPO's alone, which is what a grid that was too narrow for one
-algorithm and wide enough for the other should do.
-
-**The grid now brackets the usable region instead of ending at its edge.** The
-$(10^{-3},10^{-2})$ corner is where both actor-critic algorithms start to
-suffer: PPO falls to 2/3 laps and $0.686$ progress there, its worst cell, and
-A2C's return dips below its neighbour. Previously both algorithms selected the
-largest critic rate offered and the note below had to concede that the optimum
-might lie outside the grid. A2C now selects an interior critic rate, and the
-failure at the far corner is evidence that the range is wide enough.
-
-**PPO remains at the critic-rate edge.** Its selection is still the largest
-critic rate that works for it, so the caveat continues to apply to PPO alone.
-
-**REINFORCE is unchanged and still weak in absolute terms.** Two roots of three,
-selected on criterion 1 because it is the only candidate that laps at all.
-
-### Deterministic reference controller
-
-The reference controller is a debugging aid for checking that the environment
-can be driven without learning:
-
-$$
-A_t^{\mathrm{steer}}=
-\operatorname{clip}(-0.15d_t-1.8\phi_{e,t}+10\bar\kappa_t,-1,1),
-$$
-
-$$
-v_t^\star=min\left\{50,
-\sqrt{12/\max(|\bar\kappa_t|,10^{-4})}\right\},
-\qquad
-A_t^{\mathrm{throttle}}=
-\operatorname{clip}((v_t^\star-v_t)/6,-1,1).
-$$
-
-These constants are hand-designed project values, not results from the course
-theory:
-
-- `0.15` makes a one-metre lateral error contribute `0.15` steering;
-- `1.8` gives a heading error in radians a stronger corrective effect, and is
-  what damps the lateral loop. Linearizing the bicycle model about a straight
-  gives a damping ratio $h\sqrt{\delta_{\max}/(4Ll)}$ that does not depend on
-  speed: $0.39$ at the earlier value `0.8`, and $0.89$ here. The earlier value
-  was stable enough on circuits that curved everywhere, but once circuits
-  contained straights long enough for the oscillation to develop, a car that
-  left a corner off line diverged into the boundary before reaching the next
-  one;
-- `10` makes curvature $0.01\,\mathrm{m^{-1}}$ contribute `0.1` steering;
-- $12\,\mathrm{m\,s^{-2}}$ defines a curvature-dependent target through
-  $v^2|\kappa|$, deliberately below the car's $20\,\mathrm{m\,s^{-2}}$ friction
-  budget: preview curvature is averaged over the lookahead and so understates a
-  corner on entry, and braking spends grip that is then unavailable to turn, so
-  a controller aiming at the limit arrives at corners already beyond it;
-- $50\,\mathrm{m\,s^{-1}}$ keeps the reference below the environment maximum;
-  and
-- division by `6` turns a $6\,\mathrm{m\,s^{-1}}$ speed error into saturated
-  throttle or braking.
-
-The controller is neither an expert demonstrator nor training data. Its purpose
-is to expose a broken observation, reward or control convention before neural
-learning is blamed. On forty generated circuits it completes every lap, from
-$19.1$ to $28.0\,\mathrm s$ and averaging $22.4\,\mathrm s$, reaching at most
-$4.56\,\mathrm m$ of lateral offset against the $6\,\mathrm m$ boundary. That is
-the standing evidence that the task is solvable with the current physics and
-reward.
-
-The heading gain was raised from `0.8` to `1.8` when the circuits gained
-straights; at the earlier value the controller crashed on one circuit in forty
-and came within $0.31\,\mathrm m$ of the boundary on others. Its lap times are
-otherwise unchanged. On the shorter circuits of the previous generator it
-averaged $15.9\,\mathrm s$.
-
-### Fixed circuit for Experiment 1
-
-Generate candidate circuits from dedicated deterministic identities and choose
-one by inspection. Record its logical identity and generated seed, and save the
-complete circuit as `tracks/experiment_1.json`.
-
-There is no automatic selection rule. An earlier revision scored candidates on
-curvature quantiles behind a two-part eligibility filter, but the generator it
-was written for produced circuits that curve almost everywhere, and the filter
-admitted none of them. A rule that encodes what a circuit should look like is
-worth less here than looking at it: the circuit is a fixed condition of
-Experiment 1, not one of its results, and every algorithm and actor size meets
-the same one.
-
-The single binding requirement is that the choice is made before any learned
-outcome exists. No return, completion count or lap time may influence it.
-
-### Physics version
-
-The environment previously used a kinematic bicycle model with no lateral grip,
-no drag, and no steering-rate limit. Under it, full throttle remained close to
-optimal everywhere: at $70\,\mathrm{m\,s^{-1}}$ through the tightest corner of a
-typical generated circuit the car pulled about $34g$, and a trained A2C policy
-finished laps at the speed limit with the throttle open.
-
-This protocol previously deferred the decision to a pre-registered trigger
-measured on trained trajectories. That trigger is superseded: the diagnostic it
-was meant to detect was observed directly, so the constraint was specified and
-frozen rather than tested for. The grip-limited model in [`MDP.md`](MDP.md) is
-the physics for both reported experiments. Its three additions are a shared tyre
-friction budget of $20\,\mathrm{m\,s^{-2}}$, a steering rate limit of
-$180°\,\mathrm s^{-1}$, and quadratic aerodynamic drag derived from the existing
-speed and acceleration limits.
-
-The unconstrained model remains selectable through configuration, so a later
-ablation can report both. Any such comparison is development evidence unless it
-is added to this protocol before the runs happen.
-
-### Reduced-budget end-to-end validation
-
-Before expensive runs, every unique algorithm/actor-size path and both
-observation paths execute with a separate root and a budget of 40,000
-interactions. This budget is not used to judge learning. It is large enough for
-eight maximum-length REINFORCE episodes, so even the slowest collection boundary
-can perform an update.
-
-The purpose is only to prove that training, evaluation, checkpointing, resume,
-run-output validation and analysis execute. Outputs are written under
-`results/reduced_budget_end_to_end_validation/` and cannot be loaded as reported
-experiment data.
-
-## How reproducible randomness works
-
-One integer written on a run specification is called its **root identity**. It
-must control the whole run reproducibly, but using one mutable random generator
-for everything would create accidental coupling. For example, adding an
-evaluation could consume random numbers and change every later training action.
+One integer written on a run specification is called its **root identity**. 
+It must control the whole run reproducibly, but using one mutable random generator for everything would create accidental coupling. 
+For example, adding an evaluation could consume random numbers and change every later training action.
 
 The solution is to derive independent child generators for distinct jobs:
+1. actor initialization;
+2. critic initialization;
+3. stochastic policy actions;
+4. environment reset;
+5. training-circuit schedule;
+6. PPO minibatch order; and
+7. evaluation or baseline-policy sampling where sampling exists; and
+8. track generation.
 
-- actor initialization;
-- critic initialization;
-- stochastic policy actions;
-- environment reset;
-- training-circuit schedule;
-- PPO minibatch order; and
-- evaluation or baseline-policy sampling where sampling exists; and
-- track generation.
+This hierarchy is implemented through `numpy.random.SeedSequence`.
+Using `SeedSequence`, a single stream of random numbers is identified by the quadruple:
+$$ [\mathtt{PROTOCOL\,KEY}, \ \mathtt{Namespace\,Code}, \ \mathtt{Local\,Identity}, \ \mathtt{Stream}] $$
+Where:
+* $\mathtt{PROTOCOL\,KEY}$ is always set to `0`.
+* $\mathtt{Namespace\,Code}$ describes the experiment that is currently being run. 
+  It assumes values from $1$ to $12$ according to the following table:
+  | Purpose | Namespace code |
+  |---|---:|
+  | Experiment 1 reported roots | 1 | 
+  | Experiment 2 reported roots | 2 | 
+  | Learning-rate configuration | 3 | 
+  | Capability check | 4 | 
+  | Reduced-budget end-to-end validation | 5 |
+  | Controlled-problem algorithm validation | 6 | 
+  | Experiment 1 circuit candidates | 7 | 
+  | Multi-circuit development checks | 8 | 
+  | Experiment 2 training circuits | 9 |
+  | Experiment 2 validation circuits | 10 | 
+  | Experiment 2 test circuits | 11 | 
+  | Randomized execution order | 12 |
+* $\mathtt{Local\,Identity}$ is the **local identity** of a specific run. 
+  It starts from $0$ and grows one by one for each repeated run.
+* $\mathtt{Stream}$ represents one of the $8$ child generators, that distinguish the specific stream of random numbers being used. 
+  Its values go from $1$ to $8$. 
 
-For a concrete example, reported Experiment 1 root `0` always derives the same
-actor-initialization child and the same policy-sampling child. Evaluating that
-actor more often consumes neither child, so the training trajectory does not
-change. Root `0` used during pre-experiment configuration is different because
-it belongs to a different namespace.
+Every recorded run stores both human-readable logical identities and generated integer states.
+Checkpoints retain all mutable generator states required for an exact resume on the supported hardware and software stack.
 
-`numpy.random.SeedSequence` implements this hierarchy. The stable protocol key
-`0`, namespace code and local identity are data—not secret randomness:
+### 2. Learning Rate Search
 
-$$
-\text{SeedSequence input}=[0,\text{namespace code},\text{local identity}].
-$$
+To determine a proper **learning rate** for all of the algorithms, different values are tested for each of them, in a short run using:
+* An actor network of size `(64, 64)`.
+* A budget of $250\,000$ interactions, which is increased to $750\,000$ if no learning rate prevails.
+* $3$ seed roots.
 
-| Purpose | Namespace code | Local identities |
-|---|---:|---|
-| Experiment 1 reported roots | 1 | `0..4` |
-| Experiment 2 reported roots | 2 | `0..4` |
-| Learning-rate configuration | 3 | `0..2` |
-| Capability check | 4 | `0..2` |
-| Reduced-budget end-to-end validation | 5 | `0` |
-| Controlled-problem algorithm validation | 6 | `0..4` |
-| Experiment 1 circuit candidates | 7 | `0..99` |
-| Multi-circuit development checks | 8 | `0..7` |
-| Experiment 2 training circuits | 9 | one identity per saved training circuit |
-| Experiment 2 validation circuits | 10 | `0..15` |
-| Experiment 2 test circuits | 11 | `0..31` |
-| Randomized execution order | 12 | one identity per experiment |
+The tested values are the following:
 
-Within a run, stream indices `1..8` correspond in order to the eight jobs listed
-above. A circuit uses its split namespace and circuit identity as its local
-identity, and the first `uint32` from stream `8` as the track-generator seed.
-This holds for saved validation and test circuits and for circuits generated
-during training: the identity is the name, and the seed the generator consumed
-is recorded beside it rather than serving as the name.
+- REINFORCE Actor rate:
+  $$1\cdot10^{-4}, \quad 3\cdot10^{-4}, \quad 1\cdot10^{-3}$$
 
-Frenet and LiDAR root $i$ use identically seeded stream `5` to select the same
-ordered training-circuit identities even though their generator objects are
-separate. Stream `5` is drawn per worker, from the substream indexed by the
-worker's position, which is what makes the selection independent of the order
-in which workers finish episodes.
+- A2C/PPO Actor and Critic rates:
+  $$ 
+  (1\cdot10^{-4}, 3\cdot10^{-4}), \quad (3\cdot10^{-4}, 1\cdot10^{-3}), \quad (3\cdot10^{-4}, 3\cdot10^{-3}), \\
+  (3\cdot10^{-4}, 1\cdot10^{-2}), \quad (1\cdot10^{-3}, 1\cdot10^{-3}), \quad (1\cdot10^{-3}, 3\cdot10^{-3}), \\
+  (1\cdot10^{-3}, 1\cdot10^{-2})
+  $$
+  
+The candidates are engineering scales around Adam's $1\cdot10^{-3}$ suggested
+default. 
 
-Every recorded run stores both human-readable logical identities and generated
-integer states. Checkpoints retain all mutable generator states required for an
-exact resume on the supported hardware and software stack.
+#### Selection Criteria
 
-## Execution hardware and timing
+Selection of the **LR** is done using $4$ criteria, applied one after the other:
+1. **Laps**. Number of final deterministic evaluations that complete a full lap.
+2. **Mean progress**. If tied, compare mean maximum normalized progress achieved in the final deterministc evaluations.
+3. **Mean return**. If still tied, compare mean return achieved in the final deterministic evaluations.
+4. **Scale**. If still tied, choose by smaller actor LR, then smaller critic LR.  
 
-Everything runs on the CPU with PyTorch `float32`. Neural work is not placed on
-a GPU, and no GPU path is offered.
+#### Recorded Outcomes
 
-That is a measurement, not an oversight. The actor and critic have two hidden
-layers and are stepped in batches of one row per environment worker, which is
-far too small to amortize host-to-device transfer. Over 20,000 interactions with
-eight workers:
+| Algorithm | Actor | Critic | Allowance | Laps | Mean progress | Mean return |
+|---|---:|---:|---:|---:|---:|---:|
+| REINFORCE | $1\cdot10^{-4}$ | — | 250k | 0/3 | 0.070 | −4.28 |
+| REINFORCE | $3\cdot10^{-4}$ | — | 250k | 0/3 | 0.169 | 4.77 |
+| **REINFORCE** | $\mathbf{1\cdot10^{-3}}$ | — | 250k | **2/3** | **0.894** | **152.67** |
+| A2C | $1\cdot10^{-4}$ | $3\cdot10^{-4}$ | 750k | 0/3 | 0.265 | 9.54 |
+| A2C | $3\cdot10^{-4}$ | $1\cdot10^{-3}$ | 750k | 0/3 | 0.274 | 14.10 |
+| A2C | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 750k | 0/3 | 0.520 | 32.77 |
+| A2C | $3\cdot10^{-4}$ | $1\cdot10^{-2}$ | 750k | 0/3 | 0.582 | 37.23 |
+| A2C | $1\cdot10^{-3}$ | $1\cdot10^{-3}$ | 750k | 2/3 | 0.835 | 150.51 |
+| **A2C** | $\mathbf{10^{-3}}$ | $\mathbf{3\cdot10^{-3}}$ | 750k | **3/3** | **1.000** | **222.77** |
+| A2C | $1\cdot10^{-3}$ | $1\cdot10^{-2}$ | 750k | 3/3 | 1.000 | 218.50 |
+| PPO | $1\cdot10^{-4}$ | $3\cdot10^{-4}$ | 250k | 3/3 | 1.000 | 225.52 |
+| PPO | $3\cdot10^{-4}$ | $1\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 223.77 |
+| PPO | $3\cdot10^{-4}$ | $3\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 227.19 |
+| **PPO** | $\mathbf{3\cdot10^{-4}}$ | $\mathbf{10^{-2}}$ | 250k | **3/3** | **1.000** | **231.00** |
+| PPO | $1\cdot10^{-3}$ | $1\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 207.57 |
+| PPO | $1\cdot10^{-3}$ | $3\cdot10^{-3}$ | 250k | 3/3 | 1.000 | 225.83 |
+| PPO | $1\cdot10^{-3}$ | $1\cdot10^{-2}$ | 250k | 2/3 | 0.686 | 148.50 |
+
+**Selected learning rates** therefore are: 
+
+| Algorithm | Actor | Critic |
+|---|---:|---:|
+| REINFORCE | $1\cdot10^{-3}$ | — |
+| A2C | $1\cdot10^{-3}$ | $3\cdot10^{-3}$ |
+| PPO | $3\cdot10^{-4}$ | $1\cdot10^{-2}$ |
+
+### 3. Fixed Circuit Choice for Experiment 1
+
+The fixed circuit was chosen by manually filtering interesting generated circuits among the first $20$ seeds.
+
+The selected circuit was the one with `seed=0`.
+
+### 4. Hardware Choice and Timing
+
+Everything runs on the CPU with PyTorch `float32`. 
+Neural work is not placed on a GPU, and no GPU path is offered.
+
+The actor and critic have two hidden layers and are stepped in batches of one row per environment worker, which is far too small to amortize host-to-device transfer. 
+Over 20,000 interactions with $8$ workers, these were the measured speeds:
 
 | Algorithm | CPU | CUDA |
 |---|---:|---:|
@@ -519,59 +137,33 @@ eight workers:
 | A2C | 3,694 interactions/s | 1,144 interactions/s |
 | PPO | 2,835 interactions/s | 1,146 interactions/s |
 
-The GPU was between two and three times slower for every algorithm, so using it
-would have made the 45 Experiment 1 runs take roughly 22 hours instead of 8. The
-device choice was removed from the configuration on 2026-08-12 rather than left
-as a selectable option that no run should select.
+All three algorithms use the same worker count ($8$, the number of physical CPU cores), so that reported collection throughput and wall time are comparable. 
 
-Racing environments and their geometry queries execute in persistent worker
-processes. All three algorithms use the same worker count, the number of physical
-CPU cores, so that reported collection throughput and wall time compare like with
-like. What differs is only what each algorithm does with the collected data:
-REINFORCE fills a batch of eight complete episodes, over several waves when there
-are fewer workers than episodes, while A2C and PPO store a pooled
-2048-transition rollout. The selected worker count is configurable and recorded.
+Timing categories, measured during the runs, are selected so that they do not overlap:
 
-The main process and every worker apply one PyTorch intra-op thread, one inter-op
-thread, and deterministic algorithms with errors rather than warnings. All
-reported runs use the same PyTorch build and the same worker and thread
-configuration. PyTorch does not guarantee identical results across releases or
-platforms, which is why the exact stack is retained with every run. See the
-[official reproducibility guidance](https://docs.pytorch.org/docs/stable/notes/randomness.html).
+- Environment collection time;
+- Actor/critic optimization time;
+- Deterministic evaluation time;
+- Checkpoint and metric-persistence time;
+- End-to-end time.
 
-Timing categories do not overlap:
+Reported runs execute one at a time; no other training process competes for the cores.
 
-- environment collection time;
-- actor/critic optimization time;
-- deterministic evaluation time;
-- checkpoint and metric-persistence time; and
-- end-to-end time from accepted manifest to `completion.json`.
-
-Training-only time is collection plus optimization. End-to-end time is also
-reported so evaluation and persistence overhead remain visible. Reported runs
-execute one at a time; no other training process competes for the cores.
 
 ## Experiment 1 — Actor size on one circuit
 
-### Question and hypotheses
+### Research Question
 
-> How does actor-network capacity affect final driving performance, interaction
-> efficiency, convergence reliability and computational cost on one fixed
-> circuit?
+> **RQ1**: How does actor-network capacity affect training an agent to race a car on one fixed circuit?
 
-The actor-size comparison is repeated for REINFORCE, A2C+GAE and PPO. The
-algorithm comparison is secondary: it describes the practical effect of adding
-a critic, GAE and bounded sample reuse, but it does not assume the more elaborate
-algorithm must win.
+The actor-size comparison is repeated for REINFORCE, A2C+GAE and PPO. 
+The algorithm comparison is secondary: it describes the practical effect of adding a critic, GAE and bounded sample reuse.
 
-- **Capacity:** actor size can change final task performance; larger is not
-  assumed to be better.
-- **Efficiency:** actor size can change interactions and computation required to
-  reach the task threshold.
-- **Reliability:** actor size can change the fraction of roots that learn a
-  stable lap-completing policy.
-- **Algorithm:** A2C+GAE and PPO are expected to reduce variance or improve
-  sample use relative to REINFORCE, but contrary evidence remains valid.
+**RQ1** is answered by observing, in practice, four measures of training efficiency and efficacy:
+* **Final driving performance**. How fast does the agent complete the lap (if they manage to complete it)?
+* **Interaction efficiency**. How many interactions with the environment does the agent have to perform before reaching the task threshold?
+* **Converge reliability**. How do different runs under the same settings vary in the results?
+* **Computational cost**. How long does the training take for the agent to reach the task threshold?
 
 ### Experimental units and design matrix
 
@@ -595,26 +187,15 @@ actor sizes and algorithms.
 
 Every run uses:
 
-- the saved `tracks/experiment_1.json` circuit and canonical start;
-- Frenet observation $(d_t,\phi_{e,t},v_t,\delta_t,\bar\kappa_t)$;
-- the same action mapping, reward, episode limit and frozen physics version;
-- the bounded Gaussian policy and optimizer contract in `LEARNING.md`;
-- one fixed `(64, 64)` critic for A2C and PPO;
-- the learning rate selected before the experiment for its algorithm;
-- 2,000,000 training interactions;
-- deterministic evaluation every 50,000 training interactions; and
-- checkpoints every 250,000 interactions and at the final budget.
-
-The 2,000,000-interaction budget is a project planning value. It provides 40
-evaluation positions and corresponds to at most 400 full-length episodes. It is
-not derived from theory; changing it requires a dated amendment based only on
-pre-experiment runtime or capability evidence and must affect every one of the
-45 run specifications.
-
-One interaction is one call to `RacingEnv.step`, regardless of four internal
-physics substeps. Evaluation interactions are counted separately and never
-enter the training budget. The final policy at exactly the common budget is the
-primary result; a best-seen checkpoint is only a diagnostic.
+* the saved `tracks/experiment_1.json` circuit and canonical start;
+* Frenet observation $(d_t,\phi_{e,t},v_t,\delta_t,\bar\kappa_t)$;
+* the same action mapping, reward, episode limit and frozen physics version;
+* the bounded Gaussian policy and optimizer contract in `LEARNING.md`;
+* one fixed `(64, 64)` critic for A2C and PPO;
+* the learning rate selected before the experiment for its algorithm;
+* 2,000,000 training interactions;
+* deterministic evaluation every 50,000 training interactions; and
+* checkpoints every 250,000 interactions and at the final budget.
 
 ### Deterministic evaluation and convergence
 
